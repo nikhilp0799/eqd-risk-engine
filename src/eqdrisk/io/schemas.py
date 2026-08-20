@@ -63,6 +63,49 @@ DIVIDEND_SCHEMA = pa.schema(
 )
 DIVIDEND_REQUIRED_NOT_NULL = ["underlying", "ex_date", "amount"]
 
+DISCOUNT_CURVE_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("tenor", pa.string()),
+        ("T", pa.float64()),
+        ("rate", pa.float64()),
+        ("discount_factor", pa.float64()),
+    ]
+)
+DISCOUNT_CURVE_REQUIRED_NOT_NULL = ["asof_date", "tenor", "T", "rate", "discount_factor"]
+
+FORWARD_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("underlying", pa.string()),
+        ("expiry", pa.date32()),
+        ("T", pa.float64()),
+        ("n_strikes", pa.int64()),
+        ("forward", pa.float64()),
+        ("discount_factor_implied", pa.float64()),
+        ("discount_factor_curve", pa.float64()),
+        ("discount_factor_diff_bp", pa.float64()),
+        ("r_squared", pa.float64()),
+        ("implied_dividend_yield", pa.float64()),
+        ("announced_dividend_yield", pa.float64()),
+        ("dividend_yield_diff", pa.float64()),
+        ("flag_r2", pa.bool_()),
+        ("flag_discount_factor_bp", pa.bool_()),
+    ]
+)
+FORWARD_REQUIRED_NOT_NULL = [
+    "asof_date",
+    "underlying",
+    "expiry",
+    "T",
+    "n_strikes",
+    "forward",
+    "discount_factor_implied",
+    "discount_factor_curve",
+    "discount_factor_diff_bp",
+    "r_squared",
+]
+
 
 class SchemaViolation(ValueError):
     pass
