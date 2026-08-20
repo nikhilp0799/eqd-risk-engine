@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 from pathlib import Path
 
 import yaml
@@ -25,6 +25,8 @@ class BaseConfig(BaseModel):
     paths: Paths
     calendar: str
     daycount: str
+    canonical_snap_time: time = time(16, 0, 0)
+    snap_tolerance_minutes: int = 15
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> BaseConfig:

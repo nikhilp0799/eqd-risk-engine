@@ -1,20 +1,31 @@
 """Typer entrypoint for the eqdrisk pipeline.
 
-Each command is a stub for now — Step 0 only requires the CLI to exist
-and print help; commands are implemented step by step.
+Commands are implemented step by step; unimplemented ones raise NotImplementedError.
 """
 
 from __future__ import annotations
 
+import datetime as dt
+
 import typer
+
+from eqdrisk.config import BaseConfig
 
 app = typer.Typer(help="eqd-risk-engine: equity derivatives risk analytics")
 
 
 @app.command()
-def ingest(date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD")) -> None:
+def ingest(
+    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
     """Pull raw data, validate schema, write curated Parquet."""
-    raise NotImplementedError("Step 1 not yet implemented")
+    from eqdrisk.io.snapshot import run_snapshot
+
+    cfg = BaseConfig.from_yaml(config)
+    asof = dt.date.fromisoformat(date)
+    result = run_snapshot(cfg, asof)
+    typer.echo(result.qc.render())
 
 
 @app.command()
