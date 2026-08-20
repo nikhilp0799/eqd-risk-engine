@@ -25,6 +25,7 @@ dependencies = [
     "pandas-datareader",
     "fredapi",
     "statsmodels",
+    "pandas-market-calendars",
 ]
 
 [project.optional-dependencies]
@@ -51,7 +52,7 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 packages = ["eqdrisk"]
 ignore_missing_imports = true
 
