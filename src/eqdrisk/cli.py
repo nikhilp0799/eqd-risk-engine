@@ -29,6 +29,24 @@ def ingest(
 
 
 @app.command()
+def curves(
+    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Bootstrap the discount curve and fit implied forwards/dividends (Step 2).
+
+    Not in the README's original CLI table — added because Step 2's outputs
+    need to be independently runnable/inspectable, same as `ingest`.
+    """
+    from eqdrisk.marketdata.forward import run_forward_construction
+
+    cfg = BaseConfig.from_yaml(config)
+    asof = dt.date.fromisoformat(date)
+    result = run_forward_construction(cfg, asof)
+    typer.echo(result.render())
+
+
+@app.command()
 def calibrate(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     underlying: str = typer.Option(..., help="Underlying ticker"),
