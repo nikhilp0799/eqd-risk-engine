@@ -1,0 +1,9 @@
+run_date: "2026-08-11"
+universe:
+  index: ["SPX"]
+  single_names: ["AAPL", "NVDA", "JPM", "XLE"]
+paths:
+  raw: "data/raw"
+  curated: "data/curated"
+calendar: "NYSE"
+daycount: "ACT/365F"

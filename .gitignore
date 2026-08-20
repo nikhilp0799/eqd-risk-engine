@@ -1,0 +1,26 @@
+# Internal planning/decision notes — never pushed
+planning/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+
+# Data (raw/curated are regenerated, never hand-edited or committed)
+data/raw/
+data/curated/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
