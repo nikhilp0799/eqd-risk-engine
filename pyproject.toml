@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "eqdrisk"
+version = "0.1.0"
+description = "Equity derivatives risk analytics engine"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pandas>=2.1",
+    "pyarrow>=14",
+    "duckdb>=0.9",
+    "numba>=0.59",
+    "pydantic>=2.5",
+    "typer>=0.9",
+    "rich>=13",
+    "pyyaml",
+    "matplotlib",
+    "plotly",
+    "streamlit",
+    "yfinance",
+    "pandas-datareader",
+    "fredapi",
+    "statsmodels",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "hypothesis",
+    "ruff",
+    "mypy",
+    "QuantLib",
+]
+
+[project.scripts]
+eqdrisk = "eqdrisk.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eqdrisk"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["eqdrisk"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
