@@ -31,11 +31,13 @@ from eqdrisk.io.schemas import (
     FORWARD_SCHEMA,
     validate,
 )
+from eqdrisk.marketdata import quality
 from eqdrisk.marketdata.calendar import year_fraction
 from eqdrisk.marketdata.curve import TENOR_YEARS, bootstrap_curve
+from eqdrisk.marketdata.quality import classify_quotes
 
 MIN_STRIKES = 6
-MONEYNESS_BAND = 0.5  # |K/S - 1| <= this survives the pre-regression sanity gate
+MONEYNESS_BAND = 0.3  # tighter than the old 0.5 — forward extraction wants near-the-money strikes
 R2_FLAG_THRESHOLD = 0.999
 DISCOUNT_FACTOR_BP_FLAG_THRESHOLD = 5.0
 DIVIDEND_LOOKBACK_DAYS = 370  # trailing ~12mo of announced dividends
@@ -56,35 +58,37 @@ def _mid(bid: pd.Series, ask: pd.Series) -> pd.Series:
     return (bid + ask) / 2.0
 
 
-def _matched_pairs(chain_expiry: pd.DataFrame) -> pd.DataFrame:
-    calls = chain_expiry[chain_expiry["cp"] == "C"][["strike", "bid", "ask"]].rename(
+def _matched_pairs(clean_legs: pd.DataFrame, spot: float) -> pd.DataFrame:
+    """Merge surviving call/put legs on strike, restricted to a near-the-money band.
+
+    The moneyness band here is on top of (not instead of) `quality.classify_quotes` —
+    real forward-price extraction deliberately uses near-the-money strikes (a
+    "synthetic forward" is often built from a single ATM-ish pair); wings add
+    little signal for *this* purpose even when individually well-formed quotes.
+    """
+    near = clean_legs[(clean_legs["strike"] / spot - 1).abs() <= MONEYNESS_BAND]
+    calls = near[near["cp"] == "C"][["strike", "bid", "ask"]].rename(
         columns={"bid": "bid_c", "ask": "ask_c"}
     )
-    puts = chain_expiry[chain_expiry["cp"] == "P"][["strike", "bid", "ask"]].rename(
+    puts = near[near["cp"] == "P"][["strike", "bid", "ask"]].rename(
         columns={"bid": "bid_p", "ask": "ask_p"}
     )
     return calls.merge(puts, on="strike", how="inner")
-
-
-def _sanity_gate(pairs: pd.DataFrame, spot: float) -> pd.DataFrame:
-    """Pre-regression cleaning only — NOT the Step 3 filter chain (which doesn't exist
-    yet). Just enough to keep an unfiltered raw chain from producing a garbage fit."""
-    ok = (
-        (pairs["bid_c"] > 0)
-        & (pairs["bid_p"] > 0)
-        & (pairs["bid_c"] <= pairs["ask_c"])
-        & (pairs["bid_p"] <= pairs["ask_p"])
-        & ((pairs["strike"] / spot - 1).abs() <= MONEYNESS_BAND)
-    )
-    return pairs.loc[ok].reset_index(drop=True)
 
 
 def fit_forward(
     chain_expiry: pd.DataFrame, spot: float, underlying: str, expiry: dt.date, T: float
 ) -> ForwardFitResult | None:
     """Fit one (underlying, expiry) slice. Returns None if too few clean matched strikes
-    or the fit is economically nonsensical (non-positive implied discount factor)."""
-    pairs = _sanity_gate(_matched_pairs(chain_expiry), spot)
+    or the fit is economically nonsensical (non-positive implied discount factor).
+
+    Quality-filters legs first (`quality.classify_quotes` — ZERO_BID, CROSSED, STALE,
+    LOW_OI, WIDE_SPREAD) before matching call/put pairs, rather than fitting against
+    the raw chain and hoping the regression averages out the noise. This was found to
+    matter a lot on real data: some far-wing quotes are literally years stale.
+    """
+    tagged = classify_quotes(chain_expiry, spot)
+    pairs = _matched_pairs(tagged[tagged["reason"] == quality.OK], spot)
     if len(pairs) < MIN_STRIKES:
         return None
 

@@ -47,6 +47,23 @@ def curves(
 
 
 @app.command()
+def iv(
+    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Extract implied vols with the quality filter chain (Step 3).
+
+    Also not in the README's original CLI table, same reasoning as `curves`.
+    """
+    from eqdrisk.vol.implied import run_iv_extraction
+
+    cfg = BaseConfig.from_yaml(config)
+    asof = dt.date.fromisoformat(date)
+    result = run_iv_extraction(cfg, asof)
+    typer.echo(result.render())
+
+
+@app.command()
 def calibrate(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     underlying: str = typer.Option(..., help="Underlying ticker"),

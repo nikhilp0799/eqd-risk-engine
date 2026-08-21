@@ -29,6 +29,7 @@ def _valid_chain_df(n: int = 2) -> pd.DataFrame:
             "volume": [100] * n,
             "open_interest": [1000] * n,
             "underlying_px": [5050.0] * n,
+            "last_trade_ts": [pd.Timestamp("2026-08-11 16:00", tz="America/New_York")] * n,
             "source": ["test"] * n,
         }
     )
