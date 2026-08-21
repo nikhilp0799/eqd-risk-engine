@@ -13,17 +13,32 @@ from eqdrisk.marketdata.forward import (
     run_forward_construction,
 )
 
+FRESH_TS = pd.Timestamp("2026-08-20 16:00:00", tz="America/New_York")
+
 
 def _synthetic_parity_chain(
-    forward: float, discount_factor: float, strikes: list[float]
+    forward: float,
+    discount_factor: float,
+    strikes: list[float],
+    asof_ts: pd.Timestamp = FRESH_TS,
+    last_trade_ts: pd.Timestamp = FRESH_TS,
+    open_interest: int = 100,
 ) -> pd.DataFrame:
-    """Rows satisfying C - P = discount_factor * (forward - K) exactly (zero noise)."""
+    """Rows satisfying C - P = discount_factor * (forward - K) exactly (zero noise),
+    fresh and liquid by default so quality filtering is a no-op unless a test
+    deliberately overrides asof_ts/last_trade_ts/open_interest to probe it."""
     rows = []
     put_mid = 20.0  # arbitrary constant baseline; only the C-P difference matters here
     for k in strikes:
         call_mid = put_mid + discount_factor * (forward - k)
-        rows.append({"strike": k, "cp": "C", "bid": call_mid - 0.05, "ask": call_mid + 0.05})
-        rows.append({"strike": k, "cp": "P", "bid": put_mid - 0.05, "ask": put_mid + 0.05})
+        common = {
+            "strike": k,
+            "asof_ts": asof_ts,
+            "last_trade_ts": last_trade_ts,
+            "open_interest": open_interest,
+        }
+        rows.append({**common, "cp": "C", "bid": call_mid - 0.05, "ask": call_mid + 0.05})
+        rows.append({**common, "cp": "P", "bid": put_mid - 0.05, "ask": put_mid + 0.05})
     return pd.DataFrame(rows)
 
 
@@ -52,22 +67,30 @@ def test_fit_forward_excludes_crossed_and_extreme_moneyness_rows():
     strikes = [90.0, 92.0, 94.0, 96.0, 98.0, 100.0, 102.0, 104.0, 106.0, 108.0, 110.0]
     chain = _synthetic_parity_chain(forward=101.5, discount_factor=0.98, strikes=strikes)
 
-    # Crossed quote on one strike's call leg.
+    # Crossed quote on one strike's call leg — caught by quality.classify_quotes.
     crossed_idx = chain.index[(chain["strike"] == 90.0) & (chain["cp"] == "C")][0]
     chain.loc[crossed_idx, ["bid", "ask"]] = [10.0, 5.0]
 
-    # Extreme moneyness row far outside the 50% band, should be excluded regardless of validity.
-    extreme = pd.DataFrame(
-        [
-            {"strike": 500.0, "cp": "C", "bid": 0.5, "ask": 0.6},
-            {"strike": 500.0, "cp": "P", "bid": 400.0, "ask": 400.1},
-        ]
-    )
+    # Extreme moneyness row far outside the (tightened, 30%) band, excluded regardless of validity.
+    extreme = _synthetic_parity_chain(forward=101.5, discount_factor=0.98, strikes=[500.0])
     chain = pd.concat([chain, extreme], ignore_index=True)
 
     fit = fit_forward(chain, spot=100.0, underlying="TEST", expiry=dt.date(2027, 1, 1), T=0.5)
     assert fit is not None
     assert fit.n_strikes == len(strikes) - 1  # one strike dropped for the crossed call leg
+
+
+def test_fit_forward_excludes_stale_quotes():
+    strikes = [90.0, 92.0, 94.0, 96.0, 98.0, 100.0, 102.0, 104.0, 106.0, 108.0, 110.0]
+    chain = _synthetic_parity_chain(forward=101.5, discount_factor=0.98, strikes=strikes)
+
+    # Make two strikes' worth of quotes (4 rows) stale — last trade 2 days before capture.
+    stale_strikes = chain["strike"].isin([90.0, 92.0])
+    chain.loc[stale_strikes, "last_trade_ts"] = FRESH_TS - pd.Timedelta(days=2)
+
+    fit = fit_forward(chain, spot=100.0, underlying="TEST", expiry=dt.date(2027, 1, 1), T=0.5)
+    assert fit is not None
+    assert fit.n_strikes == len(strikes) - 2
 
 
 def test_implied_dividend_yield_formula():
@@ -107,12 +130,15 @@ def test_announced_dividend_yield_sums_trailing_12mo(tmp_path):
 
 def _write_synthetic_curated_store(root, asof, expiry):
     strikes = [90.0, 92.0, 94.0, 96.0, 98.0, 100.0, 102.0, 104.0, 106.0, 108.0, 110.0]
-    parity = _synthetic_parity_chain(forward=101.5, discount_factor=0.98, strikes=strikes)
+    asof_ts = pd.Timestamp(asof, tz="America/New_York").replace(hour=16)
+    parity = _synthetic_parity_chain(
+        forward=101.5, discount_factor=0.98, strikes=strikes, asof_ts=asof_ts, last_trade_ts=asof_ts
+    )
     n = len(parity)
     chain_df = pd.DataFrame(
         {
             "asof_date": [asof] * n,
-            "asof_ts": [pd.Timestamp(asof, tz="America/New_York").replace(hour=16)] * n,
+            "asof_ts": parity["asof_ts"],
             "underlying": ["TEST"] * n,
             "expiry": [expiry] * n,
             "strike": parity["strike"],
@@ -122,8 +148,9 @@ def _write_synthetic_curated_store(root, asof, expiry):
             "bid_size": pd.array([None] * n, dtype="Int64"),
             "ask_size": pd.array([None] * n, dtype="Int64"),
             "volume": [10] * n,
-            "open_interest": [100] * n,
+            "open_interest": parity["open_interest"],
             "underlying_px": [100.0] * n,
+            "last_trade_ts": parity["last_trade_ts"],
             "source": ["test"] * n,
         }
     )

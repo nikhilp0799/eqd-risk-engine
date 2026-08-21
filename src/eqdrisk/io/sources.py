@@ -38,10 +38,11 @@ def _yf_ticker(underlying: str) -> str:
 def fetch_option_chain(underlying: str, asof_ts: pd.Timestamp) -> pd.DataFrame:
     """Live option chain snapshot for `underlying`, normalised to the chain schema.
 
-    yfinance exposes no per-quote timestamp or bid/ask size, and no canonical
-    snap time — every row is stamped with `asof_ts` (our capture time), and
-    bid_size/ask_size are always null. Both are documented data-source gaps,
-    not bugs.
+    yfinance exposes no canonical snap time and no bid/ask size — every row is
+    stamped with `asof_ts` (our capture time), and bid_size/ask_size are always
+    null. Both are documented data-source gaps, not bugs. It DOES expose a
+    per-quote `lastTradeDate`, which we keep as `last_trade_ts` for staleness
+    filtering (Step 3's STALE reason code).
     """
     ticker = yf.Ticker(_yf_ticker(underlying))
     underlying_px = float(ticker.fast_info["lastPrice"])
@@ -57,12 +58,26 @@ def fetch_option_chain(underlying: str, asof_ts: pd.Timestamp) -> pd.DataFrame:
 
     if not frames:
         raw = pd.DataFrame(
-            columns=["expiry", "strike", "cp", "bid", "ask", "volume", "openInterest"]
+            columns=[
+                "expiry",
+                "strike",
+                "cp",
+                "bid",
+                "ask",
+                "volume",
+                "openInterest",
+                "lastTradeDate",
+            ]
         )
     else:
         raw = pd.concat(frames, ignore_index=True)
 
     n = len(raw)
+    last_trade_ts = (
+        pd.to_datetime(raw["lastTradeDate"], utc=True).dt.tz_convert(NY_TZ)
+        if n
+        else pd.Series(dtype="datetime64[ns, America/New_York]")
+    )
     return pd.DataFrame(
         {
             "asof_date": asof_ts.date(),
@@ -80,6 +95,7 @@ def fetch_option_chain(underlying: str, asof_ts: pd.Timestamp) -> pd.DataFrame:
             if n
             else pd.Series(dtype="int64"),
             "underlying_px": underlying_px,
+            "last_trade_ts": last_trade_ts,
             "source": "yfinance",
         }
     )

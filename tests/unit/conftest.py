@@ -20,6 +20,7 @@ def _make_chain_df(asof_date: dt.date, underlying: str, n: int) -> pd.DataFrame:
             "volume": [10] * n,
             "open_interest": [100] * n,
             "underlying_px": [100.0] * n,
+            "last_trade_ts": [pd.Timestamp(asof_date, tz="America/New_York").replace(hour=16)] * n,
             "source": ["test"] * n,
         }
     )

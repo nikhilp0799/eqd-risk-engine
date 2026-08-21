@@ -26,6 +26,7 @@ CHAIN_SCHEMA = pa.schema(
         ("volume", pa.int64()),
         ("open_interest", pa.int64()),
         ("underlying_px", pa.float64()),
+        ("last_trade_ts", pa.timestamp("ns", tz="America/New_York")),
         ("source", pa.string()),
     ]
 )
@@ -104,6 +105,32 @@ FORWARD_REQUIRED_NOT_NULL = [
     "discount_factor_curve",
     "discount_factor_diff_bp",
     "r_squared",
+]
+
+IMPLIED_VOL_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("underlying", pa.string()),
+        ("expiry", pa.date32()),
+        ("strike", pa.float64()),
+        ("cp", pa.string()),
+        ("T", pa.float64()),
+        ("k", pa.float64()),
+        ("iv", pa.float64()),
+        ("total_variance", pa.float64()),
+        ("vega", pa.float64()),
+        ("weight", pa.float64()),
+        ("reason", pa.string()),
+    ]
+)
+IMPLIED_VOL_REQUIRED_NOT_NULL = [
+    "asof_date",
+    "underlying",
+    "expiry",
+    "strike",
+    "cp",
+    "T",
+    "reason",
 ]
 
 
