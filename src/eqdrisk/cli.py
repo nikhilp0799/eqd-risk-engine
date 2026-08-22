@@ -67,9 +67,15 @@ def iv(
 def calibrate(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     underlying: str = typer.Option(..., help="Underlying ticker"),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
 ) -> None:
-    """Calibrate the volatility surface for one underlying."""
-    raise NotImplementedError("Step 4 not yet implemented")
+    """Calibrate the volatility surface (SVI/SSVI + SABR comparison) for one underlying."""
+    from eqdrisk.vol.surface import run_surface_calibration
+
+    cfg = BaseConfig.from_yaml(config)
+    asof = dt.date.fromisoformat(date)
+    result = run_surface_calibration(cfg, asof, underlyings=[underlying])
+    typer.echo(result.render())
 
 
 @app.command()

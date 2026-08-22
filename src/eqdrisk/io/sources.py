@@ -134,6 +134,23 @@ def fetch_rates(start: dt.date, end: dt.date) -> pd.DataFrame:
     return long.reset_index(drop=True)
 
 
+FRED_VOL_INDEX_SERIES = {"VIX": "VIXCLS"}
+# VVIX/SKEW have no free FRED series under any name we could find (VVIXCLS, VVIX both 404)
+# — documented gap, not pursued further given they're secondary benchmarks per the README.
+
+
+def fetch_vol_indices(start: dt.date, end: dt.date) -> pd.DataFrame:
+    """VIX close from FRED, long-format (asof_date, index, value) — independent calibration
+    benchmark for the 30d ATM vol cross-check (Step 4)."""
+    df = web.DataReader(list(FRED_VOL_INDEX_SERIES.values()), "fred", start=start, end=end)
+    df = df.rename(columns={v: k for k, v in FRED_VOL_INDEX_SERIES.items()})
+    long = df.reset_index().melt(id_vars="DATE", var_name="index", value_name="value")
+    long = long.rename(columns={"DATE": "asof_date"}).dropna(subset=["value"])
+    long["asof_date"] = pd.to_datetime(long["asof_date"]).dt.date
+    long["source"] = "FRED"
+    return long.reset_index(drop=True)
+
+
 def fetch_dividends(underlying: str) -> pd.DataFrame:
     """Announced dividend history for `underlying` (empty for non-dividend-paying names)."""
     div = yf.Ticker(_yf_ticker(underlying)).dividends

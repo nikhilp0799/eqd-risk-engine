@@ -34,7 +34,7 @@ from eqdrisk.io.schemas import (
 from eqdrisk.marketdata import quality
 from eqdrisk.marketdata.calendar import year_fraction
 from eqdrisk.marketdata.curve import TENOR_YEARS, bootstrap_curve
-from eqdrisk.marketdata.quality import classify_quotes
+from eqdrisk.marketdata.quality import classify_quotes, staleness_reference_ts
 
 MIN_STRIKES = 6
 MONEYNESS_BAND = 0.3  # tighter than the old 0.5 — forward extraction wants near-the-money strikes
@@ -77,7 +77,12 @@ def _matched_pairs(clean_legs: pd.DataFrame, spot: float) -> pd.DataFrame:
 
 
 def fit_forward(
-    chain_expiry: pd.DataFrame, spot: float, underlying: str, expiry: dt.date, T: float
+    chain_expiry: pd.DataFrame,
+    spot: float,
+    underlying: str,
+    expiry: dt.date,
+    T: float,
+    reference_ts: pd.Timestamp | None = None,
 ) -> ForwardFitResult | None:
     """Fit one (underlying, expiry) slice. Returns None if too few clean matched strikes
     or the fit is economically nonsensical (non-positive implied discount factor).
@@ -87,7 +92,7 @@ def fit_forward(
     the raw chain and hoping the regression averages out the noise. This was found to
     matter a lot on real data: some far-wing quotes are literally years stale.
     """
-    tagged = classify_quotes(chain_expiry, spot)
+    tagged = classify_quotes(chain_expiry, spot, reference_ts=reference_ts)
     pairs = _matched_pairs(tagged[tagged["reason"] == quality.OK], spot)
     if len(pairs) < MIN_STRIKES:
         return None
@@ -159,30 +164,6 @@ class ForwardConstructionResult:
         return "\n".join(lines)
 
 
-def _latest_available_date(root: Path, asof: dt.date) -> dt.date | None:
-    """Latest `asof_date=YYYY-MM-DD` hive partition <= `asof`.
-
-    Reads partition directory names directly rather than issuing a DuckDB
-    MAX() aggregate over the parquet glob — the latter hits a DuckDB
-    optimizer edge case (internal vector-size assertion) on very small,
-    single-partition datasets. Directory introspection is simpler, faster,
-    and doesn't depend on that engine behaving correctly on tiny inputs.
-    """
-    if not root.exists():
-        return None
-    dates = []
-    for p in root.glob("asof_date=*"):
-        if not p.is_dir():
-            continue
-        try:
-            d = dt.date.fromisoformat(p.name.split("=", 1)[1])
-        except ValueError:
-            continue
-        if d <= asof:
-            dates.append(d)
-    return max(dates) if dates else None
-
-
 def run_forward_construction(cfg: BaseConfig, asof: dt.date) -> ForwardConstructionResult:
     curated_root = Path(cfg.paths.curated)
     chains_root = curated_root / "chains"
@@ -190,7 +171,7 @@ def run_forward_construction(cfg: BaseConfig, asof: dt.date) -> ForwardConstruct
     dividends_root = curated_root / "dividends"
     universe = cfg.universe.index + cfg.universe.single_names
 
-    curves_date = _latest_available_date(curves_root, asof)
+    curves_date = store.latest_available_date(curves_root, asof)
     if curves_date is None:
         raise ValueError(f"no curated rates available on or before {asof}")
     rates = store.query(
@@ -225,13 +206,16 @@ def run_forward_construction(cfg: BaseConfig, asof: dt.date) -> ForwardConstruct
             continue
         spot = float(chain["underlying_px"].iloc[0])
         div_yield = announced_dividend_yield(dividends_root, underlying, spot, asof)
+        reference_ts = staleness_reference_ts(
+            chain["asof_ts"].iloc[0], asof, cfg.canonical_snap_time
+        )
 
         for expiry, chain_expiry in chain.groupby("expiry"):
             expiry_date = pd.Timestamp(expiry).date()
             T = year_fraction(asof, expiry_date, cfg.daycount)
             if T <= 0:
                 continue
-            fit = fit_forward(chain_expiry, spot, underlying, expiry_date, T)
+            fit = fit_forward(chain_expiry, spot, underlying, expiry_date, T, reference_ts)
             if fit is None:
                 continue
             result.fits.append(fit)
