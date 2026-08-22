@@ -55,6 +55,16 @@ CURVE_SCHEMA = pa.schema(
 )
 CURVE_REQUIRED_NOT_NULL = ["asof_date", "tenor", "rate", "source"]
 
+VOL_INDEX_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("index", pa.string()),
+        ("value", pa.float64()),
+        ("source", pa.string()),
+    ]
+)
+VOL_INDEX_REQUIRED_NOT_NULL = ["asof_date", "index", "value", "source"]
+
 DIVIDEND_SCHEMA = pa.schema(
     [
         ("underlying", pa.string()),
@@ -131,6 +141,40 @@ IMPLIED_VOL_REQUIRED_NOT_NULL = [
     "cp",
     "T",
     "reason",
+]
+
+VOL_SURFACE_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("underlying", pa.string()),
+        ("expiry", pa.date32()),
+        ("T", pa.float64()),
+        ("model", pa.string()),  # "SVI" or "SSVI"
+        ("a", pa.float64()),
+        ("b", pa.float64()),
+        ("rho", pa.float64()),
+        ("m", pa.float64()),
+        ("sigma", pa.float64()),
+        ("eta", pa.float64()),
+        ("theta", pa.float64()),
+        ("n_points", pa.int64()),
+        ("rmse_vol_points", pa.float64()),
+        ("max_abs_error_vol_points", pa.float64()),
+        ("max_abs_error_k", pa.float64()),
+        ("butterfly_violations", pa.int64()),
+        ("calendar_violated", pa.bool_()),
+    ]
+)
+VOL_SURFACE_REQUIRED_NOT_NULL = [
+    "asof_date",
+    "underlying",
+    "expiry",
+    "T",
+    "model",
+    "n_points",
+    "rmse_vol_points",
+    "butterfly_violations",
+    "calendar_violated",
 ]
 
 

@@ -14,8 +14,12 @@ calls `classify_quotes` before running the regression.
 
 from __future__ import annotations
 
+import datetime as dt
+
 import numpy as np
 import pandas as pd
+
+NY_TZ = "America/New_York"
 
 ZERO_BID = "ZERO_BID"
 CROSSED = "CROSSED"
@@ -42,12 +46,20 @@ def classify_quotes(
     spot: float,
     stale_minutes: int = DEFAULT_STALE_MINUTES,
     low_oi_threshold: int = DEFAULT_LOW_OI_THRESHOLD,
+    reference_ts: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
     """Tag each row with exactly one reason code (`OK` if it survives everything).
 
     Priority order when multiple issues apply: ZERO_BID > CROSSED > STALE >
     LOW_OI > WIDE_SPREAD. `chain` must have `asof_ts` (capture time, constant
     per ingest run) and `last_trade_ts` columns per the chain schema.
+
+    `reference_ts` is the point staleness is measured against — defaults to
+    `asof_ts` (literal capture time) if not given. Callers running an
+    end-of-day process after the market has closed should pass the trading
+    day's canonical close instead: measuring "staleness" against wall-clock
+    "now" at 10pm makes almost everything look stale purely because trading
+    has stopped, not because the quote is actually unreliable.
     """
     df = chain.copy()
     reason = pd.Series(OK, index=df.index, dtype="object")
@@ -58,7 +70,8 @@ def classify_quotes(
     crossed = (df["bid"] > df["ask"]) & (reason == OK)
     reason = reason.mask(crossed, CROSSED)
 
-    age_minutes = (df["asof_ts"] - df["last_trade_ts"]).dt.total_seconds() / 60.0
+    ref = df["asof_ts"] if reference_ts is None else reference_ts
+    age_minutes = (ref - df["last_trade_ts"]).dt.total_seconds() / 60.0
     stale = (age_minutes > stale_minutes) & (reason == OK)
     reason = reason.mask(stale, STALE)
 
@@ -80,3 +93,18 @@ def rejection_counts(tagged: pd.DataFrame) -> dict[str, int]:
     counts = tagged["reason"].value_counts().to_dict()
     counts.pop(OK, None)
     return {str(k): int(v) for k, v in counts.items()}
+
+
+def staleness_reference_ts(
+    capture_ts: pd.Timestamp, asof: dt.date, canonical_snap_time: dt.time
+) -> pd.Timestamp:
+    """The point staleness should be measured against: whichever is earlier of the
+    actual capture time and that trading day's canonical close.
+
+    Running mid-day, this is just `capture_ts` (live intraday freshness). Running
+    after the close — including any dev/demo run at an arbitrary hour — this is the
+    close itself, so "how long ago did this last trade" doesn't spuriously include
+    the hours nothing has traded because the market is shut.
+    """
+    canonical_close = pd.Timestamp.combine(asof, canonical_snap_time).tz_localize(NY_TZ)
+    return min(capture_ts, canonical_close)

@@ -19,7 +19,7 @@ from eqdrisk.config import BaseConfig
 from eqdrisk.io import store
 from eqdrisk.io.schemas import IMPLIED_VOL_REQUIRED_NOT_NULL, IMPLIED_VOL_SCHEMA, validate
 from eqdrisk.marketdata.calendar import year_fraction
-from eqdrisk.marketdata.quality import OK, classify_quotes
+from eqdrisk.marketdata.quality import OK, classify_quotes, staleness_reference_ts
 from eqdrisk.pricing.blackscholes import call_price, put_price
 from eqdrisk.pricing.blackscholes import vega as bs_vega
 
@@ -70,14 +70,19 @@ def is_reliable_forward(r_squared: float, discount_factor_diff_bp: float) -> boo
 
 
 def extract_slice_ivs(
-    chain_expiry: pd.DataFrame, spot: float, forward: float, discount_factor: float, T: float
+    chain_expiry: pd.DataFrame,
+    spot: float,
+    forward: float,
+    discount_factor: float,
+    T: float,
+    reference_ts: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
     """Classify every quote in one (underlying, expiry) slice and invert IV for survivors.
 
     Returns one row per input quote with `k`, `iv`, `total_variance`, `vega`, `weight`
     (all null for rejected rows) and a `reason` column — nothing is silently dropped.
     """
-    df = classify_quotes(chain_expiry, spot).copy()
+    df = classify_quotes(chain_expiry, spot, reference_ts=reference_ts).copy()
     df["k"] = np.log(df["strike"] / forward)
 
     # NO_ARB_INTRINSIC before ITM_SIDE, deliberately: an OTM option's forward-intrinsic
@@ -123,10 +128,13 @@ def extract_slice_ivs(
         )
     df["vega"] = quote_vega
 
-    spread = df["ask"] - df["bid"]
-    df["weight"] = np.where(
-        (df["reason"] == OK) & (spread > 0), quote_vega / spread.replace(0, np.nan), np.nan
-    )
+    # Floor spread at a nominal tick size rather than dividing by zero: a locked
+    # (bid==ask) market is unusual but not invalid — ZERO_BID/CROSSED already ruled out
+    # bid<=0 and bid>ask, so a literal zero-width spread here is a genuine two-sided
+    # quote that deserves a high (not undefined/NaN) weight.
+    MIN_SPREAD = 0.01
+    spread = (df["ask"] - df["bid"]).clip(lower=MIN_SPREAD)
+    df["weight"] = np.where(df["reason"] == OK, quote_vega / spread, np.nan)
     return df
 
 
@@ -164,6 +172,9 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
         if chain.empty:
             continue
         spot = float(chain["underlying_px"].iloc[0])
+        reference_ts = staleness_reference_ts(
+            chain["asof_ts"].iloc[0], asof, cfg.canonical_snap_time
+        )
 
         forwards = pd.DataFrame()
         if forwards_root.exists() and any(forwards_root.rglob("*.parquet")):
@@ -203,6 +214,7 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
                     float(fwd_row["forward"]),
                     float(fwd_row["discount_factor_implied"]),
                     T,
+                    reference_ts,
                 )
                 for reason, n in tagged["reason"].value_counts().items():
                     if reason != OK:

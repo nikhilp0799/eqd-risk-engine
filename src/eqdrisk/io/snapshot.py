@@ -21,6 +21,8 @@ from eqdrisk.io.schemas import (
     DIVIDEND_SCHEMA,
     UNDERLYING_REQUIRED_NOT_NULL,
     UNDERLYING_SCHEMA,
+    VOL_INDEX_REQUIRED_NOT_NULL,
+    VOL_INDEX_SCHEMA,
     validate,
 )
 from eqdrisk.marketdata.calendar import last_n_trading_days
@@ -168,5 +170,10 @@ def run_snapshot(cfg: BaseConfig, asof: dt.date) -> SnapshotResult:
     if not rates.empty:
         rates_table = validate(rates, CURVE_SCHEMA, CURVE_REQUIRED_NOT_NULL)
         store.write_partitioned(rates_table, curated_root / "curves", ["asof_date"])
+
+    vol_indices = sources.fetch_vol_indices(rates_start, asof)
+    if not vol_indices.empty:
+        vol_index_table = validate(vol_indices, VOL_INDEX_SCHEMA, VOL_INDEX_REQUIRED_NOT_NULL)
+        store.write_partitioned(vol_index_table, curated_root / "vol_indices", ["asof_date"])
 
     return SnapshotResult(asof=asof, qc=qc, curated_root=curated_root)

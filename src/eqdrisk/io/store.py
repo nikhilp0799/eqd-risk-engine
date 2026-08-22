@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 
 import duckdb
@@ -38,3 +39,29 @@ def query(sql: str, views: dict[str, str] | None = None) -> pa.Table:
                 f"SELECT * FROM read_parquet('{glob}', hive_partitioning=true)"
             )
     return con.execute(sql).to_arrow_table()
+
+
+def latest_available_date(root: str | Path, asof: dt.date) -> dt.date | None:
+    """Latest `asof_date=YYYY-MM-DD` hive partition <= `asof` under `root`.
+
+    Reads partition directory names directly rather than a DuckDB aggregate over
+    the parquet glob — the latter hit a DuckDB optimizer internal exception on
+    small single-partition datasets (see Step 2 planning notes). Also sidesteps
+    FRED-style 1-2 day publication lag: rates/vol-index tables often don't have a
+    row for the exact `asof` date yet, so callers need "most recent on or before,"
+    not an exact match.
+    """
+    root = Path(root)
+    if not root.exists():
+        return None
+    dates = []
+    for p in root.glob("asof_date=*"):
+        if not p.is_dir():
+            continue
+        try:
+            d = dt.date.fromisoformat(p.name.split("=", 1)[1])
+        except ValueError:
+            continue
+        if d <= asof:
+            dates.append(d)
+    return max(dates) if dates else None
