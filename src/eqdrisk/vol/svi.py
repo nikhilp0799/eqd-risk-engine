@@ -134,11 +134,15 @@ def count_butterfly_violations(params: SVIParams, k_grid: np.ndarray) -> int:
     return int(np.sum(durrleman_g(params, k_grid) < 0))
 
 
+BUTTERFLY_MARGIN = 1e-6  # require g(k) >= margin, not just >= 0 — see repair_butterfly_violation
+MAX_REPAIR_ATTEMPTS = 3
+
+
 def repair_butterfly_violation(
     k: np.ndarray, w: np.ndarray, weights: np.ndarray, k_grid: np.ndarray, initial: SVIParams
 ) -> SVIParams:
-    """One SLSQP repair attempt, constraining g(k_grid) >= 0 (README 4.2: "re-fit with
-    the constraint imposed via penalty or SLSQP"). Returns the repaired params — may
+    """SLSQP repair, constraining g(k_grid) >= 0 (README 4.2: "re-fit with the
+    constraint imposed via penalty or SLSQP"). Returns the repaired params — may
     still have residual violations if SLSQP can't fully satisfy the constraint; the
     caller re-checks and reports honestly rather than assuming success.
 
@@ -147,6 +151,13 @@ def repair_butterfly_violation(
     which breaks SLSQP's gradient-based line search ("positive directional derivative"
     failures were observed in practice). Direct parameterisation with proper `bounds`
     is smooth and well-behaved for a constrained local repair.
+
+    Retries up to MAX_REPAIR_ATTEMPTS times from the previous attempt's result, and
+    enforces a small positive margin (not literal >=0) on the constraint — SLSQP's
+    convergence is a local, platform-dependent numerical result (a run that fully
+    satisfies the constraint on one BLAS/LAPACK backend left a few residual
+    violations on another in practice), so a single pass to the exact boundary isn't
+    reliable across environments.
     """
 
     def unpack(params: np.ndarray) -> SVIParams:
@@ -158,21 +169,28 @@ def repair_butterfly_violation(
         return float(np.sum(weights * (model.total_variance(k) - w) ** 2))
 
     def butterfly_constraint(params: np.ndarray) -> np.ndarray:
-        return durrleman_g(unpack(params), k_grid)
+        return durrleman_g(unpack(params), k_grid) - BUTTERFLY_MARGIN
 
     def atm_variance_constraint(params: np.ndarray) -> float:
         a, b, rho, _, sigma = params
-        return a + b * sigma * np.sqrt(max(1 - rho**2, 0.0))
+        return a + b * sigma * np.sqrt(max(1 - rho**2, 0.0)) - BUTTERFLY_MARGIN
 
-    result = minimize(
-        objective,
-        x0=[initial.a, initial.b, initial.rho, initial.m, initial.sigma],
-        method="SLSQP",
-        bounds=[(None, None), (1e-8, None), (-0.999, 0.999), (None, None), (SIGMA_MIN, None)],
-        constraints=[
-            {"type": "ineq", "fun": butterfly_constraint},
-            {"type": "ineq", "fun": atm_variance_constraint},
-        ],
-        options={"maxiter": 200, "ftol": 1e-10},
-    )
-    return unpack(result.x)
+    x0 = [initial.a, initial.b, initial.rho, initial.m, initial.sigma]
+    best = initial
+    for _ in range(MAX_REPAIR_ATTEMPTS):
+        result = minimize(
+            objective,
+            x0=x0,
+            method="SLSQP",
+            bounds=[(None, None), (1e-8, None), (-0.999, 0.999), (None, None), (SIGMA_MIN, None)],
+            constraints=[
+                {"type": "ineq", "fun": butterfly_constraint},
+                {"type": "ineq", "fun": atm_variance_constraint},
+            ],
+            options={"maxiter": 500, "ftol": 1e-12},
+        )
+        best = unpack(result.x)
+        if count_butterfly_violations(best, k_grid) == 0:
+            break
+        x0 = list(result.x)
+    return best
