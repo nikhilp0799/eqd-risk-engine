@@ -81,10 +81,20 @@ def calibrate(
 @app.command()
 def price(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
-    portfolio: str = typer.Option(..., help="Path to portfolio config"),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
 ) -> None:
-    """Mark the portfolio to model."""
-    raise NotImplementedError("Steps 5-7 not yet implemented")
+    """Price every quality-filtered quote off the calibrated surface: Black-76 price,
+    full Greeks, and the sticky-strike/delta/local-vol total-delta comparison (Step 5).
+
+    Not yet the README's portfolio-marking `price` (that needs Step 7's portfolio
+    definition) — this is the per-quote pricing/Greeks layer Step 7 will consume.
+    """
+    from eqdrisk.pricing.engine import run_pricing
+
+    cfg = BaseConfig.from_yaml(config)
+    asof = dt.date.fromisoformat(date)
+    result = run_pricing(cfg, asof)
+    typer.echo(result.render())
 
 
 @app.command()
