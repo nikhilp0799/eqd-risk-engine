@@ -178,6 +178,50 @@ VOL_SURFACE_REQUIRED_NOT_NULL = [
 ]
 
 
+GREEKS_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("underlying", pa.string()),
+        ("expiry", pa.date32()),
+        ("strike", pa.float64()),
+        ("cp", pa.string()),
+        ("T", pa.float64()),
+        ("forward", pa.float64()),
+        ("spot", pa.float64()),
+        ("discount_factor", pa.float64()),
+        ("model", pa.string()),  # "SVI" or "SSVI" — which surface produced `sigma`
+        ("sigma", pa.float64()),
+        ("price", pa.float64()),
+        ("delta_spot", pa.float64()),
+        ("delta_forward", pa.float64()),
+        ("gamma_spot", pa.float64()),
+        ("vega", pa.float64()),
+        ("theta", pa.float64()),
+        ("rho", pa.float64()),
+        ("dividend_rho", pa.float64()),
+        ("vanna_spot", pa.float64()),
+        ("volga", pa.float64()),
+        ("delta_sticky_strike", pa.float64()),
+        ("delta_sticky_delta", pa.float64()),
+        ("delta_sticky_local_vol", pa.float64()),
+    ]
+)
+GREEKS_REQUIRED_NOT_NULL = [
+    "asof_date",
+    "underlying",
+    "expiry",
+    "strike",
+    "cp",
+    "T",
+    "forward",
+    "spot",
+    "discount_factor",
+    "model",
+    "sigma",
+    "price",
+]
+
+
 class SchemaViolation(ValueError):
     pass
 
