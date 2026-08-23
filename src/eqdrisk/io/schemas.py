@@ -222,6 +222,35 @@ GREEKS_REQUIRED_NOT_NULL = [
 ]
 
 
+VARSWAP_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("underlying", pa.string()),
+        ("expiry", pa.date32()),
+        ("T", pa.float64()),
+        ("forward", pa.float64()),
+        ("discount_factor", pa.float64()),
+        ("fair_strike_vol_narrow", pa.float64()),
+        ("fair_strike_vol_wide", pa.float64()),
+        ("truncation_error_vol_points", pa.float64()),
+        ("n_strikes_observed", pa.int64()),
+        ("k_obs_min", pa.float64()),
+        ("k_obs_max", pa.float64()),
+        ("k_wide_cap", pa.float64()),
+    ]
+)
+VARSWAP_REQUIRED_NOT_NULL = [
+    "asof_date",
+    "underlying",
+    "expiry",
+    "T",
+    "forward",
+    "discount_factor",
+    "fair_strike_vol_wide",
+    "n_strikes_observed",
+]
+
+
 class SchemaViolation(ValueError):
     pass
 

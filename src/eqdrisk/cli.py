@@ -98,6 +98,24 @@ def price(
 
 
 @app.command()
+def varswap(
+    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Fair variance-swap strike per calibrated expiry via Carr-Madan static
+    replication, plus the wing-truncation error and VIX cross-check (Step 6.3).
+
+    Not in the README's original CLI table, same reasoning as `curves`/`iv`.
+    """
+    from eqdrisk.pricing.varswap_engine import run_varswap
+
+    cfg = BaseConfig.from_yaml(config)
+    asof = dt.date.fromisoformat(date)
+    result = run_varswap(cfg, asof)
+    typer.echo(result.render())
+
+
+@app.command()
 def var(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     method: str = typer.Option("both", help="full-reval | taylor | both"),
