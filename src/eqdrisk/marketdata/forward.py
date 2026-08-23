@@ -44,6 +44,36 @@ DIVIDEND_LOOKBACK_DAYS = 370  # trailing ~12mo of announced dividends
 
 
 @dataclass
+class ForwardCurve:
+    """Continuous forward term structure F(0,T), interpolated log-linearly (same
+    convention as `curve.Curve`'s discount-factor interpolation) across the day's
+    calibrated per-expiry forwards, flat-extrapolated beyond the shortest/longest
+    pillar. Needed by Step 6's local-vol grid, which evaluates sigma_loc at (spot,
+    calendar-time) pairs that fall off the handful of expiries options actually
+    settle on.
+    """
+
+    pillar_T: np.ndarray
+    pillar_log_forward: np.ndarray
+
+    def forward(self, T: float) -> float:
+        log_f = np.interp(T, self.pillar_T, self.pillar_log_forward)
+        return float(np.exp(log_f))
+
+
+def build_forward_curve(forwards_for_underlying: pd.DataFrame) -> ForwardCurve:
+    """`forwards_for_underlying` must have `T` and `forward` columns for one
+    underlying's expiries on one asof date (i.e. a slice of the `forwards` table)."""
+    df = forwards_for_underlying.sort_values("T")
+    if df.empty:
+        raise ValueError("no forward pillars to build a forward curve from")
+    return ForwardCurve(
+        pillar_T=df["T"].to_numpy(dtype=float),
+        pillar_log_forward=np.log(df["forward"].to_numpy(dtype=float)),
+    )
+
+
+@dataclass
 class ForwardFitResult:
     underlying: str
     expiry: dt.date
