@@ -21,8 +21,17 @@ def _svi_surface(Ts: list[float], rho: float = -0.4) -> pd.DataFrame:
         offset = b * sigma * np.sqrt(1 - rho**2)
         a = (0.20**2) * T - offset
         rows.append(
-            {"T": T, "model": "SVI", "a": a, "b": b, "rho": rho, "m": m, "sigma": sigma,
-             "eta": None, "theta": None}
+            {
+                "T": T,
+                "model": "SVI",
+                "a": a,
+                "b": b,
+                "rho": rho,
+                "m": m,
+                "sigma": sigma,
+                "eta": None,
+                "theta": None,
+            }
         )
     return pd.DataFrame(rows)
 
@@ -38,8 +47,11 @@ def test_g_matches_durrleman_g_exactly():
     surface = _svi_surface([0.3, 0.6, 1.0])
     pillar_row = surface.iloc[1]  # T=0.6 is an exact pillar
     params = SVIParams(
-        a=pillar_row["a"], b=pillar_row["b"], rho=pillar_row["rho"],
-        m=pillar_row["m"], sigma=pillar_row["sigma"],
+        a=pillar_row["a"],
+        b=pillar_row["b"],
+        rho=pillar_row["rho"],
+        m=pillar_row["m"],
+        sigma=pillar_row["sigma"],
     )
     for k in [-0.2, -0.1, 0.0, 0.1, 0.2]:
         g_ref = float(durrleman_g(params, np.array([k]))[0])
@@ -100,8 +112,17 @@ def test_build_local_vol_grid_reports_floored_points_honestly():
     rows = []
     for T in [0.2, 0.5]:
         rows.append(
-            {"T": T, "model": "SVI", "a": bad.a, "b": bad.b, "rho": bad.rho,
-             "m": bad.m, "sigma": bad.sigma, "eta": None, "theta": None}
+            {
+                "T": T,
+                "model": "SVI",
+                "a": bad.a,
+                "b": bad.b,
+                "rho": bad.rho,
+                "m": bad.m,
+                "sigma": bad.sigma,
+                "eta": None,
+                "theta": None,
+            }
         )
     surface = pd.DataFrame(rows)
     fc = ForwardCurve(pillar_T=np.array([0.2, 0.5]), pillar_log_forward=np.log([100.0, 101.0]))
