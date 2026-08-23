@@ -129,6 +129,14 @@ def _slice_w_dk_dkk(
     return np.asarray(w), np.asarray(dk_w), np.asarray(dkk_w)
 
 
+def slice_total_variance(surface_row: pd.Series, k: np.ndarray | float) -> np.ndarray:
+    """Public wrapper around `_slice_w_dk_dkk` for callers that only need `w`
+    (total variance), not its k-derivatives — e.g. `pricing/varswap.py`, which
+    prices a static replication strip off one calibrated expiry's own smile."""
+    w, _, _ = _slice_w_dk_dkk(surface_row, np.asarray(k))
+    return w
+
+
 @dataclass
 class LocalVarianceResult:
     w: float
