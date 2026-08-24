@@ -75,9 +75,7 @@ def autocallable_payoff(
 
         if not is_last:
             paid_coupon = alive & (level >= coupon_level)
-            pv += np.where(
-                paid_coupon, df * spec.notional * spec.coupon_rate * (1.0 + memory), 0.0
-            )
+            pv += np.where(paid_coupon, df * spec.notional * spec.coupon_rate * (1.0 + memory), 0.0)
             memory = np.where(paid_coupon, 0.0, np.where(alive, memory + 1.0, memory))
         else:
             paid_coupon = alive & (level >= coupon_level)
