@@ -251,6 +251,42 @@ VARSWAP_REQUIRED_NOT_NULL = [
 ]
 
 
+PORTFOLIO_MARKS_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("position_id", pa.string()),
+        ("type", pa.string()),
+        ("underlying", pa.string()),
+        ("expiry", pa.date32()),
+        ("T", pa.float64()),
+        ("price", pa.float64()),
+        ("delta", pa.float64()),
+        ("gamma", pa.float64()),
+        ("vega", pa.float64()),
+        ("theta", pa.float64()),
+        ("rho", pa.float64()),
+        ("vanna", pa.float64()),
+        ("volga", pa.float64()),
+        ("k", pa.float64()),  # null for non-vanilla (varswap/barrier/autocall/equity)
+        ("expiry_bucket", pa.string()),
+        ("moneyness_bucket", pa.string()),
+        ("stderr", pa.float64()),  # null for closed-form-priced positions (no MC noise)
+        ("note", pa.string()),  # null for most positions; e.g. varswap's fair strike
+    ]
+)
+PORTFOLIO_MARKS_REQUIRED_NOT_NULL = [
+    "asof_date",
+    "position_id",
+    "type",
+    "underlying",
+    "expiry",
+    "T",
+    "price",
+    "expiry_bucket",
+    "moneyness_bucket",
+]
+
+
 class SchemaViolation(ValueError):
     pass
 
