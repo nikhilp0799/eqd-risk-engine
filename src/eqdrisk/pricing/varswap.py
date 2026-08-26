@@ -31,6 +31,8 @@ range.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
 
@@ -41,10 +43,14 @@ from eqdrisk.vol.local_vol import slice_total_variance
 N_INTEGRATION_POINTS = 400
 
 
-def _price_strip(
-    surface_row: pd.Series, forward: float, T: float, discount_factor: float, k_grid: np.ndarray
+def _price_strip_from_w_func(
+    w_func: Callable[[np.ndarray], np.ndarray],
+    forward: float,
+    T: float,
+    discount_factor: float,
+    k_grid: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    w = slice_total_variance(surface_row, k_grid)
+    w = w_func(k_grid)
     iv = np.sqrt(np.clip(w, 1e-12, None) / T)
     strikes = forward * np.exp(k_grid)
     return np.array(
@@ -57,6 +63,28 @@ def _price_strip(
     ), strikes
 
 
+def fair_variance_strike_from_w_func(
+    w_func: Callable[[np.ndarray], np.ndarray],
+    forward: float,
+    T: float,
+    discount_factor: float,
+    k_min: float,
+    k_max: float,
+    n_points: int = N_INTEGRATION_POINTS,
+) -> float:
+    """Same Carr-Madan replication as `fair_variance_strike`, but off an
+    arbitrary total-variance-in-k callable rather than one calibrated slice's
+    own params — the entry point `portfolio/mark.py` uses to price a variance
+    swap whose expiry doesn't land exactly on a calibrated pillar (`w_func`
+    there is a T-interpolated total variance, built the same way Step 6.1's
+    local-vol grid already interpolates across pillars)."""
+    k_grid = np.linspace(k_min, k_max, n_points)
+    prices, strikes = _price_strip_from_w_func(w_func, forward, T, discount_factor, k_grid)
+    integrand = prices / strikes**2
+    integral = float(np.trapezoid(integrand, strikes))
+    return (2.0 / T) * integral / discount_factor
+
+
 def fair_variance_strike(
     surface_row: pd.Series,
     forward: float,
@@ -67,12 +95,17 @@ def fair_variance_strike(
     n_points: int = N_INTEGRATION_POINTS,
 ) -> float:
     """K_var^2 (annualised variance units, not vol points) integrating the
-    replication strip over log-moneyness [k_min, k_max]."""
-    k_grid = np.linspace(k_min, k_max, n_points)
-    prices, strikes = _price_strip(surface_row, forward, T, discount_factor, k_grid)
-    integrand = prices / strikes**2
-    integral = float(np.trapezoid(integrand, strikes))
-    return (2.0 / T) * integral / discount_factor
+    replication strip over log-moneyness [k_min, k_max], off one calibrated
+    expiry's own SVI/SSVI slice."""
+    return fair_variance_strike_from_w_func(
+        lambda k: slice_total_variance(surface_row, k),
+        forward,
+        T,
+        discount_factor,
+        k_min,
+        k_max,
+        n_points,
+    )
 
 
 def atm_implied_vol(surface_row: pd.Series, T: float) -> float:

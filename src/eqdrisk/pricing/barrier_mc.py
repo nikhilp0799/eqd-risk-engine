@@ -147,3 +147,55 @@ def simulate_down_and_in_put(
         use_bridge_correction,
     )
     return BarrierSimulationResult(terminal=terminal, knocked_in=knocked_in)
+
+
+@dataclass
+class BarrierGreeks:
+    price: float
+    delta: float
+    gamma: float
+    vega: float
+
+
+def down_and_in_put_greeks(
+    s0: float,
+    strike: float,
+    barrier: float,
+    T: float,
+    grid: LocalVolGrid,
+    r: float,
+    q: float,
+    n_paths: int,
+    n_steps: int,
+    seed: int,
+    spot_bump_frac: float = 0.01,
+    vol_bump: float = 0.01,
+) -> BarrierGreeks:
+    """Bump-and-reval delta/gamma/vega under common random numbers — same
+    pattern as `autocallable.autocallable_greeks`, for the same reason: a
+    path-dependent (here, barrier-dependent) payoff makes independently
+    reseeded bump-and-reval Greeks pure noise."""
+    discount_factor = np.exp(-r * T)
+    h = s0 * spot_bump_frac
+
+    def _price(spot: float, g: LocalVolGrid) -> float:
+        result = simulate_down_and_in_put(spot, barrier, T, g, r, q, n_paths, n_steps, seed)
+        price, _ = result.price_and_stderr(strike, discount_factor)
+        return price
+
+    price0 = _price(s0, grid)
+    price_up = _price(s0 + h, grid)
+    price_dn = _price(s0 - h, grid)
+    delta = (price_up - price_dn) / (2 * h)
+    gamma = (price_up - 2 * price0 + price_dn) / h**2
+
+    bumped_grid = LocalVolGrid(
+        s_grid=grid.s_grid,
+        t_grid=grid.t_grid,
+        sigma_loc=grid.sigma_loc + vol_bump,
+        n_floored=grid.n_floored,
+    )
+    price_vol_up = _price(s0, bumped_grid)
+    vega = (price_vol_up - price0) / vol_bump
+
+    return BarrierGreeks(price=price0, delta=delta, gamma=gamma, vega=vega)

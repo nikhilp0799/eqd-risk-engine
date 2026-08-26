@@ -1,0 +1,13 @@
+positions:
+  - {id: P001, type: vanilla, underlying: SPX, cp: P, strike: 5200, expiry: 2026-12-18, qty: -150}
+  - {id: P002, type: vanilla, underlying: SPX, cp: C, strike: 6000, expiry: 2026-12-18, qty: 100}
+  - {id: P003, type: vanilla, underlying: SPX, cp: P, strike: 4800, expiry: 2027-06-17, qty: 200}
+  - {id: P004, type: vanilla, underlying: AAPL, cp: C, strike: 240, expiry: 2026-10-16, qty: -500}
+  - {id: P005, type: vanilla, underlying: NVDA, cp: P, strike: 150, expiry: 2026-09-18, qty: 300}
+  - {id: P006, type: varswap, underlying: SPX, expiry: 2026-12-18, vega_notional: 250000}
+  - {id: P007, type: barrier, underlying: SPX, sub: down_and_in_put,
+     strike: 5500, barrier: 4500, expiry: 2027-06-17, qty: -50}
+  - {id: P008, type: autocall, underlying: NVDA, notional: 5000000,
+     autocall_barrier: 1.00, coupon_barrier: 0.75, put_barrier: 0.65,
+     coupon: 0.0225, obs: quarterly, expiry: 2028-08-15}
+  - {id: P009, type: equity, underlying: SPX, qty: -80}

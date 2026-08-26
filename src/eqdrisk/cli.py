@@ -98,6 +98,28 @@ def price(
 
 
 @app.command()
+def portfolio(
+    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
+    portfolio_path: str = typer.Option(
+        "configs/portfolio.yaml", "--portfolio", help="Path to portfolio config"
+    ),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Mark the portfolio (`configs/portfolio.yaml`) to model and aggregate Greeks
+    by underlying, expiry bucket, and moneyness bucket (Step 7).
+
+    Kept separate from `price` (Step 5's per-quote pricer) rather than overloading
+    it with a `--portfolio` flag — they answer different questions.
+    """
+    from eqdrisk.portfolio.mark import mark_portfolio
+
+    cfg = BaseConfig.from_yaml(config)
+    asof = dt.date.fromisoformat(date)
+    result = mark_portfolio(cfg, asof, portfolio_path)
+    typer.echo(result.render())
+
+
+@app.command()
 def varswap(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     config: str = typer.Option("configs/base.yaml", help="Path to base config"),
