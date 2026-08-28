@@ -29,6 +29,12 @@ an engineering one — flagged same as every prior step's honest simplifications
   position, not because they're truly zero, but because a variance swap's risk
   is conventionally expressed in vega-notional terms directly, not decomposed
   through a strike the config doesn't specify.
+
+Split into `load_market_state` (query the curated store once) and `mark_with_state`
+(price every position given a market state) so Step 11's stress testing can load
+today's real market ONCE and reprice under many `MarketShock`s without re-querying
+the store or rebuilding local-vol grids from scratch each time. `mark_portfolio`
+is the convenience wrapper that does both for the plain, unshocked daily mark.
 """
 
 from __future__ import annotations
@@ -58,8 +64,9 @@ from eqdrisk.pricing.autocallable import AutocallableSpec, autocallable_greeks
 from eqdrisk.pricing.barrier_mc import down_and_in_put_greeks
 from eqdrisk.pricing.blackscholes import compute_greeks
 from eqdrisk.pricing.varswap import fair_variance_strike_from_w_func
+from eqdrisk.stress.shock import MarketShock, shock_local_vol_grid, shocked_spot, shocked_w
 from eqdrisk.vol.implied import EXTREME_K_MULTIPLE
-from eqdrisk.vol.local_vol import LocalVolGrid, build_local_vol_grid, local_variance_at
+from eqdrisk.vol.local_vol import LocalVolGrid, build_local_vol_grid
 
 EXPIRY_BUCKETS = [
     (0.25, "0-3m"),
@@ -190,15 +197,27 @@ class PortfolioMarkResult:
         return "\n".join(lines)
 
 
-def mark_portfolio(cfg: BaseConfig, asof: dt.date, portfolio_path: str) -> PortfolioMarkResult:
-    curated_root = Path(cfg.paths.curated)
-    portfolio = Portfolio.from_yaml(portfolio_path)
-    result = PortfolioMarkResult(asof=asof)
+@dataclass
+class MarketState:
+    """Everything a mark needs from the curated store, loaded ONCE — Step 11's
+    stress testing loads this once per `asof` and reprices it under many
+    `MarketShock`s, rather than re-querying the store or rebuilding local-vol
+    grids (expensive — Step 6.1's own T-interpolation) from scratch per shock."""
 
+    curve: Curve
+    spot: dict[str, float]
+    surface: dict[str, pd.DataFrame]
+    forward_curve: dict[str, ForwardCurve]
+    grids: dict[str, LocalVolGrid]
+
+
+def load_market_state(cfg: BaseConfig, asof: dt.date, portfolio: Portfolio) -> MarketState | None:
+    """Returns None if there's no curated rates data at all for this date —
+    nothing downstream is priceable without a discount curve."""
+    curated_root = Path(cfg.paths.curated)
     curves_date = store.latest_available_date(curated_root / "curves", asof)
     if curves_date is None:
-        result.skipped["_all_"] = "no curated rates available"
-        return result
+        return None
     rates = store.query(
         f"SELECT * FROM curves WHERE asof_date = DATE '{curves_date.isoformat()}'",
         views={"curves": str(curated_root / "curves")},
@@ -264,15 +283,56 @@ def mark_portfolio(cfg: BaseConfig, asof: dt.date, portfolio_path: str) -> Portf
         if grid is not None:
             grids[u] = grid
 
+    return MarketState(
+        curve=curve, spot=spot, surface=surface, forward_curve=forward_curve, grids=grids
+    )
+
+
+def mark_with_state(
+    cfg: BaseConfig,
+    asof: dt.date,
+    portfolio: Portfolio,
+    state: MarketState,
+    shock: MarketShock | dict[str, MarketShock] | None = None,
+) -> PortfolioMarkResult:
+    """Price every position given an already-loaded `MarketState`, optionally
+    under a `MarketShock` — either ONE shock applied to every underlying
+    (11.2's hypothetical grid: the same spot/vol move everywhere) or a
+    per-underlying `dict` (11.1's historical replays: SPX, AAPL, NVDA... each
+    really moved by a different amount during a given episode, and using each
+    name's own real historical move is the whole point of a *historical*
+    replay rather than a hypothetical one). Default: a no-op, i.e. today's
+    real, unshocked marks. Does NOT persist — only `mark_portfolio`'s own
+    plain daily mark does; shocked/scenario marks are Step 11's concern, not
+    this table's.
+    """
+    shock_map = shock if isinstance(shock, dict) else {}
+    uniform_shock = shock if isinstance(shock, MarketShock) else MarketShock()
+
+    def shock_for(underlying: str) -> MarketShock:
+        return shock_map.get(underlying, uniform_shock)
+
+    result = PortfolioMarkResult(asof=asof)
+
     for p in portfolio.positions:
         u = p.underlying
-        if u not in spot or u not in surface or u not in forward_curve:
+        if u not in state.spot or u not in state.surface or u not in state.forward_curve:
             result.skipped[p.id] = f"no spot/surface/forward data for {u} on {asof}"
             continue
+        position_shock = shock_for(u)
 
         try:
             if isinstance(p, VanillaPosition):
-                mark = _mark_vanilla(p, asof, cfg, spot[u], surface[u], forward_curve[u], curve)
+                mark = _mark_vanilla(
+                    p,
+                    asof,
+                    cfg,
+                    state.spot[u],
+                    state.surface[u],
+                    state.forward_curve[u],
+                    state.curve,
+                    position_shock,
+                )
             elif isinstance(p, EquityPosition):
                 mark = PositionMark(
                     position_id=p.id,
@@ -280,21 +340,47 @@ def mark_portfolio(cfg: BaseConfig, asof: dt.date, portfolio_path: str) -> Portf
                     underlying=u,
                     expiry=asof,
                     T=0.0,
-                    price=p.qty * spot[u],
+                    price=p.qty * shocked_spot(state.spot[u], position_shock),
                     delta=p.qty,
                 )
             elif isinstance(p, VarSwapPosition):
-                mark = _mark_varswap(p, asof, cfg, surface[u], forward_curve[u], curve)
+                mark = _mark_varswap(
+                    p,
+                    asof,
+                    cfg,
+                    state.surface[u],
+                    state.forward_curve[u],
+                    state.curve,
+                    position_shock,
+                )
             elif isinstance(p, BarrierPosition):
-                if u not in grids:
+                if u not in state.grids:
                     result.skipped[p.id] = f"no local-vol grid available for {u}"
                     continue
-                mark = _mark_barrier(p, asof, cfg, spot[u], grids[u], curve, forward_curve[u])
+                mark = _mark_barrier(
+                    p,
+                    asof,
+                    cfg,
+                    state.spot[u],
+                    state.grids[u],
+                    state.curve,
+                    state.forward_curve[u],
+                    position_shock,
+                )
             elif isinstance(p, AutocallPosition):
-                if u not in grids:
+                if u not in state.grids:
                     result.skipped[p.id] = f"no local-vol grid available for {u}"
                     continue
-                mark = _mark_autocall(p, asof, cfg, spot[u], grids[u], curve, forward_curve[u])
+                mark = _mark_autocall(
+                    p,
+                    asof,
+                    cfg,
+                    state.spot[u],
+                    state.grids[u],
+                    state.curve,
+                    state.forward_curve[u],
+                    position_shock,
+                )
             else:  # pragma: no cover - exhaustive over the discriminated union
                 raise TypeError(f"unknown position type: {p!r}")
         except ValueError as exc:
@@ -303,8 +389,20 @@ def mark_portfolio(cfg: BaseConfig, asof: dt.date, portfolio_path: str) -> Portf
 
         result.marks.append(mark)
 
+    return result
+
+
+def mark_portfolio(cfg: BaseConfig, asof: dt.date, portfolio_path: str) -> PortfolioMarkResult:
+    portfolio = Portfolio.from_yaml(portfolio_path)
+    state = load_market_state(cfg, asof, portfolio)
+    if state is None:
+        result = PortfolioMarkResult(asof=asof)
+        result.skipped["_all_"] = "no curated rates available"
+        return result
+
+    result = mark_with_state(cfg, asof, portfolio, state)
     if result.marks:
-        _persist(result, curated_root)
+        _persist(result, Path(cfg.paths.curated))
     return result
 
 
@@ -316,15 +414,15 @@ def _mark_vanilla(
     surface: pd.DataFrame,
     fwd_curve: ForwardCurve,
     curve: Curve,
+    shock: MarketShock,
 ) -> PositionMark:
     T = year_fraction(asof, p.expiry, cfg.daycount)
-    forward = fwd_curve.forward(T)
+    spot = shocked_spot(spot, shock)
+    forward = fwd_curve.forward(T) * (1 + shock.spot_shock_pct)  # same carry, shocked spot
     discount_factor = curve.discount_factor(T)
     k = float(np.log(p.strike / forward))
-    lv = local_variance_at(surface, k, T)
-    if lv is None:
-        raise ValueError(f"not enough calibrated expiries to price {p.underlying} at T={T:.3f}")
-    sigma = float(np.sqrt(max(lv.w, 1e-12) / T))
+    w = shocked_w(surface, k, T, shock)
+    sigma = float(np.sqrt(max(w, 1e-12) / T))
 
     g = compute_greeks(p.cp == "C", forward, p.strike, T, sigma, discount_factor, spot)
     return PositionMark(
@@ -352,15 +450,16 @@ def _mark_varswap(
     surface: pd.DataFrame,
     fwd_curve: ForwardCurve,
     curve: Curve,
+    shock: MarketShock,
 ) -> PositionMark:
     T = year_fraction(asof, p.expiry, cfg.daycount)
-    forward = fwd_curve.forward(T)
+    forward = fwd_curve.forward(T) * (1 + shock.spot_shock_pct)
     discount_factor = curve.discount_factor(T)
 
     def w_func(k: np.ndarray) -> np.ndarray:
-        return np.array([_w_at(surface, float(kk), T) for kk in np.atleast_1d(k)])
+        return np.array([shocked_w(surface, float(kk), T, shock) for kk in np.atleast_1d(k)])
 
-    atm_iv = float(np.sqrt(max(_w_at(surface, 0.0, T), 1e-12) / T))
+    atm_iv = float(np.sqrt(max(shocked_w(surface, 0.0, T, shock), 1e-12) / T))
     k_cap = EXTREME_K_MULTIPLE * atm_iv * np.sqrt(T)
     fair_var = fair_variance_strike_from_w_func(w_func, forward, T, discount_factor, -k_cap, k_cap)
     fair_strike_pct = float(np.sqrt(max(fair_var, 0.0)) * 100)
@@ -376,13 +475,6 @@ def _mark_varswap(
         k=None,
         note=f"fair_strike={fair_strike_pct:.2f}% (marked as a fresh swap at its own fair strike)",
     )
-
-
-def _w_at(surface: pd.DataFrame, k: float, T: float) -> float:
-    lv = local_variance_at(surface, k, T)
-    if lv is None:
-        raise ValueError(f"not enough calibrated expiries to price a variance swap at T={T:.3f}")
-    return lv.w
 
 
 def _implied_q(spot: float, forward: float, r: float, T: float) -> float:
@@ -402,10 +494,14 @@ def _mark_barrier(
     grid: LocalVolGrid,
     curve: Curve,
     fwd_curve: ForwardCurve,
+    shock: MarketShock,
 ) -> PositionMark:
     T = year_fraction(asof, p.expiry, cfg.daycount)
+    spot = shocked_spot(spot, shock)
+    forward = fwd_curve.forward(T) * (1 + shock.spot_shock_pct)
     r = curve.zero_rate(T)
-    q = _implied_q(spot, fwd_curve.forward(T), r, T)
+    q = _implied_q(spot, forward, r, T)
+    grid = shock_local_vol_grid(grid, fwd_curve, shock)
     greeks = down_and_in_put_greeks(
         spot, p.strike, p.barrier, T, grid, r, q, MC_N_PATHS, BARRIER_N_STEPS, MC_SEED
     )
@@ -431,10 +527,14 @@ def _mark_autocall(
     grid: LocalVolGrid,
     curve: Curve,
     fwd_curve: ForwardCurve,
+    shock: MarketShock,
 ) -> PositionMark:
     T = year_fraction(asof, p.expiry, cfg.daycount)
+    spot = shocked_spot(spot, shock)
+    forward = fwd_curve.forward(T) * (1 + shock.spot_shock_pct)
     r = curve.zero_rate(T)
-    q = _implied_q(spot, fwd_curve.forward(T), r, T)
+    q = _implied_q(spot, forward, r, T)
+    grid = shock_local_vol_grid(grid, fwd_curve, shock)
 
     obs_times = _quarterly_obs_times(asof, p.expiry, cfg.daycount)
     spec = AutocallableSpec(
