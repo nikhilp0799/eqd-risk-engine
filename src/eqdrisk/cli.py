@@ -156,6 +156,27 @@ def riskfactors(
 
 
 @app.command()
+def historicalreplay(
+    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
+    portfolio_path: str = typer.Option(
+        "configs/portfolio.yaml", "--portfolio", help="Path to portfolio config"
+    ),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Reprice today's portfolio under five named historical market episodes
+    (Volmageddon, COVID crash, etc.), using REAL pulled spot/VIX moves from
+    each episode (Step 11.1). Not in the README's original CLI table, same
+    reasoning as `curves`/`iv`/`riskfactors`.
+    """
+    from eqdrisk.stress.replay import run_historical_replay
+
+    cfg = BaseConfig.from_yaml(config)
+    asof = dt.date.fromisoformat(date)
+    result = run_historical_replay(cfg, asof, portfolio_path)
+    typer.echo(result.render())
+
+
+@app.command()
 def var(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     method: str = typer.Option("both", help="full-reval | taylor | both"),
