@@ -237,7 +237,7 @@ def run_forward_construction(cfg: BaseConfig, asof: dt.date) -> ForwardConstruct
         spot = float(chain["underlying_px"].iloc[0])
         div_yield = announced_dividend_yield(dividends_root, underlying, spot, asof)
         reference_ts = staleness_reference_ts(
-            chain["asof_ts"].iloc[0], asof, cfg.canonical_snap_time
+            chain["asof_ts"].iloc[0], asof, cfg.canonical_snap_time, cfg.calendar
         )
 
         for expiry, chain_expiry in chain.groupby("expiry"):

@@ -1,3 +1,5 @@
+import datetime as dt
+
 import pandas as pd
 import pytest
 
@@ -10,6 +12,7 @@ from eqdrisk.marketdata.quality import (
     ZERO_BID,
     classify_quotes,
     rejection_counts,
+    staleness_reference_ts,
     wide_spread_threshold,
 )
 
@@ -87,3 +90,39 @@ def test_rejection_counts_excludes_ok():
     tagged = classify_quotes(df, spot=100.0)
     counts = rejection_counts(tagged)
     assert counts == {ZERO_BID: 1, CROSSED: 1}
+
+
+# 2026-08-20/21/24 are NYSE trading days; 2026-08-22/23 (Sat/Sun) are not.
+TRADING_DAY = dt.date(2026, 8, 21)
+NEXT_TRADING_DAY = dt.date(2026, 8, 24)
+CANONICAL_CLOSE_TIME = dt.time(16, 0, 0)
+
+
+def test_staleness_reference_mid_session_is_capture_time_itself():
+    capture = pd.Timestamp("2026-08-21 13:00:00", tz="America/New_York")
+    ref = staleness_reference_ts(capture, TRADING_DAY, CANONICAL_CLOSE_TIME)
+    assert ref == capture
+
+
+def test_staleness_reference_after_close_caps_at_canonical_close():
+    capture = pd.Timestamp("2026-08-21 22:39:00", tz="America/New_York")
+    ref = staleness_reference_ts(capture, TRADING_DAY, CANONICAL_CLOSE_TIME)
+    assert ref == pd.Timestamp("2026-08-21 16:00:00", tz="America/New_York")
+
+
+def test_staleness_reference_before_open_falls_back_to_prior_trading_day_close():
+    """Real bug found live (2026-08-28): a 00:32 ET pre-market run measured
+    staleness against literal 'now,' before the session had even opened, and
+    rejected 100% of SPX as STALE even though the most recent trade — from the
+    prior day's completely normal close — was fresh by any reasonable standard.
+    """
+    capture = pd.Timestamp("2026-08-24 00:32:00", tz="America/New_York")
+    ref = staleness_reference_ts(capture, NEXT_TRADING_DAY, CANONICAL_CLOSE_TIME)
+    assert ref == pd.Timestamp("2026-08-21 16:00:00", tz="America/New_York")
+
+
+def test_staleness_reference_on_a_non_trading_day_falls_back_to_prior_trading_day_close():
+    weekend_day = dt.date(2026, 8, 22)  # Saturday
+    capture = pd.Timestamp("2026-08-22 10:00:00", tz="America/New_York")
+    ref = staleness_reference_ts(capture, weekend_day, CANONICAL_CLOSE_TIME)
+    assert ref == pd.Timestamp("2026-08-21 16:00:00", tz="America/New_York")

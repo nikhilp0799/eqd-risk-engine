@@ -287,6 +287,19 @@ PORTFOLIO_MARKS_REQUIRED_NOT_NULL = [
 ]
 
 
+RISK_FACTOR_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("underlying", pa.string()),
+        ("k", pa.float64()),
+        ("T", pa.float64()),
+        ("T_label", pa.string()),
+        ("w", pa.float64()),
+    ]
+)
+RISK_FACTOR_REQUIRED_NOT_NULL = ["asof_date", "underlying", "k", "T", "T_label", "w"]
+
+
 class SchemaViolation(ValueError):
     pass
 
