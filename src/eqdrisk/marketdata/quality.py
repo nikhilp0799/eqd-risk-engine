@@ -19,7 +19,10 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 
+from eqdrisk.marketdata.calendar import is_trading_day, last_n_trading_days
+
 NY_TZ = "America/New_York"
+MARKET_OPEN_TIME = dt.time(9, 30)  # NYSE regular session open, ET
 
 ZERO_BID = "ZERO_BID"
 CROSSED = "CROSSED"
@@ -96,15 +99,30 @@ def rejection_counts(tagged: pd.DataFrame) -> dict[str, int]:
 
 
 def staleness_reference_ts(
-    capture_ts: pd.Timestamp, asof: dt.date, canonical_snap_time: dt.time
+    capture_ts: pd.Timestamp, asof: dt.date, canonical_snap_time: dt.time, calendar: str = "NYSE"
 ) -> pd.Timestamp:
-    """The point staleness should be measured against: whichever is earlier of the
-    actual capture time and that trading day's canonical close.
+    """The point staleness should be measured against: the most recent instant, at
+    or before `capture_ts`, at which the market could plausibly have just traded.
 
-    Running mid-day, this is just `capture_ts` (live intraday freshness). Running
-    after the close — including any dev/demo run at an arbitrary hour — this is the
-    close itself, so "how long ago did this last trade" doesn't spuriously include
-    the hours nothing has traded because the market is shut.
+    Three regimes:
+    - Running mid-session: this is just `capture_ts` (live intraday freshness).
+    - Running after that day's close (including any dev/demo run at an arbitrary
+      later hour): the close itself, so "how long ago did this last trade" doesn't
+      spuriously include the hours nothing has traded because the market is shut.
+    - Running before that day's open — including on a non-trading day (found live,
+      2026-08-28: a 00:32 ET pre-market run measured every quote's staleness
+      against literal "now," rejecting 100% of SPX as STALE even though the most
+      recent trade, from the prior session's close, was completely normal): the
+      PRIOR trading day's close, not the too-early literal capture time, which
+      would spuriously demand trades from a session that hasn't opened yet.
     """
     canonical_close = pd.Timestamp.combine(asof, canonical_snap_time).tz_localize(NY_TZ)
-    return min(capture_ts, canonical_close)
+    if capture_ts >= canonical_close:
+        return canonical_close
+
+    market_open = pd.Timestamp.combine(asof, MARKET_OPEN_TIME).tz_localize(NY_TZ)
+    if not is_trading_day(asof, calendar) or capture_ts < market_open:
+        prior_day = last_n_trading_days(asof - dt.timedelta(days=1), 1, calendar)[0]
+        return pd.Timestamp.combine(prior_day, canonical_snap_time).tz_localize(NY_TZ)
+
+    return capture_ts

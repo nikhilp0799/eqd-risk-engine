@@ -173,7 +173,7 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
             continue
         spot = float(chain["underlying_px"].iloc[0])
         reference_ts = staleness_reference_ts(
-            chain["asof_ts"].iloc[0], asof, cfg.canonical_snap_time
+            chain["asof_ts"].iloc[0], asof, cfg.canonical_snap_time, cfg.calendar
         )
 
         forwards = pd.DataFrame()

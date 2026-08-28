@@ -138,6 +138,24 @@ def varswap(
 
 
 @app.command()
+def riskfactors(
+    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Evaluate the fixed (k, T) vol risk-factor grid against that day's
+    calibrated surface (Step 8.1). The grid is fixed; the surface moves.
+
+    Not in the README's original CLI table, same reasoning as `curves`/`iv`.
+    """
+    from eqdrisk.vol.risk_factors import run_risk_factor_grid
+
+    cfg = BaseConfig.from_yaml(config)
+    asof = dt.date.fromisoformat(date)
+    result = run_risk_factor_grid(cfg, asof)
+    typer.echo(result.render())
+
+
+@app.command()
 def var(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     method: str = typer.Option("both", help="full-reval | taylor | both"),
