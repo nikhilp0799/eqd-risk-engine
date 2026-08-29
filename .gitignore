@@ -20,6 +20,9 @@ venv/
 data/raw/
 data/curated/
 
+# Daily-ingest automation logs
+logs/
+
 # OS / editor
 .DS_Store
 .vscode/
