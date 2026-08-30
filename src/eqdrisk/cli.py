@@ -177,6 +177,26 @@ def historicalreplay(
 
 
 @app.command()
+def hypotheticalgrid(
+    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
+    portfolio_path: str = typer.Option(
+        "configs/portfolio.yaml", "--portfolio", help="Path to portfolio config"
+    ),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Reprice today's portfolio across a spot x vol shock ladder (7x6 grid)
+    plus skew-steepening and term-structure-inversion scenarios (Step 11.2).
+    Not in the README's original CLI table, same reasoning as `curves`/`iv`.
+    """
+    from eqdrisk.stress.hypothetical_grid import run_hypothetical_grid
+
+    cfg = BaseConfig.from_yaml(config)
+    asof = dt.date.fromisoformat(date)
+    result = run_hypothetical_grid(cfg, asof, portfolio_path)
+    typer.echo(result.render())
+
+
+@app.command()
 def var(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     method: str = typer.Option("both", help="full-reval | taylor | both"),

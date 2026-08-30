@@ -8,6 +8,45 @@ Built to mirror the daily workflow of an equity derivatives risk quant: *the num
 
 ---
 
+## Current build status (updated 2026-08-30)
+
+**This README doubles as the original build plan (kept intentionally — it explains *why* each
+step matters and what "done" looks like), but a lot of it is no longer just a plan.** Steps 1–7,
+8.1, 11.1, and 11.2 are built, tested, and verified against real live market data. Each step
+section below is tagged with its actual status.
+
+| Status | Steps |
+|---|---|
+| **Done** | 0–7 (data → curves → IV → calibration → pricing/Greeks → exotics → portfolio), 8.1 (risk-factor grid), 11.1 (historical replay stress), 11.2 (hypothetical stress grid) |
+| **Partial** | 8 (8.2 PCA / 8.3 proxy modelling need real multi-day history), 11 (11.3 conditional stress / 11.4 reverse stress need the same) |
+| **Not started** | 9 (VaR) and 10 (backtesting) — blocked on the same real-history dependency as above; 12 (P&L explain), 13 (incident report), 14 (dashboard), 15 (model doc), 16 (engineering polish) — no data dependency, just not built yet |
+
+**Why some steps are deferred rather than skipped:** several of the acceptance criteria below (PCA
+on real vol-surface changes, a 250–1000 day VaR window, a conditional-stress beta estimated from
+history) need a real, *accumulating* history of daily calibrated vol surfaces — something a
+free-tier, single-snapshot-per-day pipeline builds up one real trading day at a time, not
+retroactively. That daily data pull is now fully automated (`scripts/daily_ingest.sh` on a
+`launchd` schedule — see `docs/AUTOMATION.md`) rather than run by hand, so this history keeps
+accumulating unattended.
+
+**Real findings so far, not just passing tests** — the project's own standard is honest numbers,
+not tuned-to-look-clean ones:
+- Black-76 price matches QuantLib to 1e-8; several Greeks match to 1e-6.
+- A genuine SPX calendar-arbitrage violation, found on real data, correctly triggered the SSVI
+  fallback (Step 4).
+- The local-vol Monte Carlo engine reprices calibrated vanillas within a fraction of a standard
+  error; the Brownian-bridge barrier correction cut a >25-SE naive-discretisation bias down to
+  ~0.1 SE at the same coarse step count (Step 6).
+- A live historical-replay stress test against five real episodes (Volmageddon, the COVID crash,
+  the 2022 rate shock, the 2024 yen carry unwind) using REAL pulled spot/VIX moves — the COVID
+  scenario alone showed an 82%-of-book loss on the current 9-position portfolio (Step 11.1).
+- Two real bugs were caught by testing a claim rather than assuming it: a wall-clock staleness bug
+  that could zero out all quote coverage depending on time of day (Step 4), and a documented
+  "exact" stress-shock math claim that turned out to be off by up to ~40% once actually tested
+  (Step 11).
+
+---
+
 ## Table of contents
 
 - [Why this project](#why-this-project)
@@ -197,6 +236,8 @@ eqd-risk-engine/
 
 ## Step 0 — Environment setup
 
+**Status: done.** Full skeleton, CI, pre-commit, pydantic config schema, CLI scaffolding — all green from the start.
+
 ### 0.1 Toolchain
 
 ```bash
@@ -261,6 +302,8 @@ daycount: "ACT/365F"
 ---
 
 ## Step 1 — Data layer
+
+**Status: done, verified live.** Real ingestion for SPX/AAPL/NVDA/JPM/XLE, schema-enforced, reason-coded row rejection, QC reports with prior-day diffs.
 
 ### 1.1 Sources
 
@@ -334,6 +377,8 @@ Define one canonical snap time in config (`16:00:00 ET`), pull every input as cl
 
 ## Step 2 — Curves, forwards, implied dividends
 
+**Status: done, verified live** (refined further by Step 3's root-cause fix below). Curve bootstrap + put-call-parity forward regression + implied dividend, live on all 5 underlyings.
+
 ### 2.1 Discount curve
 
 Bootstrap from SOFR + Treasury CMT. Interpolate **linearly in log discount factor** (equivalently, piecewise-constant forward rates) — never linearly in zero rate, which produces jagged forwards.
@@ -372,6 +417,8 @@ Build the implied dividend term structure daily. Compare against announced divid
 ---
 
 ## Step 3 — Implied vol extraction and quality filtering
+
+**Status: done, verified live.** The quote-quality filter chain (ZERO_BID/CROSSED/STALE/LOW_OI/WIDE_SPREAD/...) fixed Step 2's noise at the root; Black-76 IV inversion produces a genuinely correct-looking SPX skew on real data.
 
 ### 3.1 Inversion
 
@@ -418,6 +465,8 @@ Vega-weighting means you fit in price space where price is sensitive to vol; spr
 ---
 
 ## Step 4 — Volatility surface calibration (SVI / SSVI / SABR)
+
+**Status: done, verified live.** SVI + Durrleman butterfly repair + SSVI calendar-arbitrage fallback + SABR comparison, all exercised on real data — including a genuine SPX calendar-arbitrage violation correctly triggering the SSVI fallback.
 
 ### 4.1 Raw SVI
 
@@ -493,6 +542,8 @@ That comparison paragraph is a strong interview answer.
 
 ## Step 5 — Vanilla pricing and sensitivities
 
+**Status: done, verified live.** Full Greek set (incl. vanna/volga) validated against QuantLib (price to 1e-8) and central finite differences; sticky-strike/delta/local-vol conventions computed live (the ≥60-day historical comparison chart is deferred pending accumulated history — see the status table above).
+
 ### 5.1 Pricing
 
 Black-76 on forwards:
@@ -541,6 +592,8 @@ Compute all three for the book daily. Then compute what each would have predicte
 ---
 
 ## Step 6 — Exotics: local vol, variance swaps, barriers, autocallables
+
+**Status: done, verified live — all five sub-parts (6.1–6.5).** Dupire local vol + numba/Sobol/Brownian-bridge Monte Carlo, variance swap replication, barrier closed-form + bridge-corrected MC, and a CRN-Greeks autocallable — each validated against an independent check (QuantLib/VIX/parity identity/synthetic scale-invariance), not just internally consistent.
 
 ### 6.1 Dupire local volatility
 
@@ -598,6 +651,8 @@ Risk characteristics to document (this is why the JD names them):
 
 ## Step 7 — Portfolio definition
 
+**Status: done, verified live.** The README's own 9-position example portfolio marks end-to-end with zero skips on real market data, aggregated by underlying/expiry-bucket/moneyness-bucket.
+
 Keep it small enough to reason about, diverse enough to hit every risk type.
 
 ```yaml
@@ -631,6 +686,8 @@ Design intent — be able to explain each:
 ---
 
 ## Step 8 — Risk factors, PCA, and proxy modelling
+
+**Status: partially built.** 8.1 (the fixed risk-factor grid) is built and verified live. 8.2 (PCA) and 8.3 (proxy modelling) are deferred — both need a real, accumulating time series of daily Δw(k,T), which a single day's snapshot can't provide; see the status table above.
 
 ### 8.1 Building the risk-factor grid
 
@@ -679,6 +736,8 @@ What to report — the error analysis is the whole point:
 ---
 
 ## Step 9 — VaR and Expected Shortfall
+
+**Status: not started.** Needs a 250–1000 day historical window the project's now-automated daily pull is building toward — see the status table above.
 
 ### 9.1 Historical simulation
 
@@ -730,6 +789,8 @@ $$ \text{ES} = \sqrt{\left(\text{ES}^{(1)}\right)^2 + \sum_{j\ge2}\left(\text{ES
 
 ## Step 10 — Backtesting the VaR model
 
+**Status: not started.** Depends entirely on Step 9's output.
+
 A VaR number without a backtest is an opinion. This section is what makes it a model.
 
 ### 10.1 Kupiec unconditional coverage (POF test)
@@ -768,6 +829,8 @@ Write the backtest report the way a validator would want to read it: state the t
 ---
 
 ## Step 11 — Stress testing and reverse stress testing
+
+**Status: partially built.** 11.1 (historical replay, using real pulled spot/VIX moves from five named episodes) and 11.2 (the hypothetical spot×vol grid) are built and verified live. 11.3 (conditional stress) and 11.4 (reverse stress) are deferred — both need a real historical factor covariance/beta estimate; see the status table above.
 
 Three tiers, increasing in sophistication.
 
@@ -821,6 +884,8 @@ Report:
 
 ## Step 12 — Daily P&L explain
 
+**Status: not started.**
+
 **This is the module that makes the project read as risk rather than pricing.**
 
 ### 12.1 Decomposition
@@ -858,6 +923,8 @@ If your residual is small and stable, your risk representation is adequate. If i
 ---
 
 ## Step 13 — The incident report
+
+**Status: not started.** Needs a real residual spike day from Step 12.
 
 Take the worst residual day from Step 12 and write it up as a production incident, in the format a bank actually uses.
 
@@ -915,6 +982,8 @@ market-implied equivalent.
 
 ## Step 14 — Dashboard
 
+**Status: not started.**
+
 Streamlit, six tabs:
 
 1. **Surface** — 3D surface, slice fits with market points overlaid, RMSE by bucket, arbitrage check status.
@@ -929,6 +998,8 @@ Design constraint: **every number on the dashboard must be traceable to a stored
 ---
 
 ## Step 15 — Model documentation
+
+**Status: not started.**
 
 12–15 pages, written in the style of an SR 11-7 model development document. Structure:
 
@@ -952,6 +1023,8 @@ Design constraint: **every number on the dashboard must be traceable to a stored
 ---
 
 ## Step 16 — Engineering polish
+
+**Status: partially built.** CI (ruff/mypy/pytest) is green throughout and property-based tests (`hypothesis`) are already in use — the fuller testing-pyramid/performance/reproducibility checklist below isn't formally completed yet.
 
 ### Testing pyramid
 

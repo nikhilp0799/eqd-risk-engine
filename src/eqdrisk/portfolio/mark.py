@@ -95,6 +95,19 @@ AUTOCALL_N_STEPS_PER_PERIOD = 8
 MC_SEED = 12345
 
 
+@dataclass
+class MCSettings:
+    """Overridable MC cost knobs — `mark_with_state`'s default (`None`) reuses
+    the plain daily-mark constants above unchanged. Step 11.2's hypothetical
+    grid needs a much cheaper setting (42 full reprices, not one), so it builds
+    its own `MCSettings` rather than paying Step 7's per-mark cost 42 times."""
+
+    n_paths: int = MC_N_PATHS
+    barrier_n_steps: int = BARRIER_N_STEPS
+    autocall_n_steps_per_period: int = AUTOCALL_N_STEPS_PER_PERIOD
+    seed: int = MC_SEED
+
+
 def _expiry_bucket(T: float) -> str:
     for threshold, label in EXPIRY_BUCKETS:
         if T <= threshold:
@@ -294,6 +307,7 @@ def mark_with_state(
     portfolio: Portfolio,
     state: MarketState,
     shock: MarketShock | dict[str, MarketShock] | None = None,
+    mc_settings: MCSettings | None = None,
 ) -> PortfolioMarkResult:
     """Price every position given an already-loaded `MarketState`, optionally
     under a `MarketShock` — either ONE shock applied to every underlying
@@ -302,10 +316,14 @@ def mark_with_state(
     really moved by a different amount during a given episode, and using each
     name's own real historical move is the whole point of a *historical*
     replay rather than a hypothetical one). Default: a no-op, i.e. today's
-    real, unshocked marks. Does NOT persist — only `mark_portfolio`'s own
-    plain daily mark does; shocked/scenario marks are Step 11's concern, not
-    this table's.
+    real, unshocked marks. `mc_settings` overrides the MC cost knobs for
+    barrier/autocall positions (default `None` reuses the plain daily-mark
+    constants) — Step 11.2's 42-cell grid needs a much cheaper setting than
+    one daily mark does. Does NOT persist — only `mark_portfolio`'s own plain
+    daily mark does; shocked/scenario marks are Step 11's concern, not this
+    table's.
     """
+    mc = mc_settings if mc_settings is not None else MCSettings()
     shock_map = shock if isinstance(shock, dict) else {}
     uniform_shock = shock if isinstance(shock, MarketShock) else MarketShock()
 
@@ -366,6 +384,7 @@ def mark_with_state(
                     state.curve,
                     state.forward_curve[u],
                     position_shock,
+                    mc,
                 )
             elif isinstance(p, AutocallPosition):
                 if u not in state.grids:
@@ -380,6 +399,7 @@ def mark_with_state(
                     state.curve,
                     state.forward_curve[u],
                     position_shock,
+                    mc,
                 )
             else:  # pragma: no cover - exhaustive over the discriminated union
                 raise TypeError(f"unknown position type: {p!r}")
@@ -495,6 +515,7 @@ def _mark_barrier(
     curve: Curve,
     fwd_curve: ForwardCurve,
     shock: MarketShock,
+    mc_settings: MCSettings,
 ) -> PositionMark:
     T = year_fraction(asof, p.expiry, cfg.daycount)
     spot = shocked_spot(spot, shock)
@@ -503,7 +524,16 @@ def _mark_barrier(
     q = _implied_q(spot, forward, r, T)
     grid = shock_local_vol_grid(grid, fwd_curve, shock)
     greeks = down_and_in_put_greeks(
-        spot, p.strike, p.barrier, T, grid, r, q, MC_N_PATHS, BARRIER_N_STEPS, MC_SEED
+        spot,
+        p.strike,
+        p.barrier,
+        T,
+        grid,
+        r,
+        q,
+        mc_settings.n_paths,
+        mc_settings.barrier_n_steps,
+        mc_settings.seed,
     )
     return PositionMark(
         position_id=p.id,
@@ -528,6 +558,7 @@ def _mark_autocall(
     curve: Curve,
     fwd_curve: ForwardCurve,
     shock: MarketShock,
+    mc_settings: MCSettings,
 ) -> PositionMark:
     T = year_fraction(asof, p.expiry, cfg.daycount)
     spot = shocked_spot(spot, shock)
@@ -546,7 +577,14 @@ def _mark_autocall(
         obs_times=obs_times,
     )
     greeks = autocallable_greeks(
-        spec, spot, grid, r, q, MC_N_PATHS, AUTOCALL_N_STEPS_PER_PERIOD, MC_SEED
+        spec,
+        spot,
+        grid,
+        r,
+        q,
+        mc_settings.n_paths,
+        mc_settings.autocall_n_steps_per_period,
+        mc_settings.seed,
     )
     return PositionMark(
         position_id=p.id,
