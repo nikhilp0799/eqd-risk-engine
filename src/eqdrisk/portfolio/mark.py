@@ -224,6 +224,42 @@ class MarketState:
     grids: dict[str, LocalVolGrid]
 
 
+def build_grids_for_state(
+    cfg: BaseConfig,
+    asof: dt.date,
+    portfolio: Portfolio,
+    spot: dict[str, float],
+    surface: dict[str, pd.DataFrame],
+    forward_curve: dict[str, ForwardCurve],
+) -> dict[str, LocalVolGrid]:
+    """One `LocalVolGrid` per underlying that actually needs Monte Carlo (barrier/
+    autocall positions), built once and reused across that underlying's MC-priced
+    positions. Factored out of `load_market_state` so Step 12's P&L explain can
+    build a grid for an intermediate (mixed-day) state too, not just a real
+    store-loaded one."""
+    mc_underlyings = {
+        p.underlying
+        for p in portfolio.positions
+        if isinstance(p, (BarrierPosition, AutocallPosition))
+    }
+    grids: dict[str, LocalVolGrid] = {}
+    for u in mc_underlyings:
+        if u not in spot or u not in surface or u not in forward_curve:
+            continue
+        s0 = spot[u]
+        max_T = max(
+            year_fraction(asof, p.expiry, cfg.daycount)
+            for p in portfolio.positions
+            if p.underlying == u and isinstance(p, (BarrierPosition, AutocallPosition))
+        )
+        s_grid = np.linspace(max(1.0, s0 * 0.1), s0 * 3.0, 100)
+        t_grid = np.linspace(0.01, max_T, 60)
+        grid = build_local_vol_grid(surface[u], forward_curve[u], s_grid, t_grid)
+        if grid is not None:
+            grids[u] = grid
+    return grids
+
+
 def load_market_state(cfg: BaseConfig, asof: dt.date, portfolio: Portfolio) -> MarketState | None:
     """Returns None if there's no curated rates data at all for this date —
     nothing downstream is priceable without a discount curve."""
@@ -273,28 +309,7 @@ def load_market_state(cfg: BaseConfig, asof: dt.date, portfolio: Portfolio) -> M
             if not fwd.empty:
                 forward_curve[u] = build_forward_curve(fwd)
 
-    # One LocalVolGrid per underlying that actually needs Monte Carlo (barrier/autocall),
-    # built once and reused across that underlying's MC-priced positions.
-    mc_underlyings = {
-        p.underlying
-        for p in portfolio.positions
-        if isinstance(p, (BarrierPosition, AutocallPosition))
-    }
-    grids: dict[str, LocalVolGrid] = {}
-    for u in mc_underlyings:
-        if u not in spot or u not in surface:
-            continue
-        s0 = spot[u]
-        max_T = max(
-            year_fraction(asof, p.expiry, cfg.daycount)
-            for p in portfolio.positions
-            if p.underlying == u and isinstance(p, (BarrierPosition, AutocallPosition))
-        )
-        s_grid = np.linspace(max(1.0, s0 * 0.1), s0 * 3.0, 100)
-        t_grid = np.linspace(0.01, max_T, 60)
-        grid = build_local_vol_grid(surface[u], forward_curve[u], s_grid, t_grid)
-        if grid is not None:
-            grids[u] = grid
+    grids = build_grids_for_state(cfg, asof, portfolio, spot, surface, forward_curve)
 
     return MarketState(
         curve=curve, spot=spot, surface=surface, forward_curve=forward_curve, grids=grids

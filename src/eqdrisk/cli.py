@@ -197,6 +197,32 @@ def hypotheticalgrid(
 
 
 @app.command()
+def explainpnl(
+    day0: str = typer.Option(..., help="Prior date, YYYY-MM-DD"),
+    day1: str = typer.Option(..., help="Current date, YYYY-MM-DD"),
+    portfolio_path: str = typer.Option(
+        "configs/portfolio.yaml", "--portfolio", help="Path to portfolio config"
+    ),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Decompose day0->day1's actual portfolio P&L into a time/rates-divs/spot/vol
+    Greeks waterfall, reporting the residual at each step (Step 12).
+
+    Takes two dates, unlike the README's original single-date `explain` stub —
+    P&L is a difference between two real days, so a new, clearly-scoped command
+    rather than overloading that signature, same reasoning as every other
+    step's added command.
+    """
+    from eqdrisk.pricing.pnl_explain import run_pnl_explain
+
+    cfg = BaseConfig.from_yaml(config)
+    d0 = dt.date.fromisoformat(day0)
+    d1 = dt.date.fromisoformat(day1)
+    result = run_pnl_explain(cfg, d0, d1, portfolio_path)
+    typer.echo(result.render())
+
+
+@app.command()
 def var(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     method: str = typer.Option("both", help="full-reval | taylor | both"),

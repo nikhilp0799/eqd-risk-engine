@@ -300,6 +300,26 @@ RISK_FACTOR_SCHEMA = pa.schema(
 RISK_FACTOR_REQUIRED_NOT_NULL = ["asof_date", "underlying", "k", "T", "T_label", "w"]
 
 
+PNL_EXPLAIN_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),  # day1 — the date this explain run covers
+        ("day0", pa.date32()),
+        ("step", pa.string()),  # "time" | "rates_divs" | "spot" | "vol"
+        ("actual_pnl", pa.float64()),
+        ("explained_pnl", pa.float64()),
+        ("residual", pa.float64()),
+    ]
+)
+PNL_EXPLAIN_REQUIRED_NOT_NULL = [
+    "asof_date",
+    "day0",
+    "step",
+    "actual_pnl",
+    "explained_pnl",
+    "residual",
+]
+
+
 class SchemaViolation(ValueError):
     pass
 
