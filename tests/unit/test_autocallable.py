@@ -109,9 +109,16 @@ def test_crn_delta_and_gamma_are_exactly_zero_under_flat_scale_invariant_vol():
     price(S+h) == price(S) == price(S-h) EXACTLY at ANY fixed flat vol level
     (not just the base one), it holds at the vol-bumped levels too, so the four
     vanna corner prices collapse pairwise (price_pp == price_mp, price_pm ==
-    price_mm) and vanna must come out exactly 0.0 as well. Volga is NOT
-    expected to vanish — it's a pure vol-convexity effect, unrelated to the
-    spot scale-invariance identity.
+    price_mm) and vanna must come out at floating-point-noise level — a real
+    vanna effect here would be orders of magnitude larger than rounding error
+    (vega and volga on this same book are in the hundreds of thousands, so
+    anything past 1e-5 would be a genuine, not numerical, signal). Unlike
+    delta/gamma's single-grid two-term cancellation, vanna's four corners
+    involve a SEPARATE bumped-vol grid object, so cross-platform numba/BLAS
+    summation-order differences can leave a tiny (~1e-9, observed on Linux CI
+    but not on macOS) non-zero residue — a tolerance, not exact equality, is
+    the honest check. Volga is NOT expected to vanish at all — it's a pure
+    vol-convexity effect, unrelated to the spot scale-invariance identity.
     """
     spec = _spec()
     grid = _flat_vol_grid(0.25)
@@ -120,7 +127,7 @@ def test_crn_delta_and_gamma_are_exactly_zero_under_flat_scale_invariant_vol():
     )
     assert g.delta == 0.0
     assert g.gamma == 0.0
-    assert g.vanna == 0.0
+    assert g.vanna == pytest.approx(0.0, abs=1e-5)
     assert np.isfinite(g.volga)
 
 
