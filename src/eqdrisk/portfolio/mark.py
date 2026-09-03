@@ -560,6 +560,8 @@ def _mark_barrier(
         delta=p.qty * greeks.delta,
         gamma=p.qty * greeks.gamma,
         vega=p.qty * greeks.vega,
+        vanna=p.qty * greeks.vanna,
+        volga=p.qty * greeks.volga,
         k=float(np.log(p.strike / spot)),
     )
 
@@ -611,6 +613,8 @@ def _mark_autocall(
         delta=greeks.delta,
         gamma=greeks.gamma,
         vega=greeks.vega,
+        vanna=greeks.vanna,
+        volga=greeks.volga,
         k=None,
     )
 

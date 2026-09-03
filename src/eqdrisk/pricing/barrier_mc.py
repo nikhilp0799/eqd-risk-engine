@@ -155,6 +155,8 @@ class BarrierGreeks:
     delta: float
     gamma: float
     vega: float
+    vanna: float
+    volga: float
 
 
 def down_and_in_put_greeks(
@@ -171,10 +173,12 @@ def down_and_in_put_greeks(
     spot_bump_frac: float = 0.01,
     vol_bump: float = 0.01,
 ) -> BarrierGreeks:
-    """Bump-and-reval delta/gamma/vega under common random numbers — same
-    pattern as `autocallable.autocallable_greeks`, for the same reason: a
-    path-dependent (here, barrier-dependent) payoff makes independently
-    reseeded bump-and-reval Greeks pure noise."""
+    """Bump-and-reval delta/gamma/vega/vanna/volga under common random numbers
+    — same pattern as `autocallable.autocallable_greeks`, for the same reason:
+    a path-dependent (here, barrier-dependent) payoff makes independently
+    reseeded bump-and-reval Greeks pure noise. Vanna/volga close the same
+    Step 13 incident gap for barrier positions, which share the identical
+    architectural limitation (see `autocallable_greeks`'s docstring)."""
     discount_factor = np.exp(-r * T)
     h = s0 * spot_bump_frac
 
@@ -183,19 +187,33 @@ def down_and_in_put_greeks(
         price, _ = result.price_and_stderr(strike, discount_factor)
         return price
 
+    def _bumped_grid(dvol: float) -> LocalVolGrid:
+        return LocalVolGrid(
+            s_grid=grid.s_grid,
+            t_grid=grid.t_grid,
+            sigma_loc=grid.sigma_loc + dvol,
+            n_floored=grid.n_floored,
+        )
+
+    grid_vol_up = _bumped_grid(vol_bump)
+    grid_vol_dn = _bumped_grid(-vol_bump)
+
     price0 = _price(s0, grid)
     price_up = _price(s0 + h, grid)
     price_dn = _price(s0 - h, grid)
+    price_vol_up = _price(s0, grid_vol_up)
+    price_vol_dn = _price(s0, grid_vol_dn)
+    price_pp = _price(s0 + h, grid_vol_up)
+    price_pm = _price(s0 + h, grid_vol_dn)
+    price_mp = _price(s0 - h, grid_vol_up)
+    price_mm = _price(s0 - h, grid_vol_dn)
+
     delta = (price_up - price_dn) / (2 * h)
     gamma = (price_up - 2 * price0 + price_dn) / h**2
+    vega = (price_vol_up - price_vol_dn) / (2 * vol_bump)
+    volga = (price_vol_up - 2 * price0 + price_vol_dn) / vol_bump**2
+    vanna = (price_pp - price_pm - price_mp + price_mm) / (4 * h * vol_bump)
 
-    bumped_grid = LocalVolGrid(
-        s_grid=grid.s_grid,
-        t_grid=grid.t_grid,
-        sigma_loc=grid.sigma_loc + vol_bump,
-        n_floored=grid.n_floored,
+    return BarrierGreeks(
+        price=price0, delta=delta, gamma=gamma, vega=vega, vanna=vanna, volga=volga
     )
-    price_vol_up = _price(s0, bumped_grid)
-    vega = (price_vol_up - price0) / vol_bump
-
-    return BarrierGreeks(price=price0, delta=delta, gamma=gamma, vega=vega)

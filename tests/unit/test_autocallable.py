@@ -104,6 +104,14 @@ def test_crn_delta_and_gamma_are_exactly_zero_under_flat_scale_invariant_vol():
     the price, EXACTLY unchanged. Delta and gamma should come out as exactly
     0.0, not just "small" — a strong, deterministic-under-CRN sanity check that
     doesn't depend on statistical tolerances.
+
+    The same scale-invariance argument extends one derivative further: since
+    price(S+h) == price(S) == price(S-h) EXACTLY at ANY fixed flat vol level
+    (not just the base one), it holds at the vol-bumped levels too, so the four
+    vanna corner prices collapse pairwise (price_pp == price_mp, price_pm ==
+    price_mm) and vanna must come out exactly 0.0 as well. Volga is NOT
+    expected to vanish — it's a pure vol-convexity effect, unrelated to the
+    spot scale-invariance identity.
     """
     spec = _spec()
     grid = _flat_vol_grid(0.25)
@@ -112,6 +120,8 @@ def test_crn_delta_and_gamma_are_exactly_zero_under_flat_scale_invariant_vol():
     )
     assert g.delta == 0.0
     assert g.gamma == 0.0
+    assert g.vanna == 0.0
+    assert np.isfinite(g.volga)
 
 
 def test_crn_greeks_reuse_the_same_paths_across_bumps():
