@@ -8,18 +8,18 @@ Built to mirror the daily workflow of an equity derivatives risk quant: *the num
 
 ---
 
-## Current build status (updated 2026-08-30)
+## Current build status (updated 2026-09-02)
 
 **This README doubles as the original build plan (kept intentionally — it explains *why* each
 step matters and what "done" looks like), but a lot of it is no longer just a plan.** Steps 1–7,
-8.1, 11.1, and 11.2 are built, tested, and verified against real live market data. Each step
-section below is tagged with its actual status.
+8.1, 11.1, 11.2, 12, and 13 are built, tested, and verified against real live market data. Each
+step section below is tagged with its actual status.
 
 | Status | Steps |
 |---|---|
-| **Done** | 0–7 (data → curves → IV → calibration → pricing/Greeks → exotics → portfolio), 8.1 (risk-factor grid), 11.1 (historical replay stress), 11.2 (hypothetical stress grid) |
+| **Done** | 0–7 (data → curves → IV → calibration → pricing/Greeks → exotics → portfolio), 8.1 (risk-factor grid), 11.1 (historical replay stress), 11.2 (hypothetical stress grid), 12 (daily P&L explain), 13 (incident report) |
 | **Partial** | 8 (8.2 PCA / 8.3 proxy modelling need real multi-day history), 11 (11.3 conditional stress / 11.4 reverse stress need the same) |
-| **Not started** | 9 (VaR) and 10 (backtesting) — blocked on the same real-history dependency as above; 12 (P&L explain), 13 (incident report), 14 (dashboard), 15 (model doc), 16 (engineering polish) — no data dependency, just not built yet |
+| **Not started** | 9 (VaR) and 10 (backtesting) — blocked on the same real-history dependency as above; 14 (dashboard), 15 (model doc), 16 (engineering polish) — no data dependency, just not built yet |
 
 **Why some steps are deferred rather than skipped:** several of the acceptance criteria below (PCA
 on real vol-surface changes, a 250–1000 day VaR window, a conditional-stress beta estimated from
@@ -44,6 +44,12 @@ not tuned-to-look-clean ones:
   that could zero out all quote coverage depending on time of day (Step 4), and a documented
   "exact" stress-shock math claim that turned out to be off by up to ~40% once actually tested
   (Step 11).
+- The project's first real day-over-day P&L explain run found a $178k unexplained residual, 99.6%
+  of it traced to one position (an NVDA autocallable) whose vega-only Greek set couldn't see its
+  true vol sensitivity near the note's barriers — exactly the gap the README had predicted for
+  this instrument type back in Step 6. Written up as a real incident report and partially fixed
+  (Step 12/13); see `docs/incidents/2026-09-01_p008_autocallable_vega_residual.md` for the honest
+  before/after (the fix helps but doesn't fully close the gap, and the report explains why).
 
 ---
 
@@ -884,7 +890,11 @@ Report:
 
 ## Step 12 — Daily P&L explain
 
-**Status: not started.**
+**Status: done, verified live.** `pricing/pnl_explain.py` builds the time -> rates/divs -> spot ->
+vol waterfall from two real `MarketState`s; verified on the first real consecutive trading-day pair
+the automated pipeline produced (2026-08-31 -> 2026-09-01), where it found a genuine $178k
+residual, 99.6% traced to one position — see Step 13. The 60+ day acceptance bar (median residual
+< 2bp) is still pending real history; every automated day adds one more real point toward it.
 
 **This is the module that makes the project read as risk rather than pricing.**
 
@@ -924,7 +934,12 @@ If your residual is small and stable, your risk representation is adequate. If i
 
 ## Step 13 — The incident report
 
-**Status: not started.** Needs a real residual spike day from Step 12.
+**Status: done, verified live.** Step 12's first real day pair handed this a genuine incident (see
+`docs/incidents/2026-09-01_p008_autocallable_vega_residual.md`): 99.6% of a $178k residual traced
+to the NVDA autocallable's vega-only Greek set. Fixed by adding vanna/volga to the autocallable and
+barrier Monte Carlo pricers (same architectural gap in both) and re-verified live — the fix is
+real and directionally correct (vol-step residual fell ~13%) but honestly does not fully close the
+gap, which the report itself explains.
 
 Take the worst residual day from Step 12 and write it up as a production incident, in the format a bank actually uses.
 
