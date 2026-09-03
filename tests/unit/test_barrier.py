@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from eqdrisk.pricing.barrier_closed_form import down_and_in_put_price, down_and_out_put_price
-from eqdrisk.pricing.barrier_mc import simulate_down_and_in_put
+from eqdrisk.pricing.barrier_mc import down_and_in_put_greeks, simulate_down_and_in_put
 from eqdrisk.pricing.blackscholes import put_price
 from eqdrisk.vol.local_vol import LocalVolGrid
 
@@ -109,6 +109,25 @@ def test_bridge_correction_reprices_closed_form_far_better_than_naive_monitoring
     # The bridge-corrected price matches the closed form within a few standard
     # errors, at the SAME (coarse) step count.
     assert price_bridge == pytest.approx(closed_form, abs=4 * se_bridge)
+
+
+def test_greeks_are_deterministic_and_finite_under_crn():
+    """Same CRN requirement as `autocallable_greeks` (README Step 13): two calls
+    with the same seed must be bit-identical, and all five Greeks (including the
+    vanna/volga added to close the Step 13 incident gap) must come out finite."""
+    spot, strike, barrier, T, sigma, r, q = 100.0, 100.0, 80.0, 1.0, 0.25, 0.03, 0.01
+    grid = _flat_vol_grid(sigma)
+
+    g1 = down_and_in_put_greeks(
+        spot, strike, barrier, T, grid, r, q, n_paths=20_000, n_steps=16, seed=7
+    )
+    g2 = down_and_in_put_greeks(
+        spot, strike, barrier, T, grid, r, q, n_paths=20_000, n_steps=16, seed=7
+    )
+
+    assert g1 == g2
+    for value in (g1.price, g1.delta, g1.gamma, g1.vega, g1.vanna, g1.volga):
+        assert np.isfinite(value)
 
 
 def test_bridge_correction_bias_shrinks_with_more_steps_even_without_correction():

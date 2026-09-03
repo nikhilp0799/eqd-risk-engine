@@ -124,6 +124,8 @@ class AutocallableGreeks:
     delta: float
     gamma: float
     vega: float
+    vanna: float
+    volga: float
 
 
 def autocallable_greeks(
@@ -139,23 +141,48 @@ def autocallable_greeks(
     vol_bump: float = 0.01,
 ) -> AutocallableGreeks:
     """Bump-and-reval, all under the SAME seed (common random numbers) — the
-    only way path-dependent bump-and-reval Greeks aren't pure noise."""
+    only way path-dependent bump-and-reval Greeks aren't pure noise.
+
+    Vanna and volga close the gap this incident found (README Step 13): a
+    vega-only Greek set badly overstates the true vol sensitivity of a
+    barrier-laden payoff whose effective exposure itself changes with spot and
+    vol. Volga is a second central difference in vol, free to add once vega is
+    computed as a central difference too. Vanna needs the four cross-bumped
+    (spot, vol) corners on top of the five single-variable prices already
+    computed for delta/gamma/vega — nine full reprices in total, all under the
+    same seed so the mixed finite difference isn't noise."""
     h = s0 * spot_bump_frac
-    price0, _ = price_autocallable(spec, s0, grid, r, q, n_paths, n_steps_per_period, seed)
-    price_up, _ = price_autocallable(spec, s0 + h, grid, r, q, n_paths, n_steps_per_period, seed)
-    price_dn, _ = price_autocallable(spec, s0 - h, grid, r, q, n_paths, n_steps_per_period, seed)
+
+    def _price(s0_: float, grid_: LocalVolGrid) -> float:
+        return price_autocallable(spec, s0_, grid_, r, q, n_paths, n_steps_per_period, seed)[0]
+
+    def _bumped_grid(dvol: float) -> LocalVolGrid:
+        return LocalVolGrid(
+            s_grid=grid.s_grid,
+            t_grid=grid.t_grid,
+            sigma_loc=grid.sigma_loc + dvol,
+            n_floored=grid.n_floored,
+        )
+
+    grid_vol_up = _bumped_grid(vol_bump)
+    grid_vol_dn = _bumped_grid(-vol_bump)
+
+    price0 = _price(s0, grid)
+    price_up = _price(s0 + h, grid)
+    price_dn = _price(s0 - h, grid)
+    price_vol_up = _price(s0, grid_vol_up)
+    price_vol_dn = _price(s0, grid_vol_dn)
+    price_pp = _price(s0 + h, grid_vol_up)
+    price_pm = _price(s0 + h, grid_vol_dn)
+    price_mp = _price(s0 - h, grid_vol_up)
+    price_mm = _price(s0 - h, grid_vol_dn)
+
     delta = (price_up - price_dn) / (2 * h)
     gamma = (price_up - 2 * price0 + price_dn) / h**2
+    vega = (price_vol_up - price_vol_dn) / (2 * vol_bump)
+    volga = (price_vol_up - 2 * price0 + price_vol_dn) / vol_bump**2
+    vanna = (price_pp - price_pm - price_mp + price_mm) / (4 * h * vol_bump)
 
-    bumped_grid = LocalVolGrid(
-        s_grid=grid.s_grid,
-        t_grid=grid.t_grid,
-        sigma_loc=grid.sigma_loc + vol_bump,
-        n_floored=grid.n_floored,
+    return AutocallableGreeks(
+        price=price0, delta=delta, gamma=gamma, vega=vega, vanna=vanna, volga=volga
     )
-    price_vol_up, _ = price_autocallable(
-        spec, s0, bumped_grid, r, q, n_paths, n_steps_per_period, seed
-    )
-    vega = (price_vol_up - price0) / vol_bump
-
-    return AutocallableGreeks(price=price0, delta=delta, gamma=gamma, vega=vega)
