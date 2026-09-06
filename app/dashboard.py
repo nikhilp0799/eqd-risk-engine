@@ -155,7 +155,7 @@ def render_surface_tab(cfg: BaseConfig) -> None:
         height=550,
         margin=dict(l=0, r=0, t=20, b=0),
     )
-    st.plotly_chart(fig3d, use_container_width=True)
+    st.plotly_chart(fig3d, width="stretch")
 
     st.subheader("Single-expiry slice: fit vs. market")
     expiry_choice = st.selectbox("Expiry", surface["expiry"].tolist(), key="surface_expiry")
@@ -175,7 +175,7 @@ def render_surface_tab(cfg: BaseConfig) -> None:
         height=400,
         margin=dict(l=0, r=0, t=20, b=0),
     )
-    st.plotly_chart(fig2d, use_container_width=True)
+    st.plotly_chart(fig2d, width="stretch")
 
 
 def render_exposure_tab(cfg: BaseConfig) -> None:
@@ -235,7 +235,7 @@ def render_exposure_tab(cfg: BaseConfig) -> None:
     fig.update_layout(
         xaxis_title="strike", yaxis_title="delta", height=400, margin=dict(l=0, r=0, t=20, b=0)
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_var_tab(cfg: BaseConfig) -> None:
@@ -281,7 +281,7 @@ def render_stress_tab(cfg: BaseConfig) -> None:
                 text_auto=",.0f",
             )
             fig.update_layout(height=450, margin=dict(l=0, r=0, t=20, b=0))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         for scenario, label in [
             ("skew_steepening", "Skew-steepening scenario P&L"),
             ("term_inversion", "Term-structure-inversion scenario P&L"),
@@ -300,7 +300,7 @@ def render_stress_tab(cfg: BaseConfig) -> None:
     day_df = replay_all[replay_all["asof_date"] == asof].sort_values("pnl")
     fig = go.Figure(go.Bar(x=day_df["episode_name"], y=day_df["pnl"]))
     fig.update_layout(yaxis_title="P&L ($)", height=400, margin=dict(l=0, r=0, t=20, b=0))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     st.dataframe(
         day_df[["episode_name", "episode_description", "base_value", "shocked_value", "pnl"]],
         hide_index=True,
@@ -321,7 +321,7 @@ def render_pnl_explain_tab(cfg: BaseConfig) -> None:
     fig.update_layout(
         yaxis_title="Total residual ($)", height=350, margin=dict(l=0, r=0, t=20, b=0)
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     st.caption(
         f"{n_days} real day-pair(s) of P&L explain available so far. The README's own "
         f"acceptance bar (median residual < 2bp of NAV) needs {PNL_EXPLAIN_ACCEPTANCE_DAYS}+ "
@@ -348,7 +348,7 @@ def render_pnl_explain_tab(cfg: BaseConfig) -> None:
     fig_wf.update_layout(
         barmode="group", yaxis_title="P&L ($)", height=400, margin=dict(l=0, r=0, t=20, b=0)
     )
-    st.plotly_chart(fig_wf, use_container_width=True)
+    st.plotly_chart(fig_wf, width="stretch")
     st.dataframe(day_steps.reset_index(), hide_index=True)
 
     st.subheader("Residual drill-down by position")
@@ -361,7 +361,7 @@ def render_pnl_explain_tab(cfg: BaseConfig) -> None:
     ].sort_values("residual", key=lambda s: s.abs(), ascending=False)
     fig_pos = go.Figure(go.Bar(x=by_pos["position_id"], y=by_pos["residual"]))
     fig_pos.update_layout(yaxis_title="Residual ($)", height=350, margin=dict(l=0, r=0, t=20, b=0))
-    st.plotly_chart(fig_pos, use_container_width=True)
+    st.plotly_chart(fig_pos, width="stretch")
     st.dataframe(by_pos, hide_index=True)
 
 
