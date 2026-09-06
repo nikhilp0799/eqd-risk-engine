@@ -8,18 +8,18 @@ Built to mirror the daily workflow of an equity derivatives risk quant: *the num
 
 ---
 
-## Current build status (updated 2026-09-02)
+## Current build status (updated 2026-09-06)
 
 **This README doubles as the original build plan (kept intentionally — it explains *why* each
 step matters and what "done" looks like), but a lot of it is no longer just a plan.** Steps 1–7,
-8.1, 11.1, 11.2, 12, and 13 are built, tested, and verified against real live market data. Each
-step section below is tagged with its actual status.
+8.1, 11.1, 11.2, and 12 through 15 are built, tested, and verified against real live market data.
+Each step section below is tagged with its actual status.
 
 | Status | Steps |
 |---|---|
-| **Done** | 0–7 (data → curves → IV → calibration → pricing/Greeks → exotics → portfolio), 8.1 (risk-factor grid), 11.1 (historical replay stress), 11.2 (hypothetical stress grid), 12 (daily P&L explain), 13 (incident report) |
-| **Partial** | 8 (8.2 PCA / 8.3 proxy modelling need real multi-day history), 11 (11.3 conditional stress / 11.4 reverse stress need the same) |
-| **Not started** | 9 (VaR) and 10 (backtesting) — blocked on the same real-history dependency as above; 14 (dashboard), 15 (model doc), 16 (engineering polish) — no data dependency, just not built yet |
+| **Done** | 0–7 (data → curves → IV → calibration → pricing/Greeks → exotics → portfolio), 8.1 (risk-factor grid), 11.1 (historical replay stress), 11.2 (hypothetical stress grid), 12 (daily P&L explain), 13 (incident report), 14 (dashboard), 15 (model documentation) |
+| **Partial** | 8 (8.2 PCA / 8.3 proxy modelling need real multi-day history), 11 (11.3 conditional stress / 11.4 reverse stress need the same), 16 (engineering polish — CI/lint/type-check already green throughout, fuller checklist not formally completed) |
+| **Not started** | 9 (VaR) and 10 (backtesting) — blocked on the same real-history dependency as above |
 
 **Why some steps are deferred rather than skipped:** several of the acceptance criteria below (PCA
 on real vol-surface changes, a 250–1000 day VaR window, a conditional-stress beta estimated from
@@ -50,6 +50,15 @@ not tuned-to-look-clean ones:
   this instrument type back in Step 6. Written up as a real incident report and partially fixed
   (Step 12/13); see `docs/incidents/2026-09-01_p008_autocallable_vega_residual.md` for the honest
   before/after (the fix helps but doesn't fully close the gap, and the report explains why).
+- Building the dashboard (Step 14) surfaced a real gap: two stress-testing modules (Step 11) and
+  P&L explain's per-position breakdown had never persisted their results to disk, only rendered
+  them in-memory via the CLI — which would have meant either violating the dashboard's own "no
+  live computation" rule or building it half-honestly. Fixed by adding real persistence to all
+  three before the dashboard was built, the same pattern every other step already uses.
+- Writing the model documentation (Step 15) required no new findings of its own — its job was to
+  state, in one place, the ones already found: the vega-only Greek gap (Step 13) leads its
+  limitations section, per the step's own stated grading bar that a model doc's limitations
+  section matters more than its "it works" claims.
 
 ---
 
@@ -997,7 +1006,12 @@ market-implied equivalent.
 
 ## Step 14 — Dashboard
 
-**Status: not started.**
+**Status: done, verified live.** `app/dashboard.py` (Streamlit, launched via `eqdrisk dashboard`),
+six tabs, every number read from a stored curated artifact — no live pricing/calibration in the UI.
+Building this honestly required extending Step 11's stress modules and P&L explain with real
+persistence they didn't have before (both used to only render in-memory results via the CLI);
+VaR/Backtest tabs show an honest "not yet built, pending real history" placeholder rather than
+being hidden.
 
 Streamlit, six tabs:
 
@@ -1014,7 +1028,10 @@ Design constraint: **every number on the dashboard must be traceable to a stored
 
 ## Step 15 — Model documentation
 
-**Status: not started.**
+**Status: done.** `docs/model_documentation.md` — 12-15 pages, all 9 required sections, written
+from real numbers pulled from the codebase and decision log rather than generic claims. The
+limitations section leads with the Step 13 incident (the vega-only Greek gap) as the clearest
+real evidence of where local vol structurally falls short, per this step's own stated grading bar.
 
 12–15 pages, written in the style of an SR 11-7 model development document. Structure:
 
