@@ -320,6 +320,49 @@ PNL_EXPLAIN_REQUIRED_NOT_NULL = [
 ]
 
 
+PNL_EXPLAIN_BY_POSITION_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),  # day1 — matches PNL_EXPLAIN_SCHEMA's convention
+        ("day0", pa.date32()),
+        ("position_id", pa.string()),
+        ("residual", pa.float64()),
+    ]
+)
+PNL_EXPLAIN_BY_POSITION_REQUIRED_NOT_NULL = ["asof_date", "day0", "position_id", "residual"]
+
+
+HISTORICAL_REPLAY_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("episode_name", pa.string()),
+        ("episode_description", pa.string()),
+        ("base_value", pa.float64()),
+        ("shocked_value", pa.float64()),
+        ("pnl", pa.float64()),
+    ]
+)
+HISTORICAL_REPLAY_REQUIRED_NOT_NULL = [
+    "asof_date",
+    "episode_name",
+    "base_value",
+    "shocked_value",
+    "pnl",
+]
+
+
+HYPOTHETICAL_GRID_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("scenario", pa.string()),  # "grid" | "skew_steepening" | "term_inversion"
+        ("spot_shock_pct", pa.float64()),  # null for the two standalone scenarios
+        ("vol_shock_pct", pa.float64()),  # null for the two standalone scenarios
+        ("base_value", pa.float64()),
+        ("pnl", pa.float64()),
+    ]
+)
+HYPOTHETICAL_GRID_REQUIRED_NOT_NULL = ["asof_date", "scenario", "base_value", "pnl"]
+
+
 class SchemaViolation(ValueError):
     pass
 

@@ -1,9 +1,14 @@
 # Daily data-pull automation
 
 The whole pipeline (`ingest` → `curves` → `iv` → `calibrate` per underlying → `price` → `varswap` →
-`riskfactors`) used to be run by hand — which is exactly why real calibrated history stopped
-accumulating for 4+ days at a stretch (see `planning/decisions.md`, 2026-08-25/28). This is now
-automated via a macOS `launchd` agent so it runs whether or not anyone remembers to trigger it.
+`riskfactors` → `portfolio` → `explainpnl`) used to be run by hand — which is exactly why real
+calibrated history stopped accumulating for 4+ days at a stretch (see `planning/decisions.md`,
+2026-08-25/28). This is now automated via a macOS `launchd` agent so it runs whether or not anyone
+remembers to trigger it. `portfolio` and `explainpnl` (day-over-day, against the previous trading
+day via `last_n_trading_days`) were added on 2026-09-05 alongside Step 14's dashboard — without
+them, `portfolio_marks` and `pnl_explain` went stale even though everything upstream kept
+accumulating (a real gap the dashboard's Exposure and P&L-explain tabs would otherwise have shown
+as stale data).
 
 ## What's set up
 

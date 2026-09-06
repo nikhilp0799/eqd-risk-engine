@@ -56,5 +56,17 @@ sys.exit(0 if is_trading_day(datetime.date.today()) else 1)
     echo "--- riskfactors ---"
     "$EQDRISK" riskfactors --date "$TODAY" || echo "RISKFACTORS FAILED"
 
+    echo "--- portfolio ---"
+    "$EQDRISK" portfolio --date "$TODAY" || echo "PORTFOLIO FAILED"
+
+    PREV_DAY="$("$PROJECT_DIR/.venv/bin/python3" -c "
+from eqdrisk.marketdata.calendar import last_n_trading_days
+import datetime
+days = last_n_trading_days(datetime.date.today(), 2)
+print(days[0].isoformat())
+")"
+    echo "--- explainpnl ($PREV_DAY -> $TODAY) ---"
+    "$EQDRISK" explainpnl --day0 "$PREV_DAY" --day1 "$TODAY" || echo "EXPLAINPNL FAILED"
+
     echo "=== Done: $(date) ==="
 } >> "$LOG_FILE" 2>&1

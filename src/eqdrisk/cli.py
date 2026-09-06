@@ -273,8 +273,21 @@ def run(date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD")) -> None
 
 @app.command()
 def dashboard() -> None:
-    """Launch the Streamlit risk dashboard."""
-    raise NotImplementedError("Step 14 not yet implemented")
+    """Launch the Streamlit risk dashboard (Step 14).
+
+    Runs `streamlit run app/dashboard.py` with the project root as the working
+    directory, so the dashboard's own relative `configs/*.yaml` paths resolve
+    the same way they do for every other CLI command here.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parents[2]
+    app_path = project_root / "app" / "dashboard.py"
+    subprocess.run(
+        [sys.executable, "-m", "streamlit", "run", str(app_path)], cwd=project_root, check=True
+    )
 
 
 if __name__ == "__main__":

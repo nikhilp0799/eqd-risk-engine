@@ -52,7 +52,13 @@ import pandas as pd
 
 from eqdrisk.config import BaseConfig
 from eqdrisk.io import store
-from eqdrisk.io.schemas import PNL_EXPLAIN_REQUIRED_NOT_NULL, PNL_EXPLAIN_SCHEMA, validate
+from eqdrisk.io.schemas import (
+    PNL_EXPLAIN_BY_POSITION_REQUIRED_NOT_NULL,
+    PNL_EXPLAIN_BY_POSITION_SCHEMA,
+    PNL_EXPLAIN_REQUIRED_NOT_NULL,
+    PNL_EXPLAIN_SCHEMA,
+    validate,
+)
 from eqdrisk.portfolio.mark import (
     MarketState,
     PortfolioMarkResult,
@@ -260,3 +266,22 @@ def _persist(result: PnLExplainResult, curated_root: Path) -> None:
     ]
     table = validate(pd.DataFrame(rows), PNL_EXPLAIN_SCHEMA, PNL_EXPLAIN_REQUIRED_NOT_NULL)
     store.write_partitioned(table, curated_root / "pnl_explain", ["asof_date"])
+
+    if result.by_position_residual:
+        by_position_rows = [
+            {
+                "asof_date": result.day1,
+                "day0": result.day0,
+                "position_id": pid,
+                "residual": r,
+            }
+            for pid, r in result.by_position_residual.items()
+        ]
+        by_position_table = validate(
+            pd.DataFrame(by_position_rows),
+            PNL_EXPLAIN_BY_POSITION_SCHEMA,
+            PNL_EXPLAIN_BY_POSITION_REQUIRED_NOT_NULL,
+        )
+        store.write_partitioned(
+            by_position_table, curated_root / "pnl_explain_by_position", ["asof_date"]
+        )
