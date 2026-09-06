@@ -19,10 +19,17 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pandas as pd
 
 from eqdrisk.config import BaseConfig
+from eqdrisk.io import store
+from eqdrisk.io.schemas import (
+    HYPOTHETICAL_GRID_REQUIRED_NOT_NULL,
+    HYPOTHETICAL_GRID_SCHEMA,
+    validate,
+)
 from eqdrisk.portfolio.mark import MCSettings, load_market_state, mark_with_state
 from eqdrisk.portfolio.schema import Portfolio
 from eqdrisk.stress.shock import MarketShock
@@ -125,4 +132,47 @@ def run_hypothetical_grid(
     ).total_value()
     result.term_scenario_pnl = term_value - base_value
 
+    _persist(result, Path(cfg.paths.curated))
     return result
+
+
+def _persist(result: HypotheticalGridResult, curated_root: Path) -> None:
+    if not result.cells:
+        return
+    rows = [
+        {
+            "asof_date": result.asof,
+            "scenario": "grid",
+            "spot_shock_pct": c.spot_shock_pct,
+            "vol_shock_pct": c.vol_shock_pct,
+            "base_value": result.base_value,
+            "pnl": c.pnl,
+        }
+        for c in result.cells
+    ]
+    if result.skew_scenario_pnl is not None:
+        rows.append(
+            {
+                "asof_date": result.asof,
+                "scenario": "skew_steepening",
+                "spot_shock_pct": None,
+                "vol_shock_pct": None,
+                "base_value": result.base_value,
+                "pnl": result.skew_scenario_pnl,
+            }
+        )
+    if result.term_scenario_pnl is not None:
+        rows.append(
+            {
+                "asof_date": result.asof,
+                "scenario": "term_inversion",
+                "spot_shock_pct": None,
+                "vol_shock_pct": None,
+                "base_value": result.base_value,
+                "pnl": result.term_scenario_pnl,
+            }
+        )
+    table = validate(
+        pd.DataFrame(rows), HYPOTHETICAL_GRID_SCHEMA, HYPOTHETICAL_GRID_REQUIRED_NOT_NULL
+    )
+    store.write_partitioned(table, curated_root / "hypothetical_grid", ["asof_date"])

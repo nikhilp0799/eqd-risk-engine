@@ -9,8 +9,17 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, field
+from pathlib import Path
+
+import pandas as pd
 
 from eqdrisk.config import BaseConfig
+from eqdrisk.io import store
+from eqdrisk.io.schemas import (
+    HISTORICAL_REPLAY_REQUIRED_NOT_NULL,
+    HISTORICAL_REPLAY_SCHEMA,
+    validate,
+)
 from eqdrisk.portfolio.mark import load_market_state, mark_with_state
 from eqdrisk.portfolio.schema import Portfolio
 from eqdrisk.stress.historical_scenarios import EPISODES, HistoricalEpisode, compute_episode_shocks
@@ -85,4 +94,25 @@ def run_historical_replay(
             )
         )
 
+    _persist(result, Path(cfg.paths.curated))
     return result
+
+
+def _persist(result: HistoricalReplayResult, curated_root: Path) -> None:
+    if not result.episodes:
+        return
+    rows = [
+        {
+            "asof_date": result.asof,
+            "episode_name": er.episode.name,
+            "episode_description": er.episode.description,
+            "base_value": result.base_value,
+            "shocked_value": er.shocked_value,
+            "pnl": er.pnl,
+        }
+        for er in result.episodes
+    ]
+    table = validate(
+        pd.DataFrame(rows), HISTORICAL_REPLAY_SCHEMA, HISTORICAL_REPLAY_REQUIRED_NOT_NULL
+    )
+    store.write_partitioned(table, curated_root / "historical_replay", ["asof_date"])
