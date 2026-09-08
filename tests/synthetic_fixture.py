@@ -37,7 +37,21 @@ EXPIRIES: tuple[tuple[dt.date, float, SVIParams], ...] = (
     (ASOF + dt.timedelta(days=91), 0.25, SVIParams(a=0.01, b=0.10, rho=-0.3, m=0.0, sigma=0.15)),
     (ASOF + dt.timedelta(days=182), 0.50, SVIParams(a=0.03, b=0.12, rho=-0.3, m=0.0, sigma=0.15)),
 )
-K_GRID = np.linspace(-0.3, 0.3, 21)
+
+# An EVEN point count deliberately avoids a strike landing exactly at-the-money
+# (k=0). An odd count did include k=0 exactly, and that turned out to be a real
+# knife-edge: `vol/implied.py`'s ITM_SIDE filter classifies on `k <= 0` / `k >= 0`
+# against a REGRESSION-recovered forward (Step 2's WLS parity fit), and while
+# that regression is mathematically exact, its BLAS/LAPACK backend can differ
+# by a few ULPs across platforms (confirmed: macOS Accelerate vs. Linux CI's
+# OpenBLAS recovered forwards differing enough to flip the recomputed k's sign
+# at the exact-ATM strike) — silently changing which single quote survives
+# ITM_SIDE and, from there, the whole slice's `n_points` and fitted SVI params.
+# Caught by CI, not locally — the same category of cross-platform floating-point
+# fragility as the Step 13 vanna==0.0 test, but in a fixture this time rather
+# than an assertion, so the fix is to remove the knife-edge from the fixture
+# itself rather than add a tolerance.
+K_GRID = np.linspace(-0.3, 0.3, 20)
 
 
 def build_synthetic_chain() -> pd.DataFrame:
