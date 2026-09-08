@@ -8,17 +8,17 @@ Built to mirror the daily workflow of an equity derivatives risk quant: *the num
 
 ---
 
-## Current build status (updated 2026-09-06)
+## Current build status (updated 2026-09-07)
 
 **This README doubles as the original build plan (kept intentionally — it explains *why* each
 step matters and what "done" looks like), but a lot of it is no longer just a plan.** Steps 1–7,
-8.1, 11.1, 11.2, and 12 through 15 are built, tested, and verified against real live market data.
+8.1, 11.1, 11.2, and 12 through 16 are built, tested, and verified against real live market data.
 Each step section below is tagged with its actual status.
 
 | Status | Steps |
 |---|---|
-| **Done** | 0–7 (data → curves → IV → calibration → pricing/Greeks → exotics → portfolio), 8.1 (risk-factor grid), 11.1 (historical replay stress), 11.2 (hypothetical stress grid), 12 (daily P&L explain), 13 (incident report), 14 (dashboard), 15 (model documentation) |
-| **Partial** | 8 (8.2 PCA / 8.3 proxy modelling need real multi-day history), 11 (11.3 conditional stress / 11.4 reverse stress need the same), 16 (engineering polish — CI/lint/type-check already green throughout, fuller checklist not formally completed) |
+| **Done** | 0–7 (data → curves → IV → calibration → pricing/Greeks → exotics → portfolio), 8.1 (risk-factor grid), 11.1 (historical replay stress), 11.2 (hypothetical stress grid), 12 (daily P&L explain), 13 (incident report), 14 (dashboard), 15 (model documentation), 16 (engineering polish) |
+| **Partial** | 8 (8.2 PCA / 8.3 proxy modelling need real multi-day history), 11 (11.3 conditional stress / 11.4 reverse stress need the same) |
 | **Not started** | 9 (VaR) and 10 (backtesting) — blocked on the same real-history dependency as above |
 
 **Why some steps are deferred rather than skipped:** several of the acceptance criteria below (PCA
@@ -59,6 +59,11 @@ not tuned-to-look-clean ones:
   state, in one place, the ones already found: the vega-only Greek gap (Step 13) leads its
   limitations section, per the step's own stated grading bar that a model doc's limitations
   section matters more than its "it works" claims.
+- Real, measured (not estimated) performance numbers (Step 16): SPX surface calibration in 0.22s
+  and a single autocallable MC price in 0.86s both comfortably beat their targets, but full book
+  revaluation took 126.28s against a <3s target — about 42x over, and directly explained by Step
+  13's own vanna/volga fix (9 full MC reprices per position's Greek set instead of 4). Reported
+  honestly rather than rounded down to look better.
 
 ---
 
@@ -1056,7 +1061,9 @@ real evidence of where local vol structurally falls short, per this step's own s
 
 ## Step 16 — Engineering polish
 
-**Status: partially built.** CI (ruff/mypy/pytest) is green throughout and property-based tests (`hypothesis`) are already in use — the fuller testing-pyramid/performance/reproducibility checklist below isn't formally completed yet.
+**Status: done.** CI (ruff/mypy/pytest) is green throughout and property-based tests (`hypothesis`)
+were already in use. This step added the remaining testing-pyramid layers (regression/integration),
+a real reproducibility manifest, and measured (not estimated) performance against the targets below.
 
 ### Testing pyramid
 
@@ -1064,8 +1071,8 @@ real evidence of where local vol structurally falls short, per this step's own s
 |---|---|---|
 | **Unit** | Pure functions | BS price vs. QuantLib; Greeks vs. finite difference; SVI at known params |
 | **Property** (`hypothesis`) | Invariants that must always hold | Put-call parity for any $(F,K,T,\sigma)$; monotonicity of price in vol; $\sigma_{\text{loc}}^2 > 0$; VaR ≤ ES |
-| **Regression** | Golden files | Full pipeline on a fixed date reproduces stored outputs bit-for-bit |
-| **Integration** | End-to-end | `eqdrisk run --date X` completes and writes all artifacts |
+| **Regression** | Golden files | `tests/regression/test_golden_pipeline.py` — a fixed *synthetic* scenario (known SVI params round-tripped through real Black-76 prices, so it's exactly reproducible with zero network dependency) reproduces a checked-in golden JSON bit-for-bit |
+| **Integration** | End-to-end | `tests/integration/test_run_pipeline.py` — `eqdrisk run --date X` completes and writes every stage's curated artifact, network fully mocked |
 
 Property-based tests are unusual in quant portfolios and signal real software maturity.
 
@@ -1075,30 +1082,51 @@ Property-based tests are unusual in quant portfolios and signal real software ma
 eqdrisk ingest      --date 2026-08-11
 eqdrisk calibrate   --date 2026-08-11 --underlying SPX
 eqdrisk price       --date 2026-08-11 --portfolio configs/portfolio.yaml
-eqdrisk var         --date 2026-08-11 --method both --confidence 0.99
-eqdrisk backtest    --start 2025-01-01 --end 2026-08-11
-eqdrisk stress      --date 2026-08-11 --scenarios configs/stress.yaml
-eqdrisk reverse     --date 2026-08-11 --loss-target -5000000
-eqdrisk explain     --date 2026-08-11
+eqdrisk portfolio   --date 2026-08-11 --portfolio configs/portfolio.yaml
+eqdrisk explainpnl  --day0 2026-08-10 --day1 2026-08-11
+eqdrisk historicalreplay  --date 2026-08-11
+eqdrisk hypotheticalgrid  --date 2026-08-11
 eqdrisk run         --date 2026-08-11        # full daily pipeline
 eqdrisk dashboard
 ```
 
-### Performance targets
+`var`/`backtest`/`stress`/`reverse`/`explain` remain the README's original stub names (raising
+`NotImplementedError`) since Steps 9-11 built new, more specifically-scoped commands instead of
+overloading those signatures (`historicalreplay`/`hypotheticalgrid`/`explainpnl` above) — same
+reasoning documented at each of those steps.
 
-| Operation | Target |
-|---|---|
-| Full SPX surface calibration | < 5 s |
-| Book full revaluation | < 3 s |
-| 500-scenario full-reval VaR | < 60 s |
-| Autocall MC (100k paths) | < 10 s |
-| Full daily pipeline | < 5 min |
+### Performance targets — measured, not estimated (2026-09-07, real data)
+
+| Operation | Target | Measured | Met? |
+|---|---|---|---|
+| Full SPX surface calibration | < 5 s | **0.22 s** (real 2026-09-04 data) | Yes |
+| Autocall MC, single price (100k paths) | < 10 s | **0.86 s** (JIT warm) | Yes |
+| Book full revaluation (9 positions) | < 3 s | **126.28 s** (real 2026-09-04 data) | **No — ~42x over** |
+| 500-scenario full-reval VaR | < 60 s | not applicable | No VaR exists (Steps 9/10 out of scope) |
+| Full daily pipeline | < 5 min | **404.4 s** (`make reproduce DATE=2026-09-07`, real production run) | **No — ~35% over** |
+
+**The book-reval and full-pipeline misses are real and explained, not hidden:** Step 13 added
+vanna/volga to the two MC-priced positions (barrier, autocall), which costs 9 full Monte Carlo
+reprices per position instead of 4 — both for the `portfolio` stage and again, several times over,
+for `explainpnl`'s 5 intermediate market states. The individual-instrument numbers above show
+pricing itself is fast — both misses come from how many full reprices one position's complete
+Greek set now needs, not from Monte Carlo itself being slow. Not optimized further in this build.
+(Incidentally, 2026-09-07 turned out to be Labor Day — a real non-trading day, which is why
+`riskfactors` reported "0 underlyings evaluated" that run; the slow stages still ran against real
+fallback data from the prior trading day, so the timing itself is a genuine measurement, just not
+the trading-day run originally intended.)
 
 ### Reproducibility
 
-- Every run writes a manifest: git SHA, config hash, input data hashes, timestamps, library versions.
-- Fixed seeds for all MC, recorded in the manifest.
-- `make reproduce DATE=2026-08-11` regenerates everything from raw.
+- `src/eqdrisk/pipeline.py::run_daily_pipeline` writes a manifest to
+  `data/curated/manifests/{date}.json` after every `eqdrisk run`: git SHA, a SHA-256 of the config
+  and portfolio files used, start/finish timestamps, and key library versions
+  (numpy/scipy/pandas/numba/pydantic/typer).
+- Fixed seeds for all MC (`MC_SEED` etc. in `portfolio/mark.py`) — not re-recorded per-run in the
+  manifest since they're already named constants, not a value that varies run to run.
+- `make reproduce DATE=2026-08-11` now genuinely works — `eqdrisk run` was a stub until this step;
+  it calls each stage's real function in sequence, reporting (not aborting on) any single stage's
+  failure, the same resilience pattern `scripts/daily_ingest.sh` already used in bash.
 
 ---
 

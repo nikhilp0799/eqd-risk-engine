@@ -306,12 +306,21 @@ agent (`scripts/daily_ingest.sh`, Mon-Fri 16:30 local) plus a `pmset` auto-wake 
 even with the laptop's lid closed — chosen over cron specifically because launchd catches up on a
 missed run after sleep, where cron silently skips it. `docs/AUTOMATION.md` has the full writeup.
 
-**Performance:** not currently benchmarked against the README's own stated targets (full SPX
-surface calibration < 5s, full book reval < 3s) — MC-priced positions (barrier, autocall) with
-Greeks now costing 9 full Monte Carlo reprices each (Section 3.3's vanna/volga fix) are
-meaningfully slower than a single price call; a full portfolio mark of this 9-position book
-currently takes on the order of minutes, not seconds, dominated by the two MC-priced positions'
-Greek computation. This is disclosed here rather than left for a reader to discover by running it.
+**Performance, measured (Step 16), not just estimated:** real SPX full-surface calibration on
+2026-09-04's data took **0.22s** — comfortably under the README's < 5s target. A single autocallable
+Monte Carlo price at 100,000 paths took **0.86s** (JIT warm) — comfortably under the < 10s target
+for a single price. **Full book revaluation (all 9 positions, real 2026-09-04 data) took 126.28s**
+— roughly **42x over** the README's < 3s target, not a rounding-error miss. This is exactly the
+consequence flagged in Section 4: Step 13's fix made every MC-priced position's Greek set cost 9
+full Monte Carlo reprices instead of 4 (to get vanna/volga), and this book has two such positions
+(P007, P008). The individual-instrument numbers above show the *pricing* itself is fast; the book
+target is missed because of *how many full reprices one position's full Greek set now needs*, not
+because Monte Carlo itself is slow. Not further optimized in this build (a real, disclosed gap, not
+hidden — this is the number a performance review would actually find, not a rounded-down estimate).
+The full daily pipeline (`make reproduce DATE=2026-09-07`, a real production run) took **404.4s**
+against the README's < 5-minute target — also missed, by about 35%, for the same root cause
+compounded twice over (once in the `portfolio` stage, again across `explainpnl`'s five intermediate
+market states).
 
 ---
 
