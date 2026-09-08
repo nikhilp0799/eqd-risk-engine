@@ -266,9 +266,28 @@ def explain(date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD")) -> 
 
 
 @app.command()
-def run(date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD")) -> None:
-    """Run the full daily pipeline end to end."""
-    raise NotImplementedError("Full pipeline not yet implemented")
+def run(
+    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
+    portfolio_path: str = typer.Option(
+        "configs/portfolio.yaml", "--portfolio", help="Path to portfolio config"
+    ),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Run the full daily pipeline end to end (Step 16): ingest -> curves -> iv ->
+    calibrate -> price -> varswap -> riskfactors -> portfolio -> explainpnl, writing a
+    reproducibility manifest (git SHA, config/portfolio hashes, timestamps, library
+    versions) alongside the run. Each stage's failure is reported independently rather
+    than aborting the whole run. Exits non-zero if any stage failed, so cron/CI can
+    detect a real failure.
+    """
+    from eqdrisk.pipeline import run_daily_pipeline
+
+    cfg = BaseConfig.from_yaml(config)
+    asof = dt.date.fromisoformat(date)
+    result = run_daily_pipeline(cfg, asof, config, portfolio_path)
+    typer.echo(result.render())
+    if not result.all_ok:
+        raise typer.Exit(code=1)
 
 
 @app.command()
