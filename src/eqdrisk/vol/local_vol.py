@@ -72,7 +72,10 @@ verifying either way, and here it mattered.
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
+from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -223,6 +226,39 @@ class LocalVolGrid:
     n_floored: int  # how many grid points needed the non-positive-variance floor
 
 
+def _sigma_loc_row(
+    surface_for_underlying: pd.DataFrame,
+    forward_curve: ForwardCurve,
+    s_grid: np.ndarray,
+    t: float,
+) -> tuple[np.ndarray, int]:
+    """One `t_grid` row of `build_local_vol_grid`'s (s_grid x t_grid) rectangle —
+    pulled out to a plain, picklable function so it can run in a separate process.
+    Each row is a pure function of its own inputs (no shared state with any other
+    row), which is what makes this embarrassingly parallel: the expensive part
+    (`local_variance_at`'s smoothing-spline fits) is redone independently per row
+    regardless of whether rows run in one process or many."""
+    t_eff = max(t, 1e-6)  # t=0 has no forward-implied k; treat as the first instant after
+    forward_t = forward_curve.forward(t_eff)
+
+    atm = local_variance_at(surface_for_underlying, 0.0, t_eff)
+    assert atm is not None  # caller already checked len(pillars) >= MIN_PILLARS_FOR_LOCAL_VOL
+    atm_iv = float(np.sqrt(max(atm.w, 1e-12) / t_eff))
+    k_cap = EXTREME_K_MULTIPLE * atm_iv * np.sqrt(t_eff)
+
+    row = np.empty(len(s_grid))
+    n_floored = 0
+    for si, s in enumerate(s_grid):
+        k = float(np.log(s / forward_t))
+        k_clamped = float(np.clip(k, -k_cap, k_cap))
+        result = local_variance_at(surface_for_underlying, k_clamped, t_eff)
+        assert result is not None
+        if result.local_variance_raw < LOCAL_VARIANCE_FLOOR:
+            n_floored += 1
+        row[si] = np.sqrt(result.local_variance)
+    return row, n_floored
+
+
 def build_local_vol_grid(
     surface_for_underlying: pd.DataFrame,
     forward_curve: ForwardCurve,
@@ -230,31 +266,26 @@ def build_local_vol_grid(
     t_grid: np.ndarray,
 ) -> LocalVolGrid | None:
     """Evaluate local vol on an (s_grid x t_grid) rectangle. Returns None if the
-    underlying has too few calibrated expiries (see `local_variance_at`)."""
+    underlying has too few calibrated expiries (see `local_variance_at`).
+
+    **Performance (README Step 16):** each `t_grid` row's smoothing-spline fits
+    (the dominant real cost — measured at ~90% of a full portfolio mark's wall
+    time before this fix) are completely independent of every other row, so rows
+    are computed across a process pool rather than sequentially. This changes
+    nothing about the computed values (same pure function, same inputs, same
+    floating-point arithmetic) — it is purely an engineering speedup, not a
+    modeling change, and doesn't touch `local_variance_at`'s own math at all.
+    """
     pillars = surface_for_underlying.sort_values("T")
     if len(pillars) < MIN_PILLARS_FOR_LOCAL_VOL:
         return None
 
-    sigma_loc = np.empty((len(t_grid), len(s_grid)))
-    n_floored = 0
-    for ti, t in enumerate(t_grid):
-        t_eff = max(t, 1e-6)  # t=0 has no forward-implied k; treat as the first instant after
-        forward_t = forward_curve.forward(t_eff)
+    worker = partial(_sigma_loc_row, surface_for_underlying, forward_curve, s_grid)
+    with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+        rows = list(executor.map(worker, t_grid))
 
-        atm = local_variance_at(surface_for_underlying, 0.0, t_eff)
-        assert atm is not None  # already checked len(pillars) >= MIN_PILLARS_FOR_LOCAL_VOL
-        atm_iv = float(np.sqrt(max(atm.w, 1e-12) / t_eff))
-        k_cap = EXTREME_K_MULTIPLE * atm_iv * np.sqrt(t_eff)
-
-        for si, s in enumerate(s_grid):
-            k = float(np.log(s / forward_t))
-            k_clamped = float(np.clip(k, -k_cap, k_cap))
-            result = local_variance_at(surface_for_underlying, k_clamped, t_eff)
-            assert result is not None
-            if result.local_variance_raw < LOCAL_VARIANCE_FLOOR:
-                n_floored += 1
-            sigma_loc[ti, si] = np.sqrt(result.local_variance)
-
+    sigma_loc = np.array([row for row, _ in rows])
+    n_floored = sum(n for _, n in rows)
     return LocalVolGrid(s_grid=s_grid, t_grid=t_grid, sigma_loc=sigma_loc, n_floored=n_floored)
 
 

@@ -306,21 +306,34 @@ agent (`scripts/daily_ingest.sh`, Mon-Fri 16:30 local) plus a `pmset` auto-wake 
 even with the laptop's lid closed — chosen over cron specifically because launchd catches up on a
 missed run after sleep, where cron silently skips it. `docs/AUTOMATION.md` has the full writeup.
 
-**Performance, measured (Step 16), not just estimated:** real SPX full-surface calibration on
-2026-09-04's data took **0.22s** — comfortably under the README's < 5s target. A single autocallable
-Monte Carlo price at 100,000 paths took **0.86s** (JIT warm) — comfortably under the < 10s target
-for a single price. **Full book revaluation (all 9 positions, real 2026-09-04 data) took 126.28s**
-— roughly **42x over** the README's < 3s target, not a rounding-error miss. This is exactly the
-consequence flagged in Section 4: Step 13's fix made every MC-priced position's Greek set cost 9
-full Monte Carlo reprices instead of 4 (to get vanna/volga), and this book has two such positions
-(P007, P008). The individual-instrument numbers above show the *pricing* itself is fast; the book
-target is missed because of *how many full reprices one position's full Greek set now needs*, not
-because Monte Carlo itself is slow. Not further optimized in this build (a real, disclosed gap, not
-hidden — this is the number a performance review would actually find, not a rounded-down estimate).
-The full daily pipeline (`make reproduce DATE=2026-09-07`, a real production run) took **404.4s**
-against the README's < 5-minute target — also missed, by about 35%, for the same root cause
-compounded twice over (once in the `portfolio` stage, again across `explainpnl`'s five intermediate
-market states).
+**Performance, measured (Step 16), not just estimated — including one self-correction.** Real SPX
+full-surface calibration on 2026-09-04's data took **0.22s** — comfortably under the README's < 5s
+target. A single autocallable Monte Carlo price at 100,000 paths took **0.86s** (JIT warm) —
+comfortably under the < 10s target for a single price. Full book revaluation (all 9 positions, real
+2026-09-04 data) originally took **126.28s**, roughly 42x over the < 3s target, and a full
+`make reproduce` production run took **404.4s** against the < 5-minute target.
+
+**The first explanation written here for those two misses was wrong, and finding that out is the
+more useful result.** It blamed Step 13's vanna/volga fix (9 MC reprices per position instead of 4)
+without ever profiling the actual call stack — an unverified claim, which is exactly the failure
+mode this document's own Section 4 warns readers to watch for elsewhere in the model. Profiling
+(`cProfile`) corrected this: of the 126.28s, **111.7s (89%) was spent in `load_market_state`**, not
+MC pricing (`mark_with_state`, covering both MC-priced positions' full Greek sets, took only
+11.3s). The real cause: `vol/local_vol.py::build_local_vol_grid` calls `local_variance_at` once per
+(strike, time) grid point (~12,000 times across both underlyings), and each call independently
+re-fits three GCV-optimized smoothing splines from scratch — expensive, and entirely unrelated to
+Step 13 (this cost has existed since Step 6.1).
+
+**Fixed with a safe, zero-modeling-risk change:** each grid row's spline fits are a pure function of
+their own inputs with no shared state, so `build_local_vol_grid` now computes rows across a process
+pool instead of sequentially — same math, same values (all 1,713 tests still pass), just
+parallelized. Result: `load_market_state` dropped from 111.7s to 27.5s (~4x on an 8-core machine),
+book reval from 126.28s to **38.6s**, and the full `make reproduce` pipeline from 404.4s to
+**287.4s** — newly meeting the <5-minute target, though book reval alone still misses its <3s
+target by a wide margin (~13x over, down from ~42x) — a real, disclosed, not-fully-closed gap. A
+deeper fix would need to touch the local-vol stripping algorithm itself (e.g. avoiding redundant
+GCV smoothing-parameter searches across nearby strikes), which carries real modeling-behavior risk
+and was deliberately left out of this round's scope.
 
 ---
 

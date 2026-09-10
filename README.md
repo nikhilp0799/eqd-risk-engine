@@ -1095,26 +1095,37 @@ eqdrisk dashboard
 overloading those signatures (`historicalreplay`/`hypotheticalgrid`/`explainpnl` above) — same
 reasoning documented at each of those steps.
 
-### Performance targets — measured, not estimated (2026-09-07, real data)
+### Performance targets — measured, not estimated (2026-09-09, real data)
 
 | Operation | Target | Measured | Met? |
 |---|---|---|---|
 | Full SPX surface calibration | < 5 s | **0.22 s** (real 2026-09-04 data) | Yes |
 | Autocall MC, single price (100k paths) | < 10 s | **0.86 s** (JIT warm) | Yes |
-| Book full revaluation (9 positions) | < 3 s | **126.28 s** (real 2026-09-04 data) | **No — ~42x over** |
+| Book full revaluation (9 positions) | < 3 s | **38.6 s** (real 2026-09-04 data, after the fix below) | **No — ~13x over, down from ~42x** |
 | 500-scenario full-reval VaR | < 60 s | not applicable | No VaR exists (Steps 9/10 out of scope) |
-| Full daily pipeline | < 5 min | **404.4 s** (`make reproduce DATE=2026-09-07`, real production run) | **No — ~35% over** |
+| Full daily pipeline | < 5 min | **287.4 s** (`make reproduce DATE=2026-09-09`, real production run) | **Yes — down from 404.4s** |
 
-**The book-reval and full-pipeline misses are real and explained, not hidden:** Step 13 added
-vanna/volga to the two MC-priced positions (barrier, autocall), which costs 9 full Monte Carlo
-reprices per position instead of 4 — both for the `portfolio` stage and again, several times over,
-for `explainpnl`'s 5 intermediate market states. The individual-instrument numbers above show
-pricing itself is fast — both misses come from how many full reprices one position's complete
-Greek set now needs, not from Monte Carlo itself being slow. Not optimized further in this build.
-(Incidentally, 2026-09-07 turned out to be Labor Day — a real non-trading day, which is why
-`riskfactors` reported "0 underlyings evaluated" that run; the slow stages still ran against real
-fallback data from the prior trading day, so the timing itself is a genuine measurement, just not
-the trading-day run originally intended.)
+**A first cut at explaining the book-reval/full-pipeline misses was wrong, and the correction is
+the more interesting finding.** The original writeup here blamed Step 13's vanna/volga fix (9 full
+MC reprices per position instead of 4) without ever profiling where the time actually went — an
+unverified claim, exactly the kind of thing this project otherwise takes care to avoid. Profiling
+(`cProfile`) showed the real number: of the original 126.28s book reval, **111.7s (89%) was spent
+in `load_market_state`, not MC pricing at all** (`mark_with_state`, the actual pricing/Greeks step
+including both MC positions, took only 11.3s). The true cause: `vol/local_vol.py::build_local_vol_grid`
+calls `local_variance_at` once per (strike, time) grid point (~12,000 times across both
+underlyings), and each call independently re-fits three GCV-optimized smoothing splines from
+scratch (`scipy.interpolate.make_smoothing_spline`) — an expensive operation, redone thousands of
+times, that has nothing to do with Step 13 at all and predates it by several steps.
+
+**Fixed with a safe, zero-modeling-risk change:** each grid row's spline fits are a pure function of
+their own inputs, completely independent of every other row — so `build_local_vol_grid` now
+computes rows across a process pool (`ProcessPoolExecutor`) instead of sequentially. Same math,
+same floating-point arithmetic, same computed values (confirmed: all 1,713 tests still pass) — just
+parallel instead of serial. Result: `load_market_state` dropped from 111.7s to 27.5s (~4x, on an
+8-core machine), taking book reval from 126.28s to 38.6s and the full pipeline from 404.4s to
+287.4s — enough to newly meet the <5-minute pipeline target, though book reval alone still misses
+its <3s target by a wide margin (a real, disclosed gap, not chased further this round — see
+`docs/model_documentation.md` Section 4 for what a deeper fix would need to touch).
 
 ### Reproducibility
 
