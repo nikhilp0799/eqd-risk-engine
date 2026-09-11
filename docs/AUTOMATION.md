@@ -8,7 +8,12 @@ remembers to trigger it. `portfolio` and `explainpnl` (day-over-day, against the
 day via `last_n_trading_days`) were added on 2026-09-05 alongside Step 14's dashboard — without
 them, `portfolio_marks` and `pnl_explain` went stale even though everything upstream kept
 accumulating (a real gap the dashboard's Exposure and P&L-explain tabs would otherwise have shown
-as stale data).
+as stale data). A real residual-alert threshold check was added on 2026-09-10 (Step 13's incident
+report had flagged the lack of one): `explainpnl`'s own output now includes `ALERT:` lines whenever
+the total or any single position's residual exceeds 5bp of NAV (README 12.3's own suggested
+number), and `daily_ingest.sh` greps for that marker after each run, logging a distinct
+`RESIDUAL ALERT` line if found — without changing the script's exit code, since a breach is a real
+finding to review, not a crash.
 
 ## What's set up
 

@@ -308,6 +308,7 @@ PNL_EXPLAIN_SCHEMA = pa.schema(
         ("actual_pnl", pa.float64()),
         ("explained_pnl", pa.float64()),
         ("residual", pa.float64()),
+        ("nav", pa.float64()),  # day1's total book value — lets readers compute bp of NAV
     ]
 )
 PNL_EXPLAIN_REQUIRED_NOT_NULL = [
@@ -317,6 +318,7 @@ PNL_EXPLAIN_REQUIRED_NOT_NULL = [
     "actual_pnl",
     "explained_pnl",
     "residual",
+    "nav",
 ]
 
 

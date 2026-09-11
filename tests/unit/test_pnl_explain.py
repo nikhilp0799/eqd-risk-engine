@@ -20,7 +20,12 @@ from eqdrisk.io.schemas import (
 )
 from eqdrisk.portfolio.mark import load_market_state, mark_with_state
 from eqdrisk.portfolio.schema import Portfolio
-from eqdrisk.pricing.pnl_explain import run_pnl_explain
+from eqdrisk.pricing.pnl_explain import (
+    RESIDUAL_ALERT_THRESHOLD_BP,
+    PnLExplainResult,
+    StepResult,
+    run_pnl_explain,
+)
 
 UNDERLYING = "TEST"
 DAY0 = dt.date(2026, 8, 20)
@@ -272,3 +277,55 @@ def test_run_pnl_explain_reports_skip_when_no_curated_rates_at_all(tmp_path):
     )
     result = run_pnl_explain(_cfg(tmp_path), DAY0, DAY1, portfolio_path)
     assert "_all_" in result.skipped
+
+
+def test_nav_equals_day1_total_book_value(tmp_path):
+    """`nav` (used to normalize residuals into basis points) must be the exact
+    day1 full-reval book value, not an approximation."""
+    _write_both_days(tmp_path)
+    portfolio_path = _write_portfolio_yaml(
+        tmp_path, [{"id": "E1", "type": "equity", "underlying": UNDERLYING, "qty": 5}]
+    )
+    cfg = _cfg(tmp_path)
+
+    result = run_pnl_explain(cfg, DAY0, DAY1, portfolio_path)
+
+    portfolio = Portfolio.from_yaml(portfolio_path)
+    state1 = load_market_state(cfg, DAY1, portfolio)
+    expected_nav = mark_with_state(cfg, DAY1, portfolio, state1).total_value()
+    assert result.nav == pytest.approx(expected_nav, rel=1e-9)
+
+
+def test_no_breach_when_residual_is_well_under_threshold():
+    result = PnLExplainResult(
+        day0=DAY0,
+        day1=DAY1,
+        steps=[StepResult(step="vol", actual_pnl=100.0, explained_pnl=100.5)],
+        by_position_residual={"P1": -0.5},
+        nav=1_000_000.0,
+    )
+    result.breaches = []
+    assert result.total_residual_bp() == pytest.approx(-0.005, abs=1e-6)
+    assert "no residual breaches" in result.render()
+
+
+def test_breach_detected_when_total_residual_exceeds_threshold_bp():
+    """A residual of exactly 6bp of a $1,000,000 NAV ($600) must breach the
+    README's own 5bp threshold — checked via the real detection function, not a
+    hand-rolled reimplementation of it."""
+    from eqdrisk.pricing.pnl_explain import _detect_breaches
+
+    nav = 1_000_000.0
+    residual = nav * (6.0 / 10_000.0)
+    result = PnLExplainResult(
+        day0=DAY0,
+        day1=DAY1,
+        steps=[StepResult(step="vol", actual_pnl=residual, explained_pnl=0.0)],
+        by_position_residual={"P1": residual},
+        nav=nav,
+    )
+    breaches = _detect_breaches(result)
+    assert any("total residual" in b for b in breaches)
+    assert any("position P1" in b for b in breaches)
+    assert result.total_residual_bp() == pytest.approx(6.0, abs=1e-6)
+    assert f"{RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp" in breaches[0]

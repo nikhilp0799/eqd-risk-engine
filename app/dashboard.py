@@ -23,6 +23,7 @@ import streamlit as st
 
 from eqdrisk.config import BaseConfig
 from eqdrisk.io import store
+from eqdrisk.pricing.pnl_explain import RESIDUAL_ALERT_THRESHOLD_BP
 from eqdrisk.vol.ssvi import SSVIParams
 from eqdrisk.vol.svi import SVIParams
 
@@ -308,26 +309,54 @@ def render_stress_tab(cfg: BaseConfig) -> None:
 
 
 def render_pnl_explain_tab(cfg: BaseConfig) -> None:
+    import numpy as np
+
     steps_all = read_table("pnl_explain", cfg.paths.curated)
     if steps_all.empty:
         st.info("No pnl_explain data yet — run `eqdrisk explainpnl --day0 ... --day1 ...`.")
         return
 
-    st.subheader("Residual time series")
-    totals = steps_all.groupby("asof_date")["residual"].sum().sort_index().reset_index()
-    n_days = len(totals)
+    st.subheader("Residual time series (basis points of NAV, with alert threshold)")
+    daily = steps_all.groupby("asof_date").agg(residual=("residual", "sum"), nav=("nav", "max"))
+    # `nav` is NaN for any day computed before this column existed (older curated
+    # partitions genuinely don't have it) — left as NaN, not forced to 0.0, so
+    # those days show as a gap in the chart rather than a misleading flat line.
+    daily["residual_bp"] = 10_000.0 * daily["residual"] / daily["nav"].replace(0.0, np.nan)
+    daily = daily.sort_index().reset_index()
+    n_days = len(daily)
+    breach_days = daily[daily["residual_bp"].abs() > RESIDUAL_ALERT_THRESHOLD_BP]
+
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=totals["asof_date"], y=totals["residual"], mode="lines+markers"))
+    fig.add_trace(
+        go.Scatter(
+            x=daily["asof_date"], y=daily["residual_bp"], mode="lines+markers", name="residual"
+        )
+    )
+    fig.add_hline(y=RESIDUAL_ALERT_THRESHOLD_BP, line_dash="dash", line_color="red")
+    fig.add_hline(y=-RESIDUAL_ALERT_THRESHOLD_BP, line_dash="dash", line_color="red")
+    if not breach_days.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=breach_days["asof_date"],
+                y=breach_days["residual_bp"],
+                mode="markers",
+                marker=dict(color="red", size=10),
+                name="breach",
+            )
+        )
     fig.update_layout(
-        yaxis_title="Total residual ($)", height=350, margin=dict(l=0, r=0, t=20, b=0)
+        yaxis_title="Residual (bp of NAV)", height=350, margin=dict(l=0, r=0, t=20, b=0)
     )
     st.plotly_chart(fig, width="stretch")
     st.caption(
         f"{n_days} real day-pair(s) of P&L explain available so far. The README's own "
         f"acceptance bar (median residual < 2bp of NAV) needs {PNL_EXPLAIN_ACCEPTANCE_DAYS}+ "
         "days to be a meaningful statistic — not reached yet, shown honestly rather than "
-        "computed on too small a sample."
+        f"computed on too small a sample. Dashed lines: the {RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp "
+        "alert threshold from `pricing/pnl_explain.py` (README 12.3's own suggested number)."
     )
+    if not breach_days.empty:
+        st.warning(f"{len(breach_days)} day(s) breached the residual alert threshold.")
 
     st.subheader("Waterfall for a selected day pair")
     pairs = steps_all[["day0", "asof_date"]].drop_duplicates().sort_values("asof_date")

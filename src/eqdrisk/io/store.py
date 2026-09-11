@@ -29,14 +29,25 @@ def write_partitioned(table: pa.Table, base_path: str | Path, partition_cols: li
 
 
 def query(sql: str, views: dict[str, str] | None = None) -> pa.Table:
-    """Run `sql` against DuckDB, exposing each `views` entry (name -> parquet root) as a view."""
+    """Run `sql` against DuckDB, exposing each `views` entry (name -> parquet root) as a view.
+
+    `union_by_name=true`: a table's schema can grow over time (a later step adds a
+    column, e.g. `pnl_explain`'s `nav`), leaving older partitions without it.
+    Without this flag, DuckDB's default multi-file read INTERSECTS columns across
+    files and silently drops anything not present in every one — found live, not
+    assumed: a real column disappeared from a query spanning old and new
+    partitions before this flag was added. With it, older partitions read back
+    with NULL for a column that didn't exist yet, which is what "the column
+    wasn't populated back then" should actually mean, not "the column doesn't
+    exist."
+    """
     con = duckdb.connect()
     if views:
         for name, path in views.items():
             glob = f"{path}/**/*.parquet"
             con.execute(
                 f"CREATE VIEW {name} AS "
-                f"SELECT * FROM read_parquet('{glob}', hive_partitioning=true)"
+                f"SELECT * FROM read_parquet('{glob}', hive_partitioning=true, union_by_name=true)"
             )
     return con.execute(sql).to_arrow_table()
 
