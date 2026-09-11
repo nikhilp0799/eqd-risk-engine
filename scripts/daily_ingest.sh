@@ -66,7 +66,12 @@ days = last_n_trading_days(datetime.date.today(), 2)
 print(days[0].isoformat())
 ")"
     echo "--- explainpnl ($PREV_DAY -> $TODAY) ---"
-    "$EQDRISK" explainpnl --day0 "$PREV_DAY" --day1 "$TODAY" || echo "EXPLAINPNL FAILED"
+    EXPLAINPNL_OUTPUT="$("$EQDRISK" explainpnl --day0 "$PREV_DAY" --day1 "$TODAY" 2>&1)" \
+        || echo "EXPLAINPNL FAILED"
+    echo "$EXPLAINPNL_OUTPUT"
+    if echo "$EXPLAINPNL_OUTPUT" | grep -q "ALERT:"; then
+        echo "*** RESIDUAL ALERT: today's P&L-explain run breached its threshold — see ALERT lines above ***"
+    fi
 
     echo "=== Done: $(date) ==="
 } >> "$LOG_FILE" 2>&1

@@ -72,6 +72,11 @@ from eqdrisk.vol.local_vol import local_variance_at
 
 STEP_NAMES: tuple[str, ...] = ("time", "rates_divs", "spot", "vol")
 
+# README 12.3's own suggested number ("e.g. 5bp of NAV") — applied to both the
+# total residual and, per position, the same convention (no evidence anywhere in
+# this project that a different per-position number was intended).
+RESIDUAL_ALERT_THRESHOLD_BP = 5.0
+
 
 def _atm_iv(surface: pd.DataFrame, T: float) -> float | None:
     lv = local_variance_at(surface, 0.0, T)
@@ -144,6 +149,8 @@ class PnLExplainResult:
     day1: dt.date
     steps: list[StepResult] = field(default_factory=list)
     by_position_residual: dict[str, float] = field(default_factory=dict)
+    nav: float = 0.0
+    breaches: list[str] = field(default_factory=list)
     skipped: dict[str, str] = field(default_factory=dict)
 
     def total_actual(self) -> float:
@@ -155,8 +162,19 @@ class PnLExplainResult:
     def total_residual(self) -> float:
         return sum(s.residual for s in self.steps)
 
+    def _bp(self, dollars: float) -> float:
+        """`dollars` expressed in basis points of `nav` — 0.0 if NAV is zero
+        (nothing to normalize against, not a divide-by-zero crash)."""
+        return 0.0 if self.nav == 0.0 else 10_000.0 * dollars / self.nav
+
+    def total_residual_bp(self) -> float:
+        return self._bp(self.total_residual())
+
+    def by_position_residual_bp(self) -> dict[str, float]:
+        return {pid: self._bp(r) for pid, r in self.by_position_residual.items()}
+
     def render(self) -> str:
-        lines = [f"P&L explain — {self.day0} -> {self.day1}"]
+        lines = [f"P&L explain — {self.day0} -> {self.day1}  (NAV={self.nav:,.2f})"]
         for s in self.steps:
             lines.append(
                 f"  {s.step:>10}: actual={s.actual_pnl:+,.2f}  explained={s.explained_pnl:+,.2f}"
@@ -165,11 +183,18 @@ class PnLExplainResult:
         lines.append(
             f"  {'TOTAL':>10}: actual={self.total_actual():+,.2f}  "
             f"explained={self.total_explained():+,.2f}  residual={self.total_residual():+,.2f}"
+            f"  ({self.total_residual_bp():+.1f}bp of NAV)"
         )
         if self.by_position_residual:
             lines.append("  residual by position:")
             for pid, r in sorted(self.by_position_residual.items(), key=lambda kv: -abs(kv[1])):
-                lines.append(f"    {pid}: {r:+,.2f}")
+                bp = self._bp(r)
+                lines.append(f"    {pid}: {r:+,.2f}  ({bp:+.1f}bp of NAV)")
+        if self.breaches:
+            for b in self.breaches:
+                lines.append(f"  ALERT: {b}")
+        else:
+            lines.append(f"  no residual breaches (threshold {RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp)")
         for name, reason in self.skipped.items():
             lines.append(f"  SKIPPED {name}: {reason}")
         return "\n".join(lines)
@@ -246,8 +271,30 @@ def run_pnl_explain(
         )
 
     result.by_position_residual = position_residuals
+    result.nav = sum(m.price for m in marks[-1].values())
+    result.breaches = _detect_breaches(result)
     _persist(result, Path(cfg.paths.curated))
     return result
+
+
+def _detect_breaches(result: PnLExplainResult) -> list[str]:
+    """README 12.3: 'set a threshold (e.g. 5bp of NAV) and generate an alert when
+    breached' — applied to both the total residual and, per position, the same
+    convention. Returns human-readable breach descriptions, empty if none."""
+    breaches = []
+    total_bp = result.total_residual_bp()
+    if abs(total_bp) > RESIDUAL_ALERT_THRESHOLD_BP:
+        breaches.append(
+            f"total residual {total_bp:+.1f}bp of NAV exceeds the "
+            f"{RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp threshold"
+        )
+    for pid, bp in sorted(result.by_position_residual_bp().items()):
+        if abs(bp) > RESIDUAL_ALERT_THRESHOLD_BP:
+            breaches.append(
+                f"position {pid} residual {bp:+.1f}bp of NAV exceeds the "
+                f"{RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp threshold"
+            )
+    return breaches
 
 
 def _persist(result: PnLExplainResult, curated_root: Path) -> None:
@@ -261,6 +308,7 @@ def _persist(result: PnLExplainResult, curated_root: Path) -> None:
             "actual_pnl": s.actual_pnl,
             "explained_pnl": s.explained_pnl,
             "residual": s.residual,
+            "nav": result.nav,
         }
         for s in result.steps
     ]
