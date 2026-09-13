@@ -61,9 +61,12 @@ not tuned-to-look-clean ones:
   section matters more than its "it works" claims.
 - Real, measured (not estimated) performance numbers (Step 16): SPX surface calibration in 0.22s
   and a single autocallable MC price in 0.86s both comfortably beat their targets, but full book
-  revaluation took 126.28s against a <3s target — about 42x over, and directly explained by Step
-  13's own vanna/volga fix (9 full MC reprices per position's Greek set instead of 4). Reported
-  honestly rather than rounded down to look better.
+  revaluation originally took 126.28s against a <3s target. The first explanation written here
+  (blamed Step 13's vanna/volga fix) turned out to be wrong once actually profiled — the real cause
+  was Step 6.1's local-vol grid construction, fixed in two rounds (safe parallelization, then a
+  researched algorithm change validated against real SPX/AAPL/NVDA data) down to 23.4s — a combined
+  ~9.2x speedup, still over target but no longer a 42x miss. Reported honestly at every stage,
+  including the wrong first guess.
 
 ---
 
@@ -1095,15 +1098,15 @@ eqdrisk dashboard
 overloading those signatures (`historicalreplay`/`hypotheticalgrid`/`explainpnl` above) — same
 reasoning documented at each of those steps.
 
-### Performance targets — measured, not estimated (2026-09-09, real data)
+### Performance targets — measured, not estimated (2026-09-12, real data)
 
 | Operation | Target | Measured | Met? |
 |---|---|---|---|
 | Full SPX surface calibration | < 5 s | **0.22 s** (real 2026-09-04 data) | Yes |
 | Autocall MC, single price (100k paths) | < 10 s | **0.86 s** (JIT warm) | Yes |
-| Book full revaluation (9 positions) | < 3 s | **38.6 s** (real 2026-09-04 data, after the fix below) | **No — ~13x over, down from ~42x** |
+| Book full revaluation (9 positions) | < 3 s | **23.4 s** (real 2026-09-04 data, after both fixes below) | **No — ~7.8x over, down from ~42x** |
 | 500-scenario full-reval VaR | < 60 s | not applicable | No VaR exists (Steps 9/10 out of scope) |
-| Full daily pipeline | < 5 min | **287.4 s** (`make reproduce DATE=2026-09-09`, real production run) | **Yes — down from 404.4s** |
+| Full daily pipeline | < 5 min | **287.4 s** (`make reproduce DATE=2026-09-09`, measured after fix #1; not re-verified after fix #2, see below) | **Yes — down from 404.4s** |
 
 **A first cut at explaining the book-reval/full-pipeline misses was wrong, and the correction is
 the more interesting finding.** The original writeup here blamed Step 13's vanna/volga fix (9 full
@@ -1117,15 +1120,31 @@ underlyings), and each call independently re-fits three GCV-optimized smoothing 
 scratch (`scipy.interpolate.make_smoothing_spline`) — an expensive operation, redone thousands of
 times, that has nothing to do with Step 13 at all and predates it by several steps.
 
-**Fixed with a safe, zero-modeling-risk change:** each grid row's spline fits are a pure function of
-their own inputs, completely independent of every other row — so `build_local_vol_grid` now
-computes rows across a process pool (`ProcessPoolExecutor`) instead of sequentially. Same math,
-same floating-point arithmetic, same computed values (confirmed: all 1,713 tests still pass) — just
-parallel instead of serial. Result: `load_market_state` dropped from 111.7s to 27.5s (~4x, on an
-8-core machine), taking book reval from 126.28s to 38.6s and the full pipeline from 404.4s to
-287.4s — enough to newly meet the <5-minute pipeline target, though book reval alone still misses
-its <3s target by a wide margin (a real, disclosed gap, not chased further this round — see
-`docs/model_documentation.md` Section 4 for what a deeper fix would need to touch).
+**Fix #1 (safe, zero-modeling-risk):** each grid row's spline fits are a pure function of their own
+inputs, completely independent of every other row — so `build_local_vol_grid` computes rows across
+a process pool (`ProcessPoolExecutor`) instead of sequentially. Same math, same values — just
+parallel instead of serial. Result: `load_market_state` 111.7s -> 27.5s (~4x, 8-core machine), book
+reval 126.28s -> 38.6s, full pipeline 404.4s -> 287.4s (newly meeting the <5min target).
+
+**Fix #2 (a real algorithm change, researched and validated, not assumed safe):** researched what
+production Dupire-formula implementations actually do (analytic derivatives from the calibrated
+smile's own closed form, wherever possible) and found this module was independently smoothing THREE
+quantities (`w`, `dk_w`, `dkk_w`) across time per grid point, when Dupire's formula wants
+derivatives of ONE smooth total-variance surface. An earlier idea (reuse one GCV-selected smoothing
+parameter across nearby strikes) was tried, measured, and abandoned first — a from-scratch
+reimplementation avoiding scipy's private internals came out ~42x slower per reference point than
+hoped, not worth the complexity. The fix that stuck: smooth only `w` across T (one spline per point,
+not three) and derive `dk_w`/`dkk_w` via finite differences across neighboring grid points already
+being computed for the same row. Validated against the unchanged per-point reference on real
+SPX/AAPL/NVDA data across every calibrated expiry, not just assumed equivalent: for SPX, the new
+method is consistently as accurate or MORE accurate at every single expiry (e.g. one 21-day expiry
+improved from 62 to 16.5 standard errors vs. the closed-form benchmark); for AAPL/NVDA, results are
+essentially unchanged. **Result: `load_market_state` 27.5s -> 12.1s (~2.3x further, ~9.2x combined
+from the original baseline), book reval 38.6s -> 23.4s.** Still misses the <3s target by ~7.8x — a
+real, disclosed, not-fully-closed gap (see `docs/model_documentation.md` Section 4) — but far closer
+than the original ~42x. The full-pipeline number above (287.4s) reflects fix #1 only; it was not
+re-measured after fix #2 (today wasn't a trading day when this was written), so it is reported
+honestly as a partial number rather than an assumed one.
 
 ### Reproducibility
 

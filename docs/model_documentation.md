@@ -324,16 +324,31 @@ MC pricing (`mark_with_state`, covering both MC-priced positions' full Greek set
 re-fits three GCV-optimized smoothing splines from scratch — expensive, and entirely unrelated to
 Step 13 (this cost has existed since Step 6.1).
 
-**Fixed with a safe, zero-modeling-risk change:** each grid row's spline fits are a pure function of
-their own inputs with no shared state, so `build_local_vol_grid` now computes rows across a process
-pool instead of sequentially — same math, same values (all 1,713 tests still pass), just
-parallelized. Result: `load_market_state` dropped from 111.7s to 27.5s (~4x on an 8-core machine),
-book reval from 126.28s to **38.6s**, and the full `make reproduce` pipeline from 404.4s to
-**287.4s** — newly meeting the <5-minute target, though book reval alone still misses its <3s
-target by a wide margin (~13x over, down from ~42x) — a real, disclosed, not-fully-closed gap. A
-deeper fix would need to touch the local-vol stripping algorithm itself (e.g. avoiding redundant
-GCV smoothing-parameter searches across nearby strikes), which carries real modeling-behavior risk
-and was deliberately left out of this round's scope.
+**Fix #1, safe and zero-modeling-risk:** each grid row's spline fits are a pure function of their
+own inputs with no shared state, so `build_local_vol_grid` computes rows across a process pool
+instead of sequentially — same math, same values, just parallelized. Result: `load_market_state`
+111.7s -> 27.5s (~4x on an 8-core machine), book reval 126.28s -> 38.6s, full pipeline 404.4s ->
+287.4s (newly meets the <5min target).
+
+**Fix #2, a real algorithm change, researched and validated rather than assumed safe:** researched
+what production Dupire-formula implementations actually do — analytic derivatives from the
+calibrated smile's own closed form wherever possible — and found this module was independently
+smoothing THREE quantities (`w`, `dk_w`, `dkk_w`) across time per grid point, when Dupire's formula
+wants derivatives of ONE smooth total-variance surface. An initial idea (reuse one GCV-selected
+smoothing parameter across nearby strikes) was tried, measured, and abandoned first: a from-scratch
+reimplementation avoiding scipy's private internals turned out ~42x slower per reference point than
+scipy's own private path, netting far less benefit than hoped. The fix that stuck: smooth only `w`
+across T (one spline fit per grid point instead of three) and derive `dk_w`/`dkk_w` via finite
+differences across neighboring grid points already being computed for the same row — validated,
+not assumed, against the unchanged per-point reference across every real calibrated expiry for
+SPX/AAPL/NVDA: for SPX the new method is consistently as accurate or *more* accurate at every
+expiry (one 21-day expiry improved from 62 to 16.5 standard errors vs. the closed-form benchmark);
+AAPL/NVDA are essentially unchanged. **Result: `load_market_state` 27.5s -> 12.1s (~2.3x further,
+~9.2x combined from the original baseline), book reval 38.6s -> 23.4s.** Still misses the <3s
+target (~7.8x over, down from ~42x originally) — a real, disclosed, not-fully-closed gap; the
+full-pipeline number above reflects fix #1 only and was not re-measured after fix #2 (no real
+trading day was available to re-run `make reproduce` when this was written), reported honestly as
+partial rather than assumed.
 
 ---
 
