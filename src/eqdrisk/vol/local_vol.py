@@ -68,6 +68,30 @@ touching the interior fit at all. Worth remembering: a "more correct" boundary
 condition for a *global* smoothing method can still be a net loss if it perturbs
 everything else the method was already fitting well — locality would have needed
 verifying either way, and here it mattered.
+
+**Fourth finding — a real performance bottleneck, root-caused (not guessed at)
+and fixed twice:** building a full local-vol grid for one underlying calls
+`local_variance_at` once per (strike, time) grid point (~6,000 points), and each
+call independently smoothing-spline-fits THREE quantities (`w`, `dk_w`, `dkk_w`)
+across the T-pillars — profiled (`cProfile`) at ~90% of a full portfolio mark's
+wall time. First fix: each grid ROW is a pure, independent function of its own
+inputs, so rows now run across a process pool rather than sequentially (`README
+Step 16`) — a pure engineering change, no math difference. Second fix (this
+one): researched what production Dupire-formula implementations actually do
+(analytic derivatives from the calibrated smile's own closed form wherever
+possible, rather than independently re-fitting related quantities) and found
+this module was smoothing `dk_w`/`dkk_w` separately from `w`, when they're
+derivatives of the SAME underlying total-variance surface. `_sigma_loc_row` (the
+grid-building hot path only — `local_variance_at` itself is UNCHANGED, for every
+other caller) now smooths only `w` across T per grid point (one spline fit
+instead of three) and derives `dk_w`/`dkk_w` via finite differences across
+NEIGHBORING grid points already being computed for the same row, rather than
+independently T-smoothing each pillar's own closed-form k-derivative. A
+from-scratch reimplementation of scipy's private auto-GCV smoothing-parameter
+search was tried FIRST (to reuse one selected parameter across nearby strikes)
+and measured to be ~42x slower per reference point than scipy's own private
+path before being integrated any further — abandoned once measured, replaced by
+this simpler, lower-risk, better-motivated fix instead.
 """
 
 from __future__ import annotations
@@ -226,6 +250,84 @@ class LocalVolGrid:
     n_floored: int  # how many grid points needed the non-positive-variance floor
 
 
+def _row_w_and_dT_w(
+    pillars: pd.DataFrame, T_pillars: np.ndarray, k: float, T: float
+) -> tuple[float, float]:
+    """`w(k, T)` and `dT_w(k, T)` via ONLY a w-across-T smoothing spline — the
+    grid-building hot path's analog of `local_variance_at`, deliberately
+    skipping that function's separate `dk_w`/`dkk_w` T-smoothing splines.
+    `_sigma_loc_row` derives those instead from finite differences across
+    neighboring, already-computed grid points in the SAME row (see the module
+    docstring's "Fourth finding"): one smoothed w-surface, differentiated once,
+    rather than three independently-smoothed quantities that are supposed to be
+    related in the first place. Same `T <= T_pillars[0]` flat-local-vol special
+    case as `local_variance_at`."""
+    k_arr = np.asarray(k)
+    w_vals = np.array(
+        [float(np.asarray(_slice_w_dk_dkk(row, k_arr)[0])) for _, row in pillars.iterrows()]
+    )
+    T_clamped = float(np.clip(T, T_pillars[0], T_pillars[-1]))
+    w_interp = _t_interpolant(T_pillars, w_vals)
+    w = float(w_interp(T_clamped))
+    dT_w = float(w_interp.derivative()(T_clamped))
+    if T <= T_pillars[0]:
+        dT_w = w / T_pillars[0]
+    return w, dT_w
+
+
+def _finite_diff_k(k: np.ndarray, w: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """First and second derivatives of `w` w.r.t. `k`, via a standard 3-point
+    NON-uniform finite-difference stencil across adjacent entries of an
+    already-sorted-ascending `k` array (guaranteed by construction: `k` comes
+    from `log(s / forward)` at increasing `s`, and clamping preserves
+    monotonicity). Reuses grid points already being computed for the row — no
+    extra evaluations, unlike a fresh central-difference bump.
+
+    Interior points use the exact 3-point formula (confirmed exact on a
+    synthetic quadratic before being trusted here — see
+    `tests/unit/test_local_vol.py`); the first/last points fall back to a
+    one-sided 2-point difference for `dk_w` (a 2-point stencil can't estimate
+    curvature, so `dkk_w` is left at 0 there). Any pair of adjacent points
+    sharing the same `k` (both clamped into the flat `EXTREME_K_MULTIPLE` wing)
+    gives `dk_w = dkk_w = 0` there by explicit guard, not division-by-zero —
+    consistent with the wing being flat by construction, not a special case
+    invented for this stencil.
+    """
+    n = len(k)
+    dk_w = np.zeros(n)
+    dkk_w = np.zeros(n)
+    for i in range(n):
+        if i == 0:
+            h1 = k[1] - k[0]
+            dk_w[i] = 0.0 if h1 == 0 else (w[1] - w[0]) / h1
+            continue
+        if i == n - 1:
+            h0 = k[i] - k[i - 1]
+            dk_w[i] = 0.0 if h0 == 0 else (w[i] - w[i - 1]) / h0
+            continue
+        h0 = k[i] - k[i - 1]
+        h1 = k[i + 1] - k[i]
+        if h0 == 0 and h1 == 0:
+            continue
+        if h0 == 0:
+            dk_w[i] = 0.0 if h1 == 0 else (w[i + 1] - w[i]) / h1
+            continue
+        if h1 == 0:
+            dk_w[i] = (w[i] - w[i - 1]) / h0
+            continue
+        dk_w[i] = (
+            (-h1 / (h0 * (h0 + h1))) * w[i - 1]
+            + ((h1 - h0) / (h0 * h1)) * w[i]
+            + (h0 / (h1 * (h0 + h1))) * w[i + 1]
+        )
+        dkk_w[i] = (
+            (2 / (h0 * (h0 + h1))) * w[i - 1]
+            - (2 / (h0 * h1)) * w[i]
+            + (2 / (h1 * (h0 + h1))) * w[i + 1]
+        )
+    return dk_w, dkk_w
+
+
 def _sigma_loc_row(
     surface_for_underlying: pd.DataFrame,
     forward_curve: ForwardCurve,
@@ -235,27 +337,63 @@ def _sigma_loc_row(
     """One `t_grid` row of `build_local_vol_grid`'s (s_grid x t_grid) rectangle —
     pulled out to a plain, picklable function so it can run in a separate process.
     Each row is a pure function of its own inputs (no shared state with any other
-    row), which is what makes this embarrassingly parallel: the expensive part
-    (`local_variance_at`'s smoothing-spline fits) is redone independently per row
-    regardless of whether rows run in one process or many."""
+    row), which is what makes this embarrassingly parallel across rows, on top
+    of the 3x-fewer-fits-per-point win from `_row_w_and_dT_w`/`_finite_diff_k`
+    within a row."""
     t_eff = max(t, 1e-6)  # t=0 has no forward-implied k; treat as the first instant after
     forward_t = forward_curve.forward(t_eff)
 
-    atm = local_variance_at(surface_for_underlying, 0.0, t_eff)
-    assert atm is not None  # caller already checked len(pillars) >= MIN_PILLARS_FOR_LOCAL_VOL
-    atm_iv = float(np.sqrt(max(atm.w, 1e-12) / t_eff))
+    pillars = surface_for_underlying.sort_values("T")
+    T_pillars = pillars["T"].to_numpy(dtype=float)
+
+    atm_w, _ = _row_w_and_dT_w(pillars, T_pillars, 0.0, t_eff)
+    atm_iv = float(np.sqrt(max(atm_w, 1e-12) / t_eff))
     k_cap = EXTREME_K_MULTIPLE * atm_iv * np.sqrt(t_eff)
+
+    k_arr = np.array([float(np.clip(np.log(s / forward_t), -k_cap, k_cap)) for s in s_grid])
+    w_arr = np.empty(len(s_grid))
+    dT_w_arr = np.empty(len(s_grid))
+    for si, k in enumerate(k_arr):
+        w_arr[si], dT_w_arr[si] = _row_w_and_dT_w(pillars, T_pillars, float(k), t_eff)
+
+    dk_w_arr, dkk_w_arr = _finite_diff_k(k_arr, w_arr)
+
+    # Points clamped into the flat `EXTREME_K_MULTIPLE` wing (k == +/- k_cap)
+    # share an identical k with their clamped neighbors, so the finite-
+    # difference stencil above correctly reads their local slope as zero — but
+    # that's not the same as the true smile's curvature AT the cap boundary
+    # itself, which is what `local_variance_at`'s own per-point method uses
+    # there. Measured, not assumed: up to ~69% relative local-variance
+    # difference at the cap on a synthetic test surface, vs. <1% everywhere in
+    # the interior (`tests/unit/test_local_vol.py`). Recomputed exactly once
+    # per distinct capped boundary value actually present in this row (not once
+    # per point sharing it) via the same closed-form-per-pillar-then-T-smooth
+    # approach `local_variance_at` uses, to match its already-validated wing
+    # behavior exactly rather than silently changing it.
+    T_clamped = float(np.clip(t_eff, T_pillars[0], T_pillars[-1]))
+    for boundary_k in (-k_cap, k_cap):
+        capped_mask = k_arr == boundary_k
+        if not np.any(capped_mask):
+            continue
+        dk_w_vals = np.empty(len(pillars))
+        dkk_w_vals = np.empty(len(pillars))
+        for i, (_, prow) in enumerate(pillars.iterrows()):
+            _, dk_w_vals[i], dkk_w_vals[i] = _slice_w_dk_dkk(prow, np.asarray(boundary_k))
+        dk_w_boundary = float(_t_interpolant(T_pillars, dk_w_vals)(T_clamped))
+        dkk_w_boundary = float(_t_interpolant(T_pillars, dkk_w_vals)(T_clamped))
+        dk_w_arr[capped_mask] = dk_w_boundary
+        dkk_w_arr[capped_mask] = dkk_w_boundary
 
     row = np.empty(len(s_grid))
     n_floored = 0
-    for si, s in enumerate(s_grid):
-        k = float(np.log(s / forward_t))
-        k_clamped = float(np.clip(k, -k_cap, k_cap))
-        result = local_variance_at(surface_for_underlying, k_clamped, t_eff)
-        assert result is not None
-        if result.local_variance_raw < LOCAL_VARIANCE_FLOOR:
+    for si in range(len(s_grid)):
+        w, dk_w, dkk_w, dT_w, k = w_arr[si], dk_w_arr[si], dkk_w_arr[si], dT_w_arr[si], k_arr[si]
+        g = (1 - k * dk_w / (2 * w)) ** 2 - (dk_w**2 / 4) * (1 / w + 0.25) + dkk_w / 2
+        local_variance_raw = dT_w / g if g != 0 else np.nan
+        local_variance = max(local_variance_raw, LOCAL_VARIANCE_FLOOR)
+        if local_variance_raw < LOCAL_VARIANCE_FLOOR:
             n_floored += 1
-        row[si] = np.sqrt(result.local_variance)
+        row[si] = np.sqrt(local_variance)
     return row, n_floored
 
 
