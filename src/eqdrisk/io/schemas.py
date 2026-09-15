@@ -365,6 +365,43 @@ HYPOTHETICAL_GRID_SCHEMA = pa.schema(
 HYPOTHETICAL_GRID_REQUIRED_NOT_NULL = ["asof_date", "scenario", "base_value", "pnl"]
 
 
+AI_INVESTIGATION_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),  # day1 — matches PNL_EXPLAIN_SCHEMA's own convention
+        ("day0", pa.date32()),
+        ("model", pa.string()),
+        ("ai_available", pa.bool_()),  # False if Ollama wasn't reachable that day — not a crash
+        ("summary", pa.string()),
+        ("root_cause_hypothesis", pa.string()),
+        ("confidence", pa.string()),  # "low" | "medium" | "high" | "" (unavailable/unparsed)
+        ("raw_response", pa.string()),
+    ]
+)
+AI_INVESTIGATION_REQUIRED_NOT_NULL = ["asof_date", "day0", "model", "ai_available"]
+
+AI_FLAGGED_POSITION_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("day0", pa.date32()),
+        ("position_id", pa.string()),
+        ("reason", pa.string()),
+    ]
+)
+AI_FLAGGED_POSITION_REQUIRED_NOT_NULL = ["asof_date", "day0", "position_id"]
+
+AI_PROPOSED_CHANGE_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("day0", pa.date32()),
+        ("parameter", pa.string()),
+        ("current_value", pa.string()),
+        ("suggested_value", pa.string()),
+        ("rationale", pa.string()),
+    ]
+)
+AI_PROPOSED_CHANGE_REQUIRED_NOT_NULL = ["asof_date", "day0", "parameter"]
+
+
 class SchemaViolation(ValueError):
     pass
 

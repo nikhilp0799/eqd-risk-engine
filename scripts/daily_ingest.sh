@@ -73,5 +73,13 @@ print(days[0].isoformat())
         echo "*** RESIDUAL ALERT: today's P&L-explain run breached its threshold — see ALERT lines above ***"
     fi
 
+    echo "--- aiinvestigate ($PREV_DAY -> $TODAY) ---"
+    AIINVESTIGATE_OUTPUT="$("$EQDRISK" aiinvestigate --day0 "$PREV_DAY" --day1 "$TODAY" 2>&1)" \
+        || echo "AIINVESTIGATE FAILED"
+    echo "$AIINVESTIGATE_OUTPUT"
+    if echo "$AIINVESTIGATE_OUTPUT" | grep -q "AI unavailable"; then
+        echo "*** AI unavailable today (Ollama not reachable) — not treated as a pipeline failure ***"
+    fi
+
     echo "=== Done: $(date) ==="
 } >> "$LOG_FILE" 2>&1

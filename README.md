@@ -8,12 +8,14 @@ Built to mirror the daily workflow of an equity derivatives risk quant: *the num
 
 ---
 
-## Current build status (updated 2026-09-07)
+## Current build status (updated 2026-09-14)
 
 **This README doubles as the original build plan (kept intentionally — it explains *why* each
 step matters and what "done" looks like), but a lot of it is no longer just a plan.** Steps 1–7,
 8.1, 11.1, 11.2, and 12 through 16 are built, tested, and verified against real live market data.
-Each step section below is tagged with its actual status.
+Beyond the original 16 steps, a daily AI investigation agent (local, free, Ollama-served model —
+see the dedicated section after Step 16) is also built and verified live. Each step section below
+is tagged with its actual status.
 
 | Status | Steps |
 |---|---|
@@ -93,6 +95,7 @@ not tuned-to-look-clean ones:
 - [Step 14 — Dashboard](#step-14--dashboard)
 - [Step 15 — Model documentation](#step-15--model-documentation)
 - [Step 16 — Engineering polish](#step-16--engineering-polish)
+- [Beyond the 16 steps — a daily AI investigation agent](#beyond-the-16-steps--a-daily-ai-investigation-agent)
 - [Timelines](#timelines)
 - [Acceptance criteria](#acceptance-criteria)
 - [Interview preparation](#interview-preparation)
@@ -1157,6 +1160,66 @@ honestly as a partial number rather than an assumed one.
 - `make reproduce DATE=2026-08-11` now genuinely works — `eqdrisk run` was a stub until this step;
   it calls each stage's real function in sequence, reporting (not aborting on) any single stage's
   failure, the same resilience pattern `scripts/daily_ingest.sh` already used in bash.
+
+---
+
+## Beyond the 16 steps — a daily AI investigation agent
+
+**Status: done, verified live.** Not part of the original 16-step plan — added afterward at the
+project owner's own request to make the engine "independent, self-reliant" using AI, with one
+explicit constraint from the start: **free and local, no paid API, nothing sent off this machine.**
+
+**What it is:** a small agent (`src/eqdrisk/agent/`) that runs once per day, after
+`explainpnl` in the pipeline, and asks a local open-weight model — `qwen2.5:7b`, served by
+[Ollama](https://ollama.com) on `localhost:11434`, no API key, no per-call cost — to read that
+day's real P&L-explain output and write a plain-English summary, a root-cause hypothesis, a
+confidence level, positions to flag for human review, and config/threshold changes to *propose*
+(never apply). It runs every single day regardless of whether a residual breach fired — the
+project owner's explicit choice over the narrower "only on breach" option.
+
+**Grounding, not free-form generation.** The prompt hands the model only numbers this project
+already computed: the day's full P&L-explain waterfall, the last 5 real day-pairs' residual trend,
+and a literal excerpt of this project's own documented limitations
+(`docs/model_documentation.md` Section 4) — so the model reasons from stated facts rather than
+inventing its own. The response is required to be strict JSON; a parse failure falls back to
+storing the raw text with an honest `parse_error` flag rather than silently dropping it.
+
+**Real, not hypothetical, validation.** Run live against two real day pairs:
+- A quiet pair (2026-09-11 -> 2026-09-14) correctly reported "no unusual residual" — the honest
+  reading of a period with no book-relevant data change.
+- A real breach pair (2026-09-02 -> 2026-09-03, the same underlying data behind Step 12/13's
+  incident) came back with **P008 (the NVDA autocallable) correctly identified as the largest
+  contributor**, a root-cause hypothesis citing "local volatility mispricing barrier-laden
+  payoffs" — this project's own documented vega-only Greek gap, in the model's own words, not
+  fed to it verbatim — and a proposed (not applied) change suggesting either a full reprice for
+  MC-priced positions or a separate residual threshold for barrier-laden ones. A 7B local model
+  independently re-derived, from real numbers and its documented-limitations excerpt, the same
+  conclusion Step 12/13's human-written incident report reached.
+
+**What this deliberately does not do** (guardrails, not aspirations):
+- Never auto-applies a proposed config/threshold change — always a written suggestion for a human.
+- Never recalibrates or touches any model parameter.
+- Never sends project data anywhere except `localhost:11434` — if Ollama isn't running, the
+  pipeline stage degrades to an honest "AI unavailable" record rather than crashing or faking output.
+- Every output is labeled an unverified AI hypothesis everywhere it's surfaced — CLI, the persisted
+  markdown note, and the dashboard.
+
+**Where it lives:**
+- `src/eqdrisk/agent/ollama_client.py` / `investigate.py` — the client and investigation logic.
+- `eqdrisk aiinvestigate --day0 X --day1 Y` — standalone CLI command; also wired into
+  `run_daily_pipeline` as the `ai_investigate` stage (reuses `explainpnl`'s own result, no
+  recomputation) and into `scripts/daily_ingest.sh` after `explainpnl`.
+- Three new curated tables (`ai_investigations`, `ai_flagged_positions`, `ai_proposed_changes`),
+  same one-row-per-day / one-row-per-item pattern as `pnl_explain`/`pnl_explain_by_position`.
+- `logs/ai_investigations/{day1}.md` — a per-day markdown note, headed with an explicit
+  "AI-GENERATED HYPOTHESIS — NOT VERIFIED" banner.
+- Dashboard: a new "AI investigation" subsection on the P&L explain tab, reading only the three
+  stored tables above (same "no live computation" rule as every other tab).
+- Tests: `tests/unit/test_agent_investigate.py` — mocks `ollama_client.is_available`/`generate`
+  (never hits the real local server in the test suite, same principle as every other external
+  dependency in this codebase); covers response parsing (valid/fenced/invalid JSON), the
+  limitations-excerpt fallback, historical-trend summarization, and the full
+  `run_daily_investigation` flow including graceful degradation when Ollama is down.
 
 ---
 

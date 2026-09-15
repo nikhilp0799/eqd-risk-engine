@@ -111,11 +111,12 @@ def run_daily_pipeline(
     portfolio_path: str,
     project_root: Path | None = None,
 ) -> PipelineResult:
+    from eqdrisk.agent.investigate import run_daily_investigation
     from eqdrisk.io.snapshot import run_snapshot
     from eqdrisk.marketdata.forward import run_forward_construction
     from eqdrisk.portfolio.mark import mark_portfolio
     from eqdrisk.pricing.engine import run_pricing
-    from eqdrisk.pricing.pnl_explain import run_pnl_explain
+    from eqdrisk.pricing.pnl_explain import PnLExplainResult, run_pnl_explain
     from eqdrisk.pricing.varswap_engine import run_varswap
     from eqdrisk.vol.implied import run_iv_extraction
     from eqdrisk.vol.risk_factors import run_risk_factor_grid
@@ -145,7 +146,20 @@ def run_daily_pipeline(
     _stage("portfolio", lambda: mark_portfolio(cfg, asof, portfolio_path))
 
     day0 = last_n_trading_days(asof, 2, cfg.calendar)[0]
-    _stage("explainpnl", lambda: run_pnl_explain(cfg, day0, asof, portfolio_path))
+    pnl_result: PnLExplainResult | None = None
+
+    def _run_explainpnl() -> PnLExplainResult:
+        nonlocal pnl_result
+        pnl_result = run_pnl_explain(cfg, day0, asof, portfolio_path)
+        return pnl_result
+
+    _stage("explainpnl", _run_explainpnl)
+
+    if pnl_result is not None:
+        _stage(
+            "ai_investigate",
+            lambda: run_daily_investigation(cfg, pnl_result, project_root),
+        )
 
     finished_at = dt.datetime.now(dt.UTC)
     write_manifest(cfg, asof, config_path, portfolio_path, started_at, finished_at, project_root)

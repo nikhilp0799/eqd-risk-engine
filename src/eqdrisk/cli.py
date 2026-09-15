@@ -223,6 +223,36 @@ def explainpnl(
 
 
 @app.command()
+def aiinvestigate(
+    day0: str = typer.Option(..., help="Prior date, YYYY-MM-DD"),
+    day1: str = typer.Option(..., help="Current date, YYYY-MM-DD"),
+    portfolio_path: str = typer.Option(
+        "configs/portfolio.yaml", "--portfolio", help="Path to portfolio config"
+    ),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Ask a local open-weight model (via Ollama, free, no API key, nothing leaves
+    this machine) to investigate day0->day1's real P&L-explain output: a plain-
+    English summary, a root-cause hypothesis, positions flagged for human review,
+    and PROPOSED (never auto-applied) config/threshold changes. Goes beyond the
+    README's original 16-step plan, at the user's own request. Every output is
+    labeled as an unverified AI hypothesis, not a conclusion.
+    """
+    from eqdrisk.agent.investigate import run_daily_investigation
+    from eqdrisk.pricing.pnl_explain import run_pnl_explain
+
+    cfg = BaseConfig.from_yaml(config)
+    d0 = dt.date.fromisoformat(day0)
+    d1 = dt.date.fromisoformat(day1)
+    pnl_result = run_pnl_explain(cfg, d0, d1, portfolio_path)
+    if pnl_result.skipped.get("_all_"):
+        typer.echo(f"Cannot investigate: {pnl_result.skipped['_all_']}")
+        raise typer.Exit(code=1)
+    investigation = run_daily_investigation(cfg, pnl_result)
+    typer.echo(investigation.render())
+
+
+@app.command()
 def var(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     method: str = typer.Option("both", help="full-reval | taylor | both"),
