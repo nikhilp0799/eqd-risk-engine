@@ -384,14 +384,55 @@ def render_pnl_explain_tab(cfg: BaseConfig) -> None:
     by_pos_all = read_table("pnl_explain_by_position", cfg.paths.curated)
     if by_pos_all.empty:
         st.info("No per-position residual data for this day pair yet.")
-        return
-    by_pos = by_pos_all[
-        (by_pos_all["day0"] == day0) & (by_pos_all["asof_date"] == day1)
-    ].sort_values("residual", key=lambda s: s.abs(), ascending=False)
-    fig_pos = go.Figure(go.Bar(x=by_pos["position_id"], y=by_pos["residual"]))
-    fig_pos.update_layout(yaxis_title="Residual ($)", height=350, margin=dict(l=0, r=0, t=20, b=0))
-    st.plotly_chart(fig_pos, width="stretch")
-    st.dataframe(by_pos, hide_index=True)
+    else:
+        by_pos = by_pos_all[
+            (by_pos_all["day0"] == day0) & (by_pos_all["asof_date"] == day1)
+        ].sort_values("residual", key=lambda s: s.abs(), ascending=False)
+        fig_pos = go.Figure(go.Bar(x=by_pos["position_id"], y=by_pos["residual"]))
+        fig_pos.update_layout(
+            yaxis_title="Residual ($)", height=350, margin=dict(l=0, r=0, t=20, b=0)
+        )
+        st.plotly_chart(fig_pos, width="stretch")
+        st.dataframe(by_pos, hide_index=True)
+
+    st.subheader("AI investigation")
+    st.caption(
+        "AI-GENERATED HYPOTHESIS, NOT VERIFIED — produced by a local open-weight model "
+        "(via Ollama, run daily, goes beyond the README's original 16-step plan) reading "
+        "this same day pair's real P&L-explain output. Never auto-applied: proposed "
+        "changes below are suggestions for a human to review, not actions taken."
+    )
+    ai_all = read_table("ai_investigations", cfg.paths.curated)
+    ai_row = ai_all[(ai_all["day0"] == day0) & (ai_all["asof_date"] == day1)]
+    if ai_row.empty:
+        st.info("No AI investigation recorded for this day pair yet.")
+    else:
+        row = ai_row.iloc[0]
+        if not bool(row["ai_available"]):
+            st.warning("AI unavailable that day (Ollama not reachable) — no investigation run.")
+        else:
+            st.markdown(f"**Confidence:** {row['confidence']}")
+            st.markdown(f"**Summary:** {row['summary']}")
+            st.markdown(f"**Root cause hypothesis:** {row['root_cause_hypothesis']}")
+
+            flagged_all = read_table("ai_flagged_positions", cfg.paths.curated)
+            flagged = flagged_all[
+                (flagged_all["day0"] == day0) & (flagged_all["asof_date"] == day1)
+            ]
+            if not flagged.empty:
+                st.markdown("**Flagged for review:**")
+                st.dataframe(flagged[["position_id", "reason"]], hide_index=True)
+
+            changes_all = read_table("ai_proposed_changes", cfg.paths.curated)
+            changes = changes_all[
+                (changes_all["day0"] == day0) & (changes_all["asof_date"] == day1)
+            ]
+            if not changes.empty:
+                st.markdown("**Proposed changes (not applied):**")
+                st.dataframe(
+                    changes[["parameter", "current_value", "suggested_value", "rationale"]],
+                    hide_index=True,
+                )
 
 
 def main() -> None:

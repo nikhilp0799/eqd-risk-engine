@@ -23,6 +23,7 @@ dependencies = [
     "streamlit",
     "yfinance",
     "pandas-datareader",
+    "requests",
     "fredapi",
     "statsmodels",
     "pandas-market-calendars",
