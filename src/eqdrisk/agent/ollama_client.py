@@ -11,6 +11,8 @@ an optional add-on.
 
 from __future__ import annotations
 
+from typing import Any
+
 import requests
 
 OLLAMA_HOST = "http://localhost:11434"
@@ -26,23 +28,27 @@ def is_available(host: str = OLLAMA_HOST) -> bool:
         return False
 
 
-def generate(
-    prompt: str,
+def chat(
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
     model: str = OLLAMA_MODEL,
     host: str = OLLAMA_HOST,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
-) -> str | None:
-    """One-shot, non-streaming completion. Returns `None` (not an exception) on
-    any connection failure, timeout, or non-200 response — callers must treat
-    that as "AI unavailable today," not a pipeline failure."""
+) -> dict[str, Any] | None:
+    """One turn of `/api/chat` (non-streaming), optionally offering `tools` in
+    Ollama's function-calling format. Returns the raw `message` dict (with
+    `content` and/or `tool_calls`) or `None` on any failure — the daily
+    pipeline must degrade gracefully (an honest "AI unavailable" note) if the
+    local model service happens to be down, not crash the whole run over an
+    optional add-on."""
+    payload: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
+    if tools:
+        payload["tools"] = tools
     try:
-        resp = requests.post(
-            f"{host}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=timeout,
-        )
+        resp = requests.post(f"{host}/api/chat", json=payload, timeout=timeout)
         if resp.status_code != 200:
             return None
-        return str(resp.json().get("response", "")) or None
+        message = resp.json().get("message")
+        return message if isinstance(message, dict) else None
     except requests.exceptions.RequestException:
         return None

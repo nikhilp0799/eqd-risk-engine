@@ -401,6 +401,18 @@ AI_PROPOSED_CHANGE_SCHEMA = pa.schema(
 )
 AI_PROPOSED_CHANGE_REQUIRED_NOT_NULL = ["asof_date", "day0", "parameter"]
 
+AI_INVESTIGATION_TRACE_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("day0", pa.date32()),
+        ("round", pa.int64()),
+        ("tool_name", pa.string()),
+        ("arguments", pa.string()),  # JSON-encoded
+        ("result_summary", pa.string()),  # JSON-encoded, truncated
+    ]
+)
+AI_INVESTIGATION_TRACE_REQUIRED_NOT_NULL = ["asof_date", "day0", "round", "tool_name"]
+
 
 class SchemaViolation(ValueError):
     pass

@@ -234,9 +234,11 @@ def aiinvestigate(
     """Ask a local open-weight model (via Ollama, free, no API key, nothing leaves
     this machine) to investigate day0->day1's real P&L-explain output: a plain-
     English summary, a root-cause hypothesis, positions flagged for human review,
-    and PROPOSED (never auto-applied) config/threshold changes. Goes beyond the
-    README's original 16-step plan, at the user's own request. Every output is
-    labeled as an unverified AI hypothesis, not a conclusion.
+    and PROPOSED (never auto-applied) config/threshold changes. Genuinely agentic:
+    the model can call a real what-if-reprice tool and read the model documentation
+    itself, up to 3 tool-call rounds, before answering. Goes beyond the README's
+    original 16-step plan, at the user's own request. Every output is labeled as
+    an unverified AI hypothesis, not a conclusion.
     """
     from eqdrisk.agent.investigate import run_daily_investigation
     from eqdrisk.pricing.pnl_explain import run_pnl_explain
@@ -248,7 +250,7 @@ def aiinvestigate(
     if pnl_result.skipped.get("_all_"):
         typer.echo(f"Cannot investigate: {pnl_result.skipped['_all_']}")
         raise typer.Exit(code=1)
-    investigation = run_daily_investigation(cfg, pnl_result)
+    investigation = run_daily_investigation(cfg, pnl_result, portfolio_path)
     typer.echo(investigation.render())
 
 
