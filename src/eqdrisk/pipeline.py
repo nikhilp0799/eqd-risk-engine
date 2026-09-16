@@ -158,7 +158,7 @@ def run_daily_pipeline(
     if pnl_result is not None:
         _stage(
             "ai_investigate",
-            lambda: run_daily_investigation(cfg, pnl_result, project_root),
+            lambda: run_daily_investigation(cfg, pnl_result, portfolio_path, project_root),
         )
 
     finished_at = dt.datetime.now(dt.UTC)

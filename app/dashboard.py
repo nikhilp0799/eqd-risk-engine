@@ -434,6 +434,22 @@ def render_pnl_explain_tab(cfg: BaseConfig) -> None:
                     hide_index=True,
                 )
 
+            trace_all = read_table("ai_investigation_trace", cfg.paths.curated)
+            trace = trace_all[
+                (trace_all["day0"] == day0) & (trace_all["asof_date"] == day1)
+            ].sort_values("round")
+            if not trace.empty:
+                with st.expander(f"Investigation trace ({len(trace)} real tool call(s))"):
+                    st.caption(
+                        "What the model actually called mid-investigation (real pricing-engine "
+                        "reprices or model-doc reads), with what arguments, and what came back — "
+                        "the evidence of genuine tool use, not a claim about it."
+                    )
+                    st.dataframe(
+                        trace[["round", "tool_name", "arguments", "result_summary"]],
+                        hide_index=True,
+                    )
+
 
 def main() -> None:
     st.set_page_config(page_title="EQD Risk Engine", layout="wide")
