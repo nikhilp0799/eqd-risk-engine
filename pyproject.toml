@@ -27,6 +27,7 @@ dependencies = [
     "fredapi",
     "statsmodels",
     "pandas-market-calendars",
+    "torch",
 ]
 
 [project.optional-dependencies]
