@@ -37,7 +37,12 @@ def _write_configs(tmp_path: Path) -> tuple[Path, Path]:
     return config_path, portfolio_path
 
 
-def test_run_completes_and_writes_every_stages_artifact(tmp_path, mocked_sources):
+def test_run_completes_and_writes_every_stages_artifact(tmp_path, mocked_sources, monkeypatch):
+    # `run` doesn't take a --project-root option (its real caller always wants
+    # cwd), so `ai_investigate`'s markdown note would otherwise land in the
+    # real repo's logs/ dir rather than tmp_path — chdir keeps this test fully
+    # isolated, the same guarantee `mocked_sources` already gives the network.
+    monkeypatch.chdir(tmp_path)
     config_path, portfolio_path = _write_configs(tmp_path)
 
     result = runner.invoke(
@@ -64,6 +69,7 @@ def test_run_completes_and_writes_every_stages_artifact(tmp_path, mocked_sources
         "riskfactors",
         "portfolio",
         "explainpnl",
+        "ai_investigate",
     ):
         assert f"[OK] {stage}" in result.output, result.output
 
@@ -79,12 +85,14 @@ def test_run_completes_and_writes_every_stages_artifact(tmp_path, mocked_sources
         "risk_factors",
         "portfolio_marks",
         "manifests",
+        "ai_investigations",
     ):
         table_root = curated / table
         assert table_root.exists(), f"expected {table} to be written, found nothing"
 
 
-def test_run_writes_a_reproducibility_manifest(tmp_path, mocked_sources):
+def test_run_writes_a_reproducibility_manifest(tmp_path, mocked_sources, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # see the comment in the test above
     config_path, portfolio_path = _write_configs(tmp_path)
 
     result = runner.invoke(
