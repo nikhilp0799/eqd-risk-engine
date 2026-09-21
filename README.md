@@ -8,14 +8,16 @@ Built to mirror the daily workflow of an equity derivatives risk quant: *the num
 
 ---
 
-## Current build status (updated 2026-09-15)
+## Current build status (updated 2026-09-19)
 
 **This README doubles as the original build plan (kept intentionally — it explains *why* each
 step matters and what "done" looks like), but a lot of it is no longer just a plan.** Steps 1–7,
 8.1, 11.1, 11.2, and 12 through 16 are built, tested, and verified against real live market data.
-Beyond the original 16 steps, a daily AI investigation agent (local, free, Ollama-served model,
-now genuinely agentic via real tool use — see the dedicated section after Step 16) is also built
-and verified live. Each step section below is tagged with its actual status.
+Beyond the original 16 steps, two extensions are also built and verified live: a daily AI
+investigation agent (local, free, Ollama-served model, genuinely agentic via real tool use) and a
+deep-hedging module (PyTorch neural-network hedging policies vs. existing Greeks-based baselines)
+— see the two dedicated sections after Step 16. Each step section below is tagged with its actual
+status.
 
 | Status | Steps |
 |---|---|
@@ -75,6 +77,12 @@ not tuned-to-look-clean ones:
   reprice or read a specific documentation section before answering, with the full tool-call trace
   persisted and shown rather than hidden. On real data, a 7B local model independently re-derived
   the same root cause as Step 12/13's human-written incident report — see "Beyond the 16 steps".
+- Deep hedging (PyTorch, also beyond the 16 steps) delivered a genuinely nuanced, non-cherry-picked
+  result rather than a clean "AI wins" sweep: on the real P008 autocallable, variance- and
+  cost-trained hedging policies cut P&L variance by ~35% versus the existing static-delta baseline,
+  but their CVaR was actually WORSE than the baseline's — only the CVaR-trained policy improved
+  tail risk. Minimizing variance does not automatically minimize tail risk for this payoff, and the
+  real numbers show it plainly.
 
 ---
 
@@ -102,6 +110,7 @@ not tuned-to-look-clean ones:
 - [Step 15 — Model documentation](#step-15--model-documentation)
 - [Step 16 — Engineering polish](#step-16--engineering-polish)
 - [Beyond the 16 steps — a daily AI investigation agent](#beyond-the-16-steps--a-daily-ai-investigation-agent)
+- [Beyond the 16 steps — deep hedging (PyTorch)](#beyond-the-16-steps--deep-hedging-pytorch)
 - [Timelines](#timelines)
 - [Acceptance criteria](#acceptance-criteria)
 - [Interview preparation](#interview-preparation)
@@ -1263,6 +1272,87 @@ isolation and in the real CLI path.
   3-round cap forcing a final tools-off answer, Ollama unreachable), and both real tools
   (`what_if_reprice` against a real fixture portfolio with a hand-computable expected delta,
   `read_model_doc_section` against this project's real doc). 1750 tests passing overall.
+
+---
+
+## Beyond the 16 steps — deep hedging (PyTorch)
+
+**Status: done, verified live.** Also beyond the original plan — the project owner asked "anything
+we can do here with deep learning or ML?" Step 8.2 (PCA on vol risk factors) is the more "obvious"
+ML fit but is still blocked on real history (13 real trading days so far, nowhere near enough for
+stable eigenvectors). Deep hedging ([Buehler, Gonon, Teichmann, Wood 2019](https://arxiv.org/abs/1802.03042))
+doesn't have that dependency — it trains on paths SIMULATED under this project's own already-
+calibrated local-vol surface, so it's buildable now, and it's a genuinely different technique
+(a learned hedging *policy*, not another vol-surface fit).
+
+**What it is:** `src/eqdrisk/ml/` trains a small PyTorch network to hedge a position — applied at
+every rebalancing step, taking (log-moneyness, time-to-maturity) and outputting a hedge ratio —
+across three loss objectives (variance, CVaR/expected-shortfall, cost-adjusted/turnover-penalized)
+and two instruments: a vanilla option, and the SAME autocallable already in this project's real
+book (`P008` — $5M notional, 100%/75%/65% autocall/coupon/put barriers, 2.25% quarterly coupon).
+Every policy is compared out-of-sample, on a held-out path set it never trained on, against the
+existing hedging technique for that instrument (Black-Scholes delta for the vanilla; a static
+initial MC-Greeks delta for the autocallable — see below for why static, not dynamic).
+
+**The one non-obvious design call, made before writing any code:** gradients only need to flow
+through the hedge network's decisions and the resulting P&L arithmetic, NOT through the price-path
+simulation itself (the path is "the world," simulated once as fixed data; only the policy is
+learned against it). So path generation reuses the EXISTING, already-tested
+`pricing/monte_carlo.py::simulate_local_vol_paths` directly — no reimplementation was ever needed,
+and PyTorch is only used where gradients actually matter.
+
+**Real, live validation against actual NVDA data, not synthetic-only** (2026-09-16, spot $213.90):
+
+Vanilla ATM call, T=0.25y — every loss objective beat the Black-Scholes delta-hedge baseline on
+CVaR; the CVaR-trained policy achieved the single best CVaR of all four numbers compared:
+
+| Loss | Learned std | Learned CVaR(95%) | Baseline (BS-delta) std | Baseline CVaR |
+|---|---|---|---|---|
+| variance | **3.11** | -23.55 | 3.39 | -24.82 |
+| cvar | 3.51 | **-23.46** | 3.39 | -24.82 |
+| cost | **3.12** | -23.62 | 3.39 | -24.82 |
+
+Autocallable, using P008's REAL parameters, T=1y/4 quarterly observations:
+
+| Loss | Learned std | Learned CVaR(95%) | Baseline (static MC delta) std | Baseline CVaR |
+|---|---|---|---|---|
+| variance | **534,437** | -5,695,029 | 824,415 | **-5,479,247** |
+| cvar | 704,843 | **-5,423,416** | 824,415 | -5,479,247 |
+| cost | **533,332** | -5,692,384 | 824,415 | -5,479,247 |
+
+**A real, honest, nuanced finding — not a clean sweep, and more credible for it:** variance- and
+cost-trained policies cut the autocallable's hedged P&L variance by ~35%, but their CVaR is
+actually WORSE than the baseline's — minimizing variance does not automatically minimize tail risk
+for this asymmetric, knock-in-put-bearing payoff. Only the CVaR-trained policy beats the baseline
+on CVaR, at the cost of higher variance than the other two. No single policy dominates every
+metric, reported exactly as that.
+
+**Two documented simplifications** (real, load-bearing, stated explicitly rather than assumed
+away): the autocallable hedges only at its 4 real quarterly observation dates, not daily; and its
+baseline is a STATIC initial MC-Greeks delta (never rebalanced), not a fully dynamic re-hedge,
+since the latter would need repeated bump-and-reval MC repricing at every rebalance — prohibitively
+expensive for this comparison, and itself a real, recognized simplified baseline in practice for
+an instrument type already known to be hard to dynamically hedge at all (the same real-world
+difficulty Steps 12/13 already found and documented for this project's own book).
+
+**What this deliberately does not do:** does not replace or touch the existing pricing/Greeks
+engine — this is a separate, additive research comparison. Not wired into `run_daily_pipeline` or
+`daily_ingest.sh` — run on demand via the CLI, not part of the daily automation.
+
+**Where it lives:**
+- `src/eqdrisk/ml/{market,simulate,payoffs,hedge_model,losses,baseline,train,evaluate,run}.py`.
+- `eqdrisk deephedge --date X --instrument {vanilla,autocall} --loss {variance,cvar,cost} [--all]`
+  — trains, evaluates, and persists one (or all six) combinations.
+- New curated table `deep_hedge_results` (one row per trained combination per day).
+- Dashboard: a "Deep Hedging" tab, reading only that table (same "no live computation" rule as
+  every other tab).
+- Tests: `tests/unit/test_ml_deep_hedge.py` (17 tests — payoff correctness, a never-hedging network
+  reducing exactly to `-payoff`, gradients actually reaching the network, BS-delta variance
+  shrinking with more rebalancing, the differentiable autocallable payoff matching the real,
+  already-tested `pricing/autocallable.py::autocallable_payoff` exactly) and
+  `tests/unit/test_ml_run.py` (4 tests, real fixture curated data, tiny training configs). 1771
+  tests passing overall, all on synthetic fixtures — the test suite never trains on or requires
+  real market data.
 
 ---
 
