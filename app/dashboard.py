@@ -451,6 +451,63 @@ def render_pnl_explain_tab(cfg: BaseConfig) -> None:
                     )
 
 
+def render_deep_hedging_tab(cfg: BaseConfig) -> None:
+    st.caption(
+        "Goes beyond the README's original 16 steps: PyTorch hedging policies trained against "
+        "this project's own calibrated local-vol Monte Carlo simulator, compared out-of-sample "
+        "against the existing Black-Scholes/MC-Greeks baseline. A separate, additive research "
+        "comparison — never wired into the daily pipeline, never touching the pricing engine "
+        "itself. Run `eqdrisk deephedge --date ... --instrument ... --loss ...` (or `--all`) to "
+        "add a row; this tab only reads what was already trained and persisted."
+    )
+    results = read_table("deep_hedge_results", cfg.paths.curated)
+    if results.empty:
+        st.info("No deep-hedging results yet — run `eqdrisk deephedge --date ... --all`.")
+        return
+
+    dates = sorted(results["asof_date"].unique(), reverse=True)
+    asof = st.selectbox("Asof date", dates)
+    day = results[results["asof_date"] == asof].copy()
+
+    day["std_reduction_pct"] = 100.0 * (1.0 - day["learned_std"] / day["baseline_std"])
+    day["cvar_improvement"] = day["learned_cvar"] - day["baseline_cvar"]
+
+    st.subheader(f"Learned vs. baseline — {asof}")
+    st.dataframe(
+        day[
+            [
+                "underlying",
+                "instrument",
+                "loss_type",
+                "learned_std",
+                "baseline_std",
+                "std_reduction_pct",
+                "learned_cvar",
+                "baseline_cvar",
+            ]
+        ].sort_values(["instrument", "loss_type"]),
+        hide_index=True,
+    )
+    st.caption(
+        "std_reduction_pct > 0 means the learned policy has LOWER variance than the baseline. "
+        "cvar_improvement > 0 means the learned policy's CVaR is better (less negative) than the "
+        "baseline's — no single loss objective necessarily wins on both, and that is a real "
+        "finding, not a bug (see `planning/deep_hedging_plan.md`)."
+    )
+
+    combo_label = day["loss_type"] + " / " + day["instrument"]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=combo_label, y=day["learned_std"], name="learned std"))
+    fig.add_trace(go.Bar(x=combo_label, y=day["baseline_std"], name="baseline std"))
+    fig.update_layout(
+        barmode="group",
+        yaxis_title="Hedged P&L std",
+        height=350,
+        margin=dict(l=0, r=0, t=20, b=0),
+    )
+    st.plotly_chart(fig, width="stretch")
+
+
 def main() -> None:
     st.set_page_config(page_title="EQD Risk Engine", layout="wide")
     st.title("Equity Derivatives Risk Engine")
@@ -460,7 +517,9 @@ def main() -> None:
     )
 
     cfg = load_cfg()
-    tabs = st.tabs(["Surface", "Exposure", "VaR", "Backtest", "Stress", "P&L explain"])
+    tabs = st.tabs(
+        ["Surface", "Exposure", "VaR", "Backtest", "Stress", "P&L explain", "Deep Hedging"]
+    )
     with tabs[0]:
         render_surface_tab(cfg)
     with tabs[1]:
@@ -473,6 +532,8 @@ def main() -> None:
         render_stress_tab(cfg)
     with tabs[5]:
         render_pnl_explain_tab(cfg)
+    with tabs[6]:
+        render_deep_hedging_tab(cfg)
 
 
 main()

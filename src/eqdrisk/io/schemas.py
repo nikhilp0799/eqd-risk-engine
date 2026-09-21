@@ -413,6 +413,34 @@ AI_INVESTIGATION_TRACE_SCHEMA = pa.schema(
 )
 AI_INVESTIGATION_TRACE_REQUIRED_NOT_NULL = ["asof_date", "day0", "round", "tool_name"]
 
+DEEP_HEDGE_RESULT_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("underlying", pa.string()),
+        ("instrument", pa.string()),  # "vanilla" | "autocall"
+        ("loss_type", pa.string()),  # "variance" | "cvar" | "cost"
+        ("cost_bps", pa.float64()),
+        ("n_paths_train", pa.int64()),
+        ("n_steps", pa.int64()),
+        ("epochs", pa.int64()),
+        ("n_eval_paths", pa.int64()),
+        ("learned_mean", pa.float64()),
+        ("learned_std", pa.float64()),
+        ("learned_cvar", pa.float64()),
+        ("baseline_mean", pa.float64()),
+        ("baseline_std", pa.float64()),
+        ("baseline_cvar", pa.float64()),
+    ]
+)
+DEEP_HEDGE_RESULT_REQUIRED_NOT_NULL = [
+    "asof_date",
+    "underlying",
+    "instrument",
+    "loss_type",
+    "learned_std",
+    "baseline_std",
+]
+
 
 class SchemaViolation(ValueError):
     pass

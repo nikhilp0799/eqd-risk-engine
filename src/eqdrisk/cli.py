@@ -255,6 +255,47 @@ def aiinvestigate(
 
 
 @app.command()
+def deephedge(
+    date: str = typer.Option(..., help="Asof date, YYYY-MM-DD"),
+    instrument: str = typer.Option(..., help="'vanilla' or 'autocall'"),
+    loss: str = typer.Option(..., help="'variance', 'cvar', or 'cost'"),
+    underlying: str = typer.Option("NVDA", help="Underlying ticker"),
+    all_combinations: bool = typer.Option(
+        False, "--all", help="Ignore --instrument/--loss and run all 6 combinations"
+    ),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Train and evaluate a deep-hedging policy (README's 'beyond the 16
+    steps' extension, Phase 4): a PyTorch hedging network trained against the
+    real calibrated local-vol Monte Carlo simulator, compared out-of-sample
+    against the existing Black-Scholes/MC-Greeks baseline. NOT part of the
+    daily pipeline — this is a separate, additive research comparison, run on
+    demand, never touching the pricing engine itself.
+    """
+    from eqdrisk.ml.run import INSTRUMENTS, LOSS_TYPES, run_deep_hedge
+
+    cfg = BaseConfig.from_yaml(config)
+    asof = dt.date.fromisoformat(date)
+
+    combinations = (
+        [(i, loss_type) for i in INSTRUMENTS for loss_type in LOSS_TYPES]
+        if all_combinations
+        else [(instrument, loss)]
+    )
+    for instrument_, loss_ in combinations:
+        if instrument_ not in INSTRUMENTS or loss_ not in LOSS_TYPES:
+            typer.echo(f"instrument must be one of {INSTRUMENTS}, loss one of {LOSS_TYPES}")
+            raise typer.Exit(code=1)
+        result = run_deep_hedge(cfg, asof, instrument_, loss_, underlying)
+        if result is None:
+            typer.echo(f"No real market data available for {underlying} on {asof}.")
+            raise typer.Exit(code=1)
+        typer.echo(f"Deep hedge: {instrument_}/{loss_} on {underlying}, {asof}")
+        typer.echo(f"  learned : {result.comparison.learned}")
+        typer.echo(f"  baseline: {result.comparison.baseline}")
+
+
+@app.command()
 def var(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     method: str = typer.Option("both", help="full-reval | taylor | both"),
