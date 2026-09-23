@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from eqdrisk.ml.payoffs import autocallable_payoff_and_alive_schedule
+from eqdrisk.ml.payoffs import autocallable_payoff_and_alive_schedule, down_and_in_put_payoff
 from eqdrisk.pricing.autocallable import AutocallableSpec
 from eqdrisk.pricing.blackscholes import delta_spot
 
@@ -93,4 +93,28 @@ def autocallable_static_delta_hedge_pnl(
     entry_cost = cost_rate * abs(static_delta_shares) * initial_level
     exit_cost = cost_rate * abs(static_delta_shares) * exit_level
     trading_pnl = static_delta_shares * (exit_level - initial_level) - entry_cost - exit_cost
+    return trading_pnl - payoff
+
+
+def barrier_static_delta_hedge_pnl(
+    paths: np.ndarray,
+    strike: float,
+    barrier: float,
+    static_delta_shares: float,
+    cost_bps: float,
+) -> np.ndarray:
+    """The down-and-in put baseline (Phase 5): a hedge established ONCE at
+    inception (at the real bump-and-reval MC delta,
+    `pricing/barrier_mc.py::down_and_in_put_greeks`, computed once at t=0) and
+    held, UNREBALANCED, to maturity — no early-exit logic needed, unlike the
+    autocallable, since a barrier knock-in doesn't end the note early, only
+    determines whether the put is live at maturity."""
+    payoff = down_and_in_put_payoff(torch.from_numpy(paths), strike, barrier).numpy()
+    s0 = paths[:, 0]
+    s_T = paths[:, -1]
+
+    cost_rate = cost_bps / 10_000.0
+    entry_cost = cost_rate * abs(static_delta_shares) * s0
+    exit_cost = cost_rate * abs(static_delta_shares) * s_T
+    trading_pnl = static_delta_shares * (s_T - s0) - entry_cost - exit_cost
     return trading_pnl - payoff

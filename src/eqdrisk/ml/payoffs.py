@@ -1,7 +1,8 @@
-"""Payoffs for deep hedging: vanilla (Phase 1) and the autocallable (Phase 3),
-`planning/deep_hedging_plan.md`. Neither needs autograd through its own
-arithmetic — the simulated path/observation levels are fixed data (see the
-plan's architecture note); only the hedge network's decisions do.
+"""Payoffs for deep hedging: vanilla (Phase 1), the autocallable (Phase 3), and
+the down-and-in put (Phase 5) — `planning/deep_hedging_plan.md`. None needs
+autograd through its own arithmetic — the simulated path/observation levels
+are fixed data (see the plan's architecture note); only the hedge network's
+decisions do.
 """
 
 from __future__ import annotations
@@ -18,6 +19,18 @@ def vanilla_payoff(paths: torch.Tensor, strike: float, is_call: bool) -> torch.T
     if is_call:
         return torch.clamp(terminal - strike, min=0.0)
     return torch.clamp(strike - terminal, min=0.0)
+
+
+def down_and_in_put_payoff(paths: torch.Tensor, strike: float, barrier: float) -> torch.Tensor:
+    """Knocked-in (and thus worth a plain put payoff) if the FULL simulated
+    path ever touches/breaches `barrier`, else worthless. Discrete monitoring
+    at the simulation grid's own resolution — a real, documented simplification
+    versus Step 6.4's Brownian-bridge-corrected barrier pricer, see
+    `planning/deep_hedging_plan.md`'s Phase 5 section for why."""
+    terminal = paths[:, -1]
+    knocked_in = (paths <= barrier).any(dim=1)
+    put_payoff = torch.clamp(strike - terminal, min=0.0)
+    return torch.where(knocked_in, put_payoff, torch.zeros_like(put_payoff))
 
 
 def autocallable_payoff_and_alive_schedule(
