@@ -224,9 +224,12 @@ def test_run_deep_hedge_autocall_end_to_end_and_persists(tmp_path, monkeypatch):
     assert df.iloc[0]["loss_type"] == "cvar"
 
 
-def test_run_deep_hedge_second_run_overwrites_same_day_partition(tmp_path, monkeypatch):
-    """`store.write_partitioned` is idempotent per partition — running twice for
-    the same asof_date must not duplicate rows."""
+def test_run_deep_hedge_different_combinations_same_day_accumulate(tmp_path, monkeypatch):
+    """`store.write_partitioned` replaces a WHOLE `asof_date` partition per call
+    — since `deephedge` is invoked once PER combination, two different
+    combinations run on the same day must both survive (not have the second
+    silently erase the first), unlike every other table in this project which
+    writes a full day's rows in one call."""
     monkeypatch.setattr(run_module, "_train_cfg", _tiny_train_cfg)
     _seed_real_data(tmp_path)
     cfg = _cfg(tmp_path)
@@ -253,5 +256,28 @@ def test_run_deep_hedge_second_run_overwrites_same_day_partition(tmp_path, monke
     df = store.query(
         "SELECT * FROM t", views={"t": str(tmp_path / "deep_hedge_results")}
     ).to_pandas()
-    assert len(df) == 1  # second run overwrote the first (same asof_date partition)
-    assert df.iloc[0]["loss_type"] == "cvar"
+    assert len(df) == 2
+    assert set(df["loss_type"]) == {"variance", "cvar"}
+
+
+def test_run_deep_hedge_same_combination_rerun_replaces_not_duplicates(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_module, "_train_cfg", _tiny_train_cfg)
+    _seed_real_data(tmp_path)
+    cfg = _cfg(tmp_path)
+
+    for _ in range(2):
+        run_deep_hedge(
+            cfg,
+            ASOF,
+            "vanilla",
+            "variance",
+            underlying=UNDERLYING,
+            n_paths_eval=32,
+            project_root=tmp_path,
+        )
+
+    df = store.query(
+        "SELECT * FROM t", views={"t": str(tmp_path / "deep_hedge_results")}
+    ).to_pandas()
+    assert len(df) == 1
+    assert df.iloc[0]["loss_type"] == "variance"

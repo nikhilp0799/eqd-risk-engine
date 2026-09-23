@@ -8,9 +8,14 @@ import torch
 from eqdrisk.config import BaseConfig, Paths, Universe
 from eqdrisk.ml.baseline import (
     autocallable_static_delta_hedge_pnl,
+    barrier_static_delta_hedge_pnl,
     bs_delta_hedge_pnl,
 )
-from eqdrisk.ml.evaluate import evaluate_autocall_hedge, evaluate_vanilla_hedge
+from eqdrisk.ml.evaluate import (
+    evaluate_autocall_hedge,
+    evaluate_barrier_hedge,
+    evaluate_vanilla_hedge,
+)
 from eqdrisk.ml.hedge_model import (
     HedgeNet,
     rollout_autocallable_hedged_pnl,
@@ -18,11 +23,16 @@ from eqdrisk.ml.hedge_model import (
 )
 from eqdrisk.ml.losses import cost_adjusted_loss, cvar_loss, variance_loss
 from eqdrisk.ml.market import HedgingMarketInputs, load_hedging_inputs
-from eqdrisk.ml.payoffs import autocallable_payoff_and_alive_schedule, vanilla_payoff
+from eqdrisk.ml.payoffs import (
+    autocallable_payoff_and_alive_schedule,
+    down_and_in_put_payoff,
+    vanilla_payoff,
+)
 from eqdrisk.ml.simulate import simulate_training_paths
 from eqdrisk.ml.train import (
     TrainConfig,
     train_autocall_hedge,
+    train_barrier_hedge,
     train_vanilla_hedge,
     train_vanilla_hedge_general,
 )
@@ -369,6 +379,95 @@ def test_train_and_evaluate_autocall_hedge_runs_end_to_end():
         seed_eval=999,
         greeks_n_paths=64,
         greeks_n_steps_per_period=2,
+    )
+    assert np.isfinite(comparison.learned.std)
+    assert np.isfinite(comparison.baseline.std)
+    assert comparison.n_eval_paths > 0
+
+
+# --- Phase 5: down_and_in_put_payoff -------------------------------------------
+
+
+def test_down_and_in_put_payoff_worthless_when_never_breached():
+    paths = torch.tensor([[100.0, 105.0, 95.0, 90.0]], dtype=torch.float64)  # never <= 80
+    payoff = down_and_in_put_payoff(paths, strike=100.0, barrier=80.0)
+    assert payoff.tolist() == pytest.approx([0.0])
+
+
+def test_down_and_in_put_payoff_activates_on_intraperiod_breach_not_just_terminal():
+    """A path that dips below the barrier mid-path then recovers above the
+    strike by expiry must still pay the (now zero) intrinsic put value only if
+    ITM at expiry — but the knock-in must be recognized even though the FINAL
+    level never breached the barrier itself."""
+    paths = torch.tensor([[100.0, 70.0, 95.0]], dtype=torch.float64)  # dips to 70, recovers to 95
+    payoff = down_and_in_put_payoff(paths, strike=100.0, barrier=80.0)
+    assert payoff.tolist() == pytest.approx([5.0])  # knocked in, ITM put: 100 - 95
+
+
+def test_down_and_in_put_payoff_matches_real_pricer_convention_zero_cost_sanity():
+    """Deep and shallow ITM/OTM sanity: a path staying far above both strike
+    and barrier is worthless; deeply breaching and finishing far ITM pays the
+    full intrinsic value."""
+    paths = torch.tensor([[100.0, 110.0, 120.0], [100.0, 60.0, 50.0]], dtype=torch.float64)
+    payoff = down_and_in_put_payoff(paths, strike=100.0, barrier=80.0)
+    assert payoff.tolist() == pytest.approx([0.0, 50.0])
+
+
+# --- Phase 5: rollout (reuses rollout_hedged_pnl directly) --------------------
+
+
+def test_barrier_rollout_never_hedging_equals_negative_payoff():
+    paths = torch.tensor([[100.0, 70.0, 90.0], [100.0, 105.0, 110.0]], dtype=torch.float64)
+    t_grid = np.array([0.0, 0.5, 1.0])
+    hedged_pnl = rollout_hedged_pnl(
+        paths,
+        t_grid,
+        _ZeroNet(),
+        strike=100.0,
+        T=1.0,
+        cost_bps=0.0,
+        payoff_fn=lambda p: down_and_in_put_payoff(p, strike=100.0, barrier=80.0),
+    )
+    expected = -down_and_in_put_payoff(paths, strike=100.0, barrier=80.0)
+    assert hedged_pnl.tolist() == pytest.approx(expected.tolist())
+
+
+# --- Phase 5: barrier_static_delta_hedge_pnl -----------------------------------
+
+
+def test_barrier_static_hedge_zero_delta_equals_negative_payoff():
+    paths = np.array([[100.0, 70.0, 90.0], [100.0, 105.0, 110.0]])
+    baseline_pnl = barrier_static_delta_hedge_pnl(
+        paths, strike=100.0, barrier=80.0, static_delta_shares=0.0, cost_bps=0.0
+    )
+    expected = -down_and_in_put_payoff(torch.from_numpy(paths), strike=100.0, barrier=80.0).numpy()
+    assert baseline_pnl == pytest.approx(expected)
+
+
+# --- Phase 5: end-to-end train + evaluate (fast smoke test) -------------------
+
+
+def test_train_and_evaluate_barrier_hedge_runs_end_to_end():
+    inputs = _flat_inputs(T=1.0)
+    strike = SPOT
+    barrier = SPOT * 0.8
+    train_cfg = TrainConfig(n_paths_train=64, n_steps=8, epochs=3, hidden=4, cost_bps=5.0)
+    result = train_barrier_hedge(inputs, strike, barrier, loss_type="variance", cfg=train_cfg)
+
+    assert len(result.loss_history) == 3
+    assert all(np.isfinite(loss_val) for loss_val in result.loss_history)
+
+    comparison = evaluate_barrier_hedge(
+        inputs,
+        result.net,
+        strike,
+        barrier,
+        n_paths_eval=64,
+        n_steps=8,
+        cost_bps=5.0,
+        seed_eval=999,
+        greeks_n_paths=64,
+        greeks_n_steps=8,
     )
     assert np.isfinite(comparison.learned.std)
     assert np.isfinite(comparison.baseline.std)

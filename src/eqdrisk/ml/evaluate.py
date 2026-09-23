@@ -12,12 +12,17 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from eqdrisk.ml.baseline import autocallable_static_delta_hedge_pnl, bs_delta_hedge_pnl
+from eqdrisk.ml.baseline import (
+    autocallable_static_delta_hedge_pnl,
+    barrier_static_delta_hedge_pnl,
+    bs_delta_hedge_pnl,
+)
 from eqdrisk.ml.hedge_model import HedgeNet, rollout_autocallable_hedged_pnl, rollout_hedged_pnl
 from eqdrisk.ml.market import HedgingMarketInputs
-from eqdrisk.ml.payoffs import vanilla_payoff
+from eqdrisk.ml.payoffs import down_and_in_put_payoff, vanilla_payoff
 from eqdrisk.ml.simulate import simulate_training_paths
 from eqdrisk.pricing.autocallable import AutocallableSpec, autocallable_greeks
+from eqdrisk.pricing.barrier_mc import down_and_in_put_greeks
 
 CVAR_ALPHA = 0.95  # expected shortfall in the worst (1 - CVAR_ALPHA) tail of outcomes
 
@@ -134,4 +139,61 @@ def evaluate_autocall_hedge(
         learned=_stats(learned_pnl.numpy()),
         baseline=_stats(baseline_pnl),
         n_eval_paths=obs_levels.shape[0],
+    )
+
+
+def evaluate_barrier_hedge(
+    inputs: HedgingMarketInputs,
+    net: HedgeNet,
+    strike: float,
+    barrier: float,
+    n_paths_eval: int,
+    n_steps: int,
+    cost_bps: float,
+    seed_eval: int,
+    greeks_n_paths: int = 2_000,
+    greeks_n_steps: int = 64,
+    greeks_seed: int = 4242,
+) -> ComparisonResult:
+    """Phase 5. The baseline's static delta is a REAL bump-and-reval MC Greek
+    (`pricing/barrier_mc.py::down_and_in_put_greeks`, WITH its own Brownian-
+    bridge continuity correction — unaffected by deep hedging's own simpler
+    discrete-monitoring path generator), computed once — see
+    `baseline.barrier_static_delta_hedge_pnl` for why it is static. `seed_eval`
+    MUST differ from training's `seed_train`, same held-out discipline as
+    every other `evaluate_*` function here."""
+    sim = simulate_training_paths(inputs, n_paths_eval, n_steps, seed_eval)
+
+    with torch.no_grad():
+        learned_pnl = rollout_hedged_pnl(
+            sim.paths,
+            sim.t_grid,
+            net,
+            strike,
+            inputs.T,
+            cost_bps,
+            lambda p: down_and_in_put_payoff(p, strike, barrier),
+        )
+    assert isinstance(learned_pnl, torch.Tensor)
+
+    greeks = down_and_in_put_greeks(
+        inputs.spot,
+        strike,
+        barrier,
+        inputs.T,
+        inputs.grid,
+        inputs.r,
+        inputs.q,
+        greeks_n_paths,
+        greeks_n_steps,
+        greeks_seed,
+    )
+    baseline_pnl = barrier_static_delta_hedge_pnl(
+        sim.paths.numpy(), strike, barrier, greeks.delta, cost_bps
+    )
+
+    return ComparisonResult(
+        learned=_stats(learned_pnl.numpy()),
+        baseline=_stats(baseline_pnl),
+        n_eval_paths=sim.paths.shape[0],
     )

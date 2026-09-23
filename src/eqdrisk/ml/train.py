@@ -9,6 +9,7 @@ evaluation — same discipline as every other validation in this project.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -27,7 +28,7 @@ from eqdrisk.ml.losses import (
     variance_loss,
 )
 from eqdrisk.ml.market import HedgingMarketInputs
-from eqdrisk.ml.payoffs import vanilla_payoff
+from eqdrisk.ml.payoffs import down_and_in_put_payoff, vanilla_payoff
 from eqdrisk.ml.simulate import simulate_training_paths
 from eqdrisk.pricing.autocallable import AutocallableSpec
 
@@ -92,23 +93,23 @@ def _loss_from_hedged_pnl(
     return variance_loss(hedged_pnl)
 
 
-def train_vanilla_hedge_general(
+def _train_hedge_with_rollout(
     inputs: HedgingMarketInputs,
     strike: float,
-    is_call: bool,
+    payoff_fn: Callable[[torch.Tensor], torch.Tensor],
     loss_type: LossType,
     cfg: TrainConfig,
-    cvar_alpha: float = DEFAULT_CVAR_ALPHA,
-    cost_lambda: float = DEFAULT_COST_LAMBDA,
+    cvar_alpha: float,
+    cost_lambda: float,
 ) -> TrainResult:
-    """Phase 2: the same vanilla rollout as `train_vanilla_hedge`, generalized
-    to all three loss objectives the project owner chose."""
+    """Shared body for any single-maturity, no-early-exit payoff hedged with
+    `hedge_model.rollout_hedged_pnl` — used by both the vanilla (Phase 2) and
+    down-and-in-put (Phase 5) instruments, which need no rollout logic beyond
+    what `rollout_hedged_pnl` already provides (unlike the autocallable, whose
+    early-redemption logic genuinely needed its own rollout function)."""
     sim = simulate_training_paths(inputs, cfg.n_paths_train, cfg.n_steps, cfg.seed_train)
     net = HedgeNet(hidden=cfg.hidden)
     optimizer = torch.optim.Adam(net.parameters(), lr=cfg.lr)
-
-    def payoff_fn(paths: torch.Tensor) -> torch.Tensor:
-        return vanilla_payoff(paths, strike, is_call)
 
     loss_history: list[float] = []
     for _ in range(cfg.epochs):
@@ -129,6 +130,47 @@ def train_vanilla_hedge_general(
         loss_history.append(float(loss.item()))
 
     return TrainResult(net=net, loss_history=loss_history)
+
+
+def train_vanilla_hedge_general(
+    inputs: HedgingMarketInputs,
+    strike: float,
+    is_call: bool,
+    loss_type: LossType,
+    cfg: TrainConfig,
+    cvar_alpha: float = DEFAULT_CVAR_ALPHA,
+    cost_lambda: float = DEFAULT_COST_LAMBDA,
+) -> TrainResult:
+    """Phase 2: the same vanilla rollout as `train_vanilla_hedge`, generalized
+    to all three loss objectives the project owner chose."""
+
+    def payoff_fn(paths: torch.Tensor) -> torch.Tensor:
+        return vanilla_payoff(paths, strike, is_call)
+
+    return _train_hedge_with_rollout(
+        inputs, strike, payoff_fn, loss_type, cfg, cvar_alpha, cost_lambda
+    )
+
+
+def train_barrier_hedge(
+    inputs: HedgingMarketInputs,
+    strike: float,
+    barrier: float,
+    loss_type: LossType,
+    cfg: TrainConfig,
+    cvar_alpha: float = DEFAULT_CVAR_ALPHA,
+    cost_lambda: float = DEFAULT_COST_LAMBDA,
+) -> TrainResult:
+    """Phase 5: the down-and-in put, reusing the same no-early-exit rollout as
+    the vanilla instrument — see `planning/deep_hedging_plan.md`'s Phase 5
+    section for why no new rollout logic was needed here."""
+
+    def payoff_fn(paths: torch.Tensor) -> torch.Tensor:
+        return down_and_in_put_payoff(paths, strike, barrier)
+
+    return _train_hedge_with_rollout(
+        inputs, strike, payoff_fn, loss_type, cfg, cvar_alpha, cost_lambda
+    )
 
 
 def train_autocall_hedge(
