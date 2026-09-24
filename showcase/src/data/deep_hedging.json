@@ -1,0 +1,104 @@
+{
+  "asof_date": "2026-09-22",
+  "rows": [
+    {
+      "underlying": "NVDA",
+      "instrument": "autocall",
+      "loss_type": "cost",
+      "learned_std": 430548.11533644964,
+      "baseline_std": 641289.7077933135,
+      "std_reduction_pct": 32.86215105213969,
+      "learned_cvar": -5754177.730526132,
+      "baseline_cvar": -5568161.232327916,
+      "cvar_improvement": -186016.49819821585
+    },
+    {
+      "underlying": "NVDA",
+      "instrument": "autocall",
+      "loss_type": "cvar",
+      "learned_std": 629973.8798487651,
+      "baseline_std": 641289.7077933135,
+      "std_reduction_pct": 1.7645422664721022,
+      "learned_cvar": -5439246.752854466,
+      "baseline_cvar": -5568161.232327916,
+      "cvar_improvement": 128914.47947344929
+    },
+    {
+      "underlying": "NVDA",
+      "instrument": "autocall",
+      "loss_type": "variance",
+      "learned_std": 430406.5668254031,
+      "baseline_std": 641289.7077933135,
+      "std_reduction_pct": 32.88422352723579,
+      "learned_cvar": -5751619.111357521,
+      "baseline_cvar": -5568161.232327916,
+      "cvar_improvement": -183457.87902960554
+    },
+    {
+      "underlying": "SPX",
+      "instrument": "barrier",
+      "loss_type": "cost",
+      "learned_std": 139.31811761056738,
+      "baseline_std": 506.9437660127886,
+      "std_reduction_pct": 72.51803317233161,
+      "learned_cvar": -737.2623295488506,
+      "baseline_cvar": -1749.4315378311935,
+      "cvar_improvement": 1012.1692082823429
+    },
+    {
+      "underlying": "SPX",
+      "instrument": "barrier",
+      "loss_type": "cvar",
+      "learned_std": 196.2600948848461,
+      "baseline_std": 506.9437660127886,
+      "std_reduction_pct": 61.28562810260595,
+      "learned_cvar": -575.4727999062088,
+      "baseline_cvar": -1749.4315378311935,
+      "cvar_improvement": 1173.9587379249847
+    },
+    {
+      "underlying": "SPX",
+      "instrument": "barrier",
+      "loss_type": "variance",
+      "learned_std": 143.4252883301636,
+      "baseline_std": 506.9437660127886,
+      "std_reduction_pct": 71.70785046668364,
+      "learned_cvar": -744.5961726967616,
+      "baseline_cvar": -1749.4315378311935,
+      "cvar_improvement": 1004.8353651344319
+    },
+    {
+      "underlying": "NVDA",
+      "instrument": "vanilla",
+      "loss_type": "cost",
+      "learned_std": 2.9290852177080833,
+      "baseline_std": 2.947630561249043,
+      "std_reduction_pct": 0.629161055145977,
+      "learned_cvar": -23.71582497631972,
+      "baseline_cvar": -23.838979531017525,
+      "cvar_improvement": 0.12315455469780545
+    },
+    {
+      "underlying": "NVDA",
+      "instrument": "vanilla",
+      "loss_type": "cvar",
+      "learned_std": 3.4920913912305775,
+      "baseline_std": 2.947630561249043,
+      "std_reduction_pct": -18.471135329483836,
+      "learned_cvar": -23.4886526446029,
+      "baseline_cvar": -23.838979531017525,
+      "cvar_improvement": 0.3503268864146243
+    },
+    {
+      "underlying": "NVDA",
+      "instrument": "vanilla",
+      "loss_type": "variance",
+      "learned_std": 2.9344948852484793,
+      "baseline_std": 2.947630561249043,
+      "std_reduction_pct": 0.44563508647424976,
+      "learned_cvar": -23.730276226281134,
+      "baseline_cvar": -23.838979531017525,
+      "cvar_improvement": 0.108703304736391
+    }
+  ]
+}

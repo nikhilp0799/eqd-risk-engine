@@ -1,0 +1,30 @@
+{
+  "stats": [
+    {
+      "label": "Pricing accuracy vs. QuantLib",
+      "value": "price to 1e-8, Greeks to 1e-6",
+      "detail": "Full Black-76 Greek set cross-checked against QuantLib (Step 5)."
+    },
+    {
+      "label": "Deep-hedged barrier option, best loss (cost-adjusted)",
+      "value": "73% lower P&L std",
+      "detail": "A learned neural-network hedging policy vs. a static MC-Greeks delta baseline, out-of-sample, on a real SPX down-and-in put."
+    },
+    {
+      "label": "Deep-hedged autocallable: a genuine tradeoff, not a clean win",
+      "value": "variance loss: 33% lower std; CVaR loss: 128,914 better CVaR",
+      "detail": "No single loss objective wins on every metric \u2014 a real, honestly-reported finding."
+    },
+    {
+      "label": "AI investigation agent caught a real P&L gap",
+      "value": "670bp residual, high confidence",
+      "detail": "A local open-weight model (Ollama) made a real pricing-engine tool call mid-investigation and correctly attributed the residual to one position."
+    },
+    {
+      "label": "Test suite",
+      "value": "1,778 tests passing",
+      "detail": "Unit + integration + golden-file regression, lint/type clean (ruff, mypy)."
+    }
+  ],
+  "generated_at": "2026-09-23T23:46:24.711110+00:00"
+}
