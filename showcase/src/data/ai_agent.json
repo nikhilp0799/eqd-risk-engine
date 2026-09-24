@@ -1,0 +1,30 @@
+{
+  "day0": "2026-09-02",
+  "asof_date": "2026-09-03",
+  "model": "qwen2.5:7b",
+  "confidence": "high",
+  "summary": "The largest residual today is attributed to position P008, with a total residual of +629.4bp of NAV. This was driven by a significant price delta of -314,025.53 and a shocked gamma of -2068.48, indicating non-linear risk under spot and vol shocks.",
+  "root_cause_hypothesis": "Position P008 is experiencing a large residual due to its exposure to non-linear risk, specifically gamma risk, which is heightened under the hypothetical spot and vol shocks.",
+  "flagged_positions": [
+    {
+      "position_id": "P008",
+      "reason": "Large residual and non-linear risk exposure"
+    }
+  ],
+  "proposed_changes": [
+    {
+      "parameter": "gamma risk management",
+      "current_value": "not specifically managed",
+      "suggested_value": "introduce dedicated risk management for gamma exposure",
+      "rationale": "Given the significant impact of gamma, a structured approach to managing this risk could mitigate future large residuals."
+    }
+  ],
+  "trace": [
+    {
+      "round": 1,
+      "tool_name": "what_if_reprice",
+      "arguments": "{\"position_id\": \"P008\", \"spot_shock_pct\": -0.1, \"vol_shock_pct\": 0.25}",
+      "result_summary": "{\"position_id\": \"P008\", \"spot_shock_pct\": -0.1, \"vol_shock_pct\": 0.25, \"base_price\": 4742077.543913171, \"shocked_price\": 4428052.009089509, \"price_delta\": -314025.53482366167, \"shocked_delta\": 5205.372650528009, \"shocked_gamma\": -2068.483175891298, \"shocked_vega\": -1581405.0249747932}"
+    }
+  ]
+}

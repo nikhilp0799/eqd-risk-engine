@@ -1,0 +1,97 @@
+{
+  "day0": "2026-09-02",
+  "asof_date": "2026-09-03",
+  "nav": 4238877.500965972,
+  "residual_bp": 670.1511180747755,
+  "residual_alert_threshold_bp": 5.0,
+  "waterfall": [
+    {
+      "step": "time",
+      "actual_pnl": 1443.700781081673,
+      "explained_pnl": -4.006479360354242,
+      "residual": 1447.7072604420273
+    },
+    {
+      "step": "rates_divs",
+      "actual_pnl": 1383.5784673697997,
+      "explained_pnl": 16.74819270385987,
+      "residual": 1366.83027466594
+    },
+    {
+      "step": "spot",
+      "actual_pnl": 28685.71982362585,
+      "explained_pnl": 16835.842514020373,
+      "residual": 11849.877309605476
+    },
+    {
+      "step": "vol",
+      "actual_pnl": 54776.498768165904,
+      "explained_pnl": -214627.9360525563,
+      "residual": 269404.4348207222
+    }
+  ],
+  "by_position": [
+    {
+      "position_id": "P008",
+      "residual": 266813.7955443418
+    },
+    {
+      "position_id": "P007",
+      "residual": 7797.141922226101
+    },
+    {
+      "position_id": "P002",
+      "residual": 4993.048773371932
+    },
+    {
+      "position_id": "P003",
+      "residual": 4988.397996655036
+    },
+    {
+      "position_id": "P001",
+      "residual": -502.93708964286753
+    },
+    {
+      "position_id": "P004",
+      "residual": -33.05264980253142
+    },
+    {
+      "position_id": "P005",
+      "residual": 12.455168286164978
+    },
+    {
+      "position_id": "P006",
+      "residual": 0.0
+    },
+    {
+      "position_id": "P009",
+      "residual": 0.0
+    }
+  ],
+  "residual_series": [
+    {
+      "asof_date": "2026-09-03",
+      "residual_bp": 670.1511180747755
+    },
+    {
+      "asof_date": "2026-09-10",
+      "residual_bp": 331.09231095218655
+    },
+    {
+      "asof_date": "2026-09-14",
+      "residual_bp": 0.0
+    },
+    {
+      "asof_date": "2026-09-16",
+      "residual_bp": 0.0
+    },
+    {
+      "asof_date": "2026-09-17",
+      "residual_bp": 434.37328973880176
+    },
+    {
+      "asof_date": "2026-09-22",
+      "residual_bp": 0.0
+    }
+  ]
+}
