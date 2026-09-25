@@ -1,3 +1,9 @@
+const LINKS = [
+  { href: "https://github.com/nikhilp0799/eqd-risk-engine", label: "Source" },
+  { href: "https://github.com/nikhilp0799", label: "GitHub" },
+  { href: "https://www.linkedin.com/in/nikhilpandey19", label: "LinkedIn" },
+];
+
 export function SiteFooter() {
   return (
     <footer className="border-t border-panel-border mt-16">
@@ -7,13 +13,17 @@ export function SiteFooter() {
           engineering &amp; derivatives pricing.
         </p>
         <div className="flex gap-4 font-num">
-          {/* TODO: replace with real profile URLs before deploying */}
-          <a href="#" className="hover:text-accent transition-colors">
-            GitHub
-          </a>
-          <a href="#" className="hover:text-accent transition-colors">
-            LinkedIn
-          </a>
+          {LINKS.map((link) => (
+            <a
+              key={link.label}
+              href={link.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-accent transition-colors"
+            >
+              {link.label}
+            </a>
+          ))}
         </div>
       </div>
     </footer>
