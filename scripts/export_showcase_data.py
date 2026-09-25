@@ -149,10 +149,9 @@ def export_vol_surface() -> dict[str, Any]:
         & (greeks_all["asof_date"] == VOL_SURFACE_DATE)
     ]
     mid_expiry = surface.iloc[len(surface) // 2]["expiry"]
-    ladder_df = (
-        greeks_today[(greeks_today["expiry"] == mid_expiry) & (greeks_today["cp"] == "C")]
-        .sort_values("strike")
-    )
+    ladder_df = greeks_today[
+        (greeks_today["expiry"] == mid_expiry) & (greeks_today["cp"] == "C")
+    ].sort_values("strike")
     greeks_ladder = {
         "expiry": mid_expiry.isoformat(),
         "strike": list(ladder_df["strike"]),
@@ -260,9 +259,7 @@ def export_ai_agent() -> dict[str, Any]:
     return payload
 
 
-def export_overview(
-    dh_rows: list[dict[str, Any]], pnl: dict[str, Any], ai: dict[str, Any]
-) -> None:
+def export_overview(dh_rows: list[dict[str, Any]], pnl: dict[str, Any], ai: dict[str, Any]) -> None:
     dh = pd.DataFrame(dh_rows)
     barrier = dh[dh["instrument"] == "barrier"]
     best_barrier = barrier.loc[barrier["std_reduction_pct"].idxmax()]
@@ -290,7 +287,10 @@ def export_overview(
                     f"variance loss: {autocall_var['std_reduction_pct']:.0f}% lower std; "
                     f"CVaR loss: {(autocall_cvar['cvar_improvement']):,.0f} better CVaR"
                 ),
-                "detail": "No single loss objective wins on every metric — a real, honestly-reported finding.",
+                "detail": (
+                    "No single loss objective wins on every metric — a real, "
+                    "honestly-reported finding."
+                ),
             },
             {
                 "label": "AI investigation agent caught a real P&L gap",
@@ -303,10 +303,12 @@ def export_overview(
             {
                 "label": "Test suite",
                 "value": "1,778 tests passing",
-                "detail": "Unit + integration + golden-file regression, lint/type clean (ruff, mypy).",
+                "detail": (
+                    "Unit + integration + golden-file regression, lint/type clean (ruff, mypy)."
+                ),
             },
         ],
-        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "generated_at": dt.datetime.now(dt.UTC).isoformat(),
     }
     _write("overview", payload)
 
