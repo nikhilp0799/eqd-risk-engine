@@ -1,14 +1,3 @@
-export interface OverviewStat {
-  label: string;
-  value: string;
-  detail: string;
-}
-
-export interface OverviewData {
-  stats: OverviewStat[];
-  generated_at: string;
-}
-
 export interface DeepHedgeRow {
   underlying: string;
   instrument: "vanilla" | "autocall" | "barrier";
@@ -77,8 +66,11 @@ export interface PnlByPosition {
 }
 
 export interface PnlResidualPoint {
+  day0: string;
   asof_date: string;
   residual_bp: number;
+  top_position_id: string | null;
+  top_position_share: number | null;
 }
 
 export interface PnlExplainData {
@@ -87,6 +79,7 @@ export interface PnlExplainData {
   nav: number;
   residual_bp: number;
   residual_alert_threshold_bp: number;
+  positions: Record<string, string>;
   waterfall: PnlWaterfallStep[];
   by_position: PnlByPosition[];
   residual_series: PnlResidualPoint[];

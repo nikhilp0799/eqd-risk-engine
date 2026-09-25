@@ -6,20 +6,19 @@ const LINKS = [
 
 export function SiteFooter() {
   return (
-    <footer className="border-t border-panel-border mt-16">
-      <div className="mx-auto max-w-6xl px-6 py-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-sm text-muted">
+    <footer className="mt-20 border-t border-border bg-surface">
+      <div className="mx-auto flex max-w-6xl flex-col items-start justify-between gap-3 px-6 py-8 text-sm text-ink-2 sm:flex-row sm:items-center">
         <p>
-          Built by <span className="text-foreground">Nikhil Pandey</span> — quant risk
-          engineering &amp; derivatives pricing.
+          EQD Risk Engine, by <span className="font-medium text-ink">Nikhil Pandey</span>
         </p>
-        <div className="flex gap-4 font-num">
+        <div className="flex gap-5">
           {LINKS.map((link) => (
             <a
               key={link.label}
               href={link.href}
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-accent transition-colors"
+              className="hover:text-brand"
             >
               {link.label}
             </a>

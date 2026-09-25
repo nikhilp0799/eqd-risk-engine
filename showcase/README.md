@@ -5,8 +5,8 @@ built for linking from LinkedIn/personal-website, not for daily operational use 
 the Streamlit dashboard at `app/dashboard.py`, one level up). Design/scope decisions are
 locked in `../planning/showcase_site_plan.md`.
 
-Five pages: Overview, Deep Hedging, AI Investigation Agent, Volatility Surface & Greeks,
-P&L Explain. Every number is read from a static JSON snapshot of real curated data —
+Five pages: Home, Daily P&L Explain, AI Risk Analyst, Hedging Strategy Lab, Market-Consistent
+Pricing. Every number is read from a static JSON snapshot of real curated data —
 there is no live backend, no API route, and no computation happens in the browser.
 
 ## How the data gets here

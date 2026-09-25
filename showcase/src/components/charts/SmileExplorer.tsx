@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   CartesianGrid,
   ComposedChart,
+  Legend,
   Line,
   ResponsiveContainer,
   Scatter,
@@ -11,74 +12,82 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { SERIES, axisProps, legendProps, tooltipProps } from "@/lib/chartTheme";
+import { maturityLabel } from "@/lib/format";
 import type { VolSmile } from "@/lib/types";
+
+// Log-moneyness k -> strike as % of the forward price, the way a desk reads it.
+const toPct = (k: number) => 100 * Math.exp(k);
 
 export function SmileExplorer({ smiles }: { smiles: Record<string, VolSmile> }) {
   const expiries = Object.keys(smiles).sort();
-  const [selected, setSelected] = useState(expiries[expiries.length - 1] ?? expiries[0]);
+  const [selected, setSelected] = useState(expiries[expiries.length - 1]);
   const smile = smiles[selected];
-  if (!smile) return null;
 
-  const fitData = smile.k_grid.map((k, i) => ({ k, iv: smile.fit_iv[i] }));
-  const marketData = smile.market_k.map((k, i) => ({ k, iv: smile.market_iv[i] }));
+  // Keep the view where the market actually quotes, with a little margin.
+  const lo = Math.min(...smile.market_k) - 0.05;
+  const hi = Math.max(...smile.market_k) + 0.05;
+  const fit = smile.k_grid
+    .map((k, i) => ({ x: toPct(k), iv: 100 * smile.fit_iv[i] }))
+    .filter((p) => p.x >= toPct(lo) && p.x <= toPct(hi));
+  const market = smile.market_k.map((k, i) => ({ x: toPct(k), iv: 100 * smile.market_iv[i] }));
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Maturity">
         {expiries.map((exp) => (
           <button
             key={exp}
+            role="tab"
+            aria-selected={exp === selected}
             onClick={() => setSelected(exp)}
-            className={`font-num text-xs px-2.5 py-1 rounded transition-colors ${
+            className={`rounded-lg border px-3 py-1.5 text-sm transition-colors ${
               exp === selected
-                ? "bg-accent-soft text-accent"
-                : "text-muted hover:text-foreground border border-panel-border"
+                ? "border-brand bg-brand-soft font-medium text-brand"
+                : "border-border text-ink-2 hover:bg-subtle"
             }`}
           >
-            {exp} (T={smiles[exp].T.toFixed(2)})
+            {maturityLabel(smiles[exp].T)}
           </button>
         ))}
       </div>
-      <ResponsiveContainer width="100%" height={320}>
-        <ComposedChart margin={{ top: 8, right: 12, left: 4, bottom: 4 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1f2b3d" />
+      <ResponsiveContainer width="100%" height={340}>
+        <ComposedChart margin={{ top: 8, right: 8, left: 0, bottom: 16 }}>
+          <CartesianGrid stroke="#eceef2" />
           <XAxis
-            dataKey="k"
+            dataKey="x"
             type="number"
-            domain={[-1, 1]}
-            stroke="#7d8ba0"
-            fontSize={12}
-            label={{ value: "log-moneyness k", position: "insideBottom", offset: -4, fill: "#7d8ba0", fontSize: 12 }}
+            domain={["dataMin", "dataMax"]}
+            {...axisProps}
+            tickFormatter={(v) => `${Math.round(Number(v))}%`}
+            label={{ value: "Strike, % of current forward price", position: "insideBottom", offset: -12, fill: "#7a8699", fontSize: 12 }}
           />
           <YAxis
             dataKey="iv"
             type="number"
-            stroke="#7d8ba0"
-            fontSize={12}
-            width={55}
-            label={{ value: "IV", angle: -90, position: "insideLeft", fill: "#7d8ba0", fontSize: 12 }}
+            {...axisProps}
+            axisLine={false}
+            width={48}
+            domain={["auto", "auto"]}
+            tickFormatter={(v) => `${Math.round(Number(v))}%`}
           />
           <Tooltip
-            contentStyle={{
-              background: "#111826",
-              border: "1px solid #1f2b3d",
-              borderRadius: 8,
-              fontSize: 12,
-            }}
-            labelStyle={{ color: "#dbe4f0" }}
-            formatter={(value) => Number(value).toFixed(4)}
+            {...tooltipProps}
+            formatter={(v) => `${Number(v).toFixed(1)}%`}
+            labelFormatter={(v) => `Strike ${Number(v).toFixed(1)}% of forward`}
           />
+          <Legend {...legendProps} verticalAlign="top" align="right" height={28} />
+          <Scatter data={market} dataKey="iv" name="Market quotes" fill={SERIES[1]} r={3} isAnimationActive={false} />
           <Line
-            data={fitData}
+            data={fit}
             dataKey="iv"
-            name={`${smile.model} fit`}
+            name="Engine's fitted curve"
             type="monotone"
-            stroke="#2dd4bf"
+            stroke={SERIES[0]}
             dot={false}
             strokeWidth={2}
             isAnimationActive={false}
           />
-          <Scatter data={marketData} dataKey="iv" name="market (OK quotes)" fill="#f87171" />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
