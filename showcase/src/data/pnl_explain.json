@@ -4,6 +4,17 @@
   "nav": 4238877.500965972,
   "residual_bp": 670.1511180747755,
   "residual_alert_threshold_bp": 5.0,
+  "positions": {
+    "P001": "S&P 500 put option (short)",
+    "P002": "S&P 500 call option",
+    "P003": "S&P 500 put option",
+    "P004": "Apple call option (short)",
+    "P005": "NVIDIA put option",
+    "P006": "S&P 500 variance swap",
+    "P007": "S&P 500 barrier put (short)",
+    "P008": "NVIDIA autocallable note",
+    "P009": "S&P 500 index hedge (short)"
+  },
   "waterfall": [
     {
       "step": "time",
@@ -70,28 +81,60 @@
   ],
   "residual_series": [
     {
+      "day0": "2026-08-31",
+      "asof_date": "2026-09-01",
+      "residual_bp": 358.2310175996822,
+      "top_position_id": null,
+      "top_position_share": null
+    },
+    {
+      "day0": "2026-09-01",
+      "asof_date": "2026-09-02",
+      "residual_bp": -606.8099052431601,
+      "top_position_id": "P008",
+      "top_position_share": 0.962809214448894
+    },
+    {
+      "day0": "2026-09-02",
       "asof_date": "2026-09-03",
-      "residual_bp": 670.1511180747755
+      "residual_bp": 670.1511180747755,
+      "top_position_id": "P008",
+      "top_position_share": 0.9392574928880228
     },
     {
+      "day0": "2026-09-03",
+      "asof_date": "2026-09-04",
+      "residual_bp": -402.12153803438247,
+      "top_position_id": "P008",
+      "top_position_share": 0.9960707216953452
+    },
+    {
+      "day0": "2026-09-04",
+      "asof_date": "2026-09-08",
+      "residual_bp": 83.64213542883597,
+      "top_position_id": "P008",
+      "top_position_share": 1.1827416651655578
+    },
+    {
+      "day0": "2026-09-08",
+      "asof_date": "2026-09-09",
+      "residual_bp": -238.84122977959927,
+      "top_position_id": "P008",
+      "top_position_share": 1.0624811034484005
+    },
+    {
+      "day0": "2026-09-09",
       "asof_date": "2026-09-10",
-      "residual_bp": 331.09231095218655
+      "residual_bp": 331.09231095218655,
+      "top_position_id": "P008",
+      "top_position_share": 0.9375888030431505
     },
     {
-      "asof_date": "2026-09-14",
-      "residual_bp": 0.0
-    },
-    {
-      "asof_date": "2026-09-16",
-      "residual_bp": 0.0
-    },
-    {
+      "day0": "2026-09-16",
       "asof_date": "2026-09-17",
-      "residual_bp": 434.37328973880176
-    },
-    {
-      "asof_date": "2026-09-22",
-      "residual_bp": 0.0
+      "residual_bp": 434.37328973880176,
+      "top_position_id": "P008",
+      "top_position_share": 1.0039730061862604
     }
   ]
 }

@@ -1,46 +1,64 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0a0e16;
-  --panel: #111826;
-  --panel-border: #1f2b3d;
-  --foreground: #dbe4f0;
-  --muted: #7d8ba0;
-  --accent: #2dd4bf;
-  --accent-soft: rgba(45, 212, 191, 0.12);
-  --positive: #34d399;
-  --negative: #f87171;
+  --page: #f6f7f9;
+  --surface: #ffffff;
+  --subtle: #f1f3f6;
+  --border: #e3e6eb;
+  --ink: #0e1a2b;
+  --ink-2: #475467;
+  --muted: #7a8699;
+  --brand: #1c5cab;
+  --brand-strong: #154a8c;
+  --brand-soft: #e8f0fb;
+  --good: #006300;
+  --good-soft: #e6f4e6;
+  --critical: #c2352f;
+  --critical-soft: #fbeceb;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-panel: var(--panel);
-  --color-panel-border: var(--panel-border);
-  --color-foreground: var(--foreground);
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-subtle: var(--subtle);
+  --color-border: var(--border);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
   --color-muted: var(--muted);
-  --color-accent: var(--accent);
-  --color-accent-soft: var(--accent-soft);
-  --color-positive: var(--positive);
-  --color-negative: var(--negative);
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-soft: var(--brand-soft);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-critical: var(--critical);
+  --color-critical-soft: var(--critical-soft);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
-  background-image:
-    radial-gradient(circle at 15% 0%, rgba(45, 212, 191, 0.06), transparent 40%),
-    radial-gradient(circle at 85% 20%, rgba(56, 189, 248, 0.05), transparent 45%);
+html {
+  color-scheme: light;
 }
 
-.font-num {
-  font-family: var(--font-mono), ui-monospace, monospace;
+body {
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* Only for numbers that align in columns (tables); big standalone figures keep
+   proportional digits. */
+.tabular {
   font-variant-numeric: tabular-nums;
 }
 
-::selection {
-  background: var(--accent-soft);
-  color: var(--foreground);
+details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+details > summary::-webkit-details-marker {
+  display: none;
+}
+details[open] .chevron {
+  transform: rotate(90deg);
 }

@@ -15,9 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "EQD Risk Engine — Quant Derivatives Risk Platform",
+  title: "EQD Risk Engine — Daily risk and P&L intelligence for equity derivatives",
   description:
-    "A from-scratch equity derivatives risk engine: vol surface calibration, Monte Carlo exotics pricing, deep-hedging neural policies, and an agentic AI investigator — validated against real market data and QuantLib.",
+    "Prices every position in an equity derivatives book each day, explains what drove the P&L, flags what doesn't add up, and puts an AI risk analyst on the gaps.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -28,7 +28,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         <SiteNav />
-        <main className="flex-1 mx-auto w-full max-w-6xl px-6 py-10">
+        <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-12">
           {children}
         </main>
         <SiteFooter />

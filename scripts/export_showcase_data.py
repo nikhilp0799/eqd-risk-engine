@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import yaml
 
 from eqdrisk.io import store
 from eqdrisk.pricing.pnl_explain import RESIDUAL_ALERT_THRESHOLD_BP
@@ -50,7 +51,9 @@ def _read(table: str) -> pd.DataFrame:
 def _write(name: str, payload: Any) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     path = OUT_DIR / f"{name}.json"
-    path.write_text(json.dumps(payload, indent=2, default=str))
+    # allow_nan=False: Python otherwise emits a literal `NaN`, which is invalid
+    # JSON and only fails later, inside the Next.js build.
+    path.write_text(json.dumps(payload, indent=2, default=str, allow_nan=False))
     print(f"wrote {path.relative_to(PROJECT_ROOT)}")
 
 
@@ -185,14 +188,6 @@ def export_pnl_explain() -> dict[str, Any]:
     nav = float(day_steps["nav"].iloc[0])
     residual_bp = 10_000.0 * float(day_steps["residual"].sum()) / nav
 
-    daily = steps_all.groupby("asof_date").agg(residual=("residual", "sum"), nav=("nav", "max"))
-    daily["residual_bp"] = 10_000.0 * daily["residual"] / daily["nav"].replace(0.0, np.nan)
-    residual_series = [
-        {"asof_date": idx, "residual_bp": val}
-        for idx, val in daily.sort_index()["residual_bp"].items()
-        if pd.notna(val)
-    ]
-
     by_pos_all = _read("pnl_explain_by_position")
     by_pos = by_pos_all[
         (by_pos_all["day0"] == INCIDENT_DAY0) & (by_pos_all["asof_date"] == INCIDENT_DAY1)
@@ -204,6 +199,7 @@ def export_pnl_explain() -> dict[str, Any]:
         "nav": nav,
         "residual_bp": residual_bp,
         "residual_alert_threshold_bp": RESIDUAL_ALERT_THRESHOLD_BP,
+        "positions": _position_labels(),
         "waterfall": [
             {
                 "step": step,
@@ -214,10 +210,69 @@ def export_pnl_explain() -> dict[str, Any]:
             for step, row in day_steps.iterrows()
         ],
         "by_position": by_pos[["position_id", "residual"]].to_dict(orient="records"),
-        "residual_series": residual_series,
+        "residual_series": _valid_residual_series(steps_all, by_pos_all),
     }
     _write("pnl_explain", payload)
     return payload
+
+
+def _valid_residual_series(steps_all: pd.DataFrame, by_pos_all: pd.DataFrame) -> list[dict]:
+    """Residual history, restricted to day pairs with real marks on BOTH days.
+
+    `pnl_explain` also holds rows for day pairs where one side's portfolio marks
+    were never written (market holidays, missed automation days): some come out
+    all-zero, others as large garbage P&L against a zero NAV. Neither is a real
+    measurement, so they are dropped rather than charted as "within threshold."
+    Older rows predate the `nav` column; for those, NAV is the day's stored
+    book value from `portfolio_marks` (matches the stored `nav` exactly on the
+    days that have both, e.g. 2026-09-10 and 2026-09-17).
+    """
+    marks = _read("portfolio_marks").groupby("asof_date")["price"].sum()
+    daily = steps_all.groupby(["day0", "asof_date"], as_index=False).agg(
+        residual=("residual", "sum"),
+        nav=("nav", "max"),
+        gross=("actual_pnl", lambda s: s.abs().sum()),
+    )
+    series = []
+    for row in daily.sort_values("asof_date").itertuples():
+        if row.day0 not in marks.index or row.asof_date not in marks.index or row.gross == 0:
+            continue
+        nav = row.nav if pd.notna(row.nav) and row.nav > 0 else float(marks[row.asof_date])
+        pos = by_pos_all[
+            (by_pos_all["day0"] == row.day0) & (by_pos_all["asof_date"] == row.asof_date)
+        ]
+        top = pos.loc[pos["residual"].abs().idxmax()] if not pos.empty else None
+        series.append(
+            {
+                "day0": row.day0,
+                "asof_date": row.asof_date,
+                "residual_bp": 10_000.0 * row.residual / nav,
+                "top_position_id": None if top is None else top["position_id"],
+                "top_position_share": None if top is None else top["residual"] / row.residual,
+            }
+        )
+    return series
+
+
+UNDERLYING_NAMES = {"SPX": "S&P 500", "NVDA": "NVIDIA", "AAPL": "Apple"}
+
+
+def _position_labels() -> dict[str, str]:
+    """Plain-language name per position id, from `configs/portfolio.yaml`."""
+    config = yaml.safe_load((PROJECT_ROOT / "configs" / "portfolio.yaml").read_text())
+    labels = {}
+    for p in config["positions"]:
+        name = UNDERLYING_NAMES.get(p["underlying"], p["underlying"])
+        side = " (short)" if p.get("qty", 1) < 0 else ""
+        kind = {
+            "vanilla": f"{'call' if p.get('cp') == 'C' else 'put'} option",
+            "varswap": "variance swap",
+            "barrier": "barrier put",
+            "autocall": "autocallable note",
+            "equity": "index hedge",
+        }[p["type"]]
+        labels[p["id"]] = f"{name} {kind}{side}"
+    return labels
 
 
 def export_ai_agent() -> dict[str, Any]:
@@ -259,67 +314,11 @@ def export_ai_agent() -> dict[str, Any]:
     return payload
 
 
-def export_overview(dh_rows: list[dict[str, Any]], pnl: dict[str, Any], ai: dict[str, Any]) -> None:
-    dh = pd.DataFrame(dh_rows)
-    barrier = dh[dh["instrument"] == "barrier"]
-    best_barrier = barrier.loc[barrier["std_reduction_pct"].idxmax()]
-    autocall_var = dh[(dh["instrument"] == "autocall") & (dh["loss_type"] == "variance")].iloc[0]
-    autocall_cvar = dh[(dh["instrument"] == "autocall") & (dh["loss_type"] == "cvar")].iloc[0]
-
-    payload = {
-        "stats": [
-            {
-                "label": "Pricing accuracy vs. QuantLib",
-                "value": "price to 1e-8, Greeks to 1e-6",
-                "detail": "Full Black-76 Greek set cross-checked against QuantLib (Step 5).",
-            },
-            {
-                "label": "Deep-hedged barrier option, best loss (cost-adjusted)",
-                "value": f"{best_barrier['std_reduction_pct']:.0f}% lower P&L std",
-                "detail": (
-                    "A learned neural-network hedging policy vs. a static MC-Greeks delta "
-                    "baseline, out-of-sample, on a real SPX down-and-in put."
-                ),
-            },
-            {
-                "label": "Deep-hedged autocallable: a genuine tradeoff, not a clean win",
-                "value": (
-                    f"variance loss: {autocall_var['std_reduction_pct']:.0f}% lower std; "
-                    f"CVaR loss: {(autocall_cvar['cvar_improvement']):,.0f} better CVaR"
-                ),
-                "detail": (
-                    "No single loss objective wins on every metric — a real, "
-                    "honestly-reported finding."
-                ),
-            },
-            {
-                "label": "AI investigation agent caught a real P&L gap",
-                "value": f"{pnl['residual_bp']:.0f}bp residual, {ai['confidence']} confidence",
-                "detail": (
-                    "A local open-weight model (Ollama) made a real pricing-engine tool call "
-                    "mid-investigation and correctly attributed the residual to one position."
-                ),
-            },
-            {
-                "label": "Test suite",
-                "value": "1,778 tests passing",
-                "detail": (
-                    "Unit + integration + golden-file regression, lint/type clean (ruff, mypy)."
-                ),
-            },
-        ],
-        "generated_at": dt.datetime.now(dt.UTC).isoformat(),
-    }
-    _write("overview", payload)
-
-
 def main() -> None:
     export_deep_hedging()
-    dh_df = pd.DataFrame(json.loads((OUT_DIR / "deep_hedging.json").read_text())["rows"])
     export_vol_surface()
-    pnl_payload = export_pnl_explain()
-    ai_payload = export_ai_agent()
-    export_overview(dh_df.to_dict(orient="records"), pnl_payload, ai_payload)
+    export_pnl_explain()
+    export_ai_agent()
 
 
 if __name__ == "__main__":
