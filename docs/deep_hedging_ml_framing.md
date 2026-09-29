@@ -136,5 +136,29 @@ about hedge quality. Spread and tail are what matter.
    (about 72% std reduction) and autocallable (about 33%) results are stable across seeds. The
    plain-option Stability result is not a win: all 3 seeds are 0.3-2.8% worse than the
    benchmark (mean -1.4%); the single published run's +0.4% was a favourable draw.
-6. **Two features only.** No volatility, path history or current holding in the state. For the
+6. **Under-trained, and a no-op objective (checks run 2026-09-28).** All three objectives, 3
+   seeds each, same held-out paths. Std reduction vs benchmark, mean [min, max]:
+
+   | Model | Stability | Tail protection | Cost-aware |
+   |---|---|---|---|
+   | Barrier option | +72.0% [71.7, 72.5] | +57.5% [54.9, 61.6] | +72.0% [71.7, 72.5] |
+   | Autocallable note | +32.7% [32.3, 33.0] | +0.9% [-1.3, 2.3] | +32.7% [32.3, 33.0] |
+   | Plain option | -1.4% [-2.8, -0.3] | -11.0% [-12.4, -9.3] | -1.4% [-2.8, -0.3] |
+
+   - **The autocallable trade-off is real.** Tail protection improves CVaR by +2.3% on every
+     seed [2.31, 2.32]; Stability worsens it on every seed [-3.7, -3.4].
+   - **Cost-aware is identical to Stability** (same results and same held-out turnover, for
+     example 11,674 vs 11,674 for the note). The penalty `0.1 * E[turnover]` is negligible
+     against the variance term (note: variance about 1.8e11, penalty about 1e3), so it changes
+     nothing. It needs a scale-aware weight (for example relative to the benchmark variance).
+   - **No overfitting:** held-out objective within about 1-5% of the training objective.
+   - **Not converged at 300 epochs:** plain option and barrier losses still fall 5-8% over the
+     last 50 epochs. At 1,000 epochs (one seed) the plain option's held-out std drops from 2.98
+     to 2.84, beating the benchmark (2.948) by 3.6%; the earlier "not a win" result was a
+     training-budget artifact. SiLU at 1,000 epochs improves from 6.22 to 3.34, still behind and
+     still not converged.
+   - **Sanity check passed:** the learned plain-option hedge ratio tracks the Black-Scholes delta
+     closely (mean absolute gap 0.01-0.03 shares between 85% and 115% of strike, at 90%, 50% and
+     10% of life remaining), deviating only in the sparse far wings.
+7. **Two features only.** No volatility, path history or current holding in the state. For the
    barrier option, "has the barrier been hit yet" is missing, and it matters.
