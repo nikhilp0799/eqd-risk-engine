@@ -1,13 +1,24 @@
+/** One (instrument, objective) combination: mean across training seeds, with
+ * the min/max range for each headline metric. */
 export interface DeepHedgeRow {
   underlying: string;
   instrument: "vanilla" | "autocall" | "barrier";
   loss_type: "variance" | "cvar" | "cost";
+  n_seeds: number;
+  epochs_mean: number;
   learned_std: number;
   baseline_std: number;
+  learned_turnover: number;
+  baseline_turnover: number;
   std_reduction_pct: number;
-  learned_cvar: number;
-  baseline_cvar: number;
-  cvar_improvement: number;
+  std_reduction_pct_min: number;
+  std_reduction_pct_max: number;
+  cvar_improvement_pct: number;
+  cvar_improvement_pct_min: number;
+  cvar_improvement_pct_max: number;
+  turnover_change_pct: number;
+  turnover_change_pct_min: number;
+  turnover_change_pct_max: number;
 }
 
 export interface DeepHedgeData {

@@ -470,38 +470,48 @@ def render_deep_hedging_tab(cfg: BaseConfig) -> None:
     day = results[results["asof_date"] == asof].copy()
 
     day["std_reduction_pct"] = 100.0 * (1.0 - day["learned_std"] / day["baseline_std"])
-    day["cvar_improvement"] = day["learned_cvar"] - day["baseline_cvar"]
+    day["cvar_improvement_pct"] = (
+        100.0 * (day["learned_cvar"] - day["baseline_cvar"]) / day["baseline_cvar"].abs()
+    )
+    # One row per training seed since Phase 6 (older runs have a single, unseeded
+    # row): summarize each combination as the mean and the range across seeds.
+    for col in ("seed", "learned_turnover", "baseline_turnover"):
+        if col not in day.columns:
+            day[col] = pd.NA  # rows written before Phase 6
+    summary = (
+        day.groupby(["underlying", "instrument", "loss_type"])
+        .agg(
+            seeds=("seed", lambda s: max(1, s.notna().sum())),
+            std_reduction_pct=("std_reduction_pct", "mean"),
+            std_reduction_min=("std_reduction_pct", "min"),
+            std_reduction_max=("std_reduction_pct", "max"),
+            cvar_improvement_pct=("cvar_improvement_pct", "mean"),
+            learned_turnover=("learned_turnover", "mean"),
+            baseline_turnover=("baseline_turnover", "mean"),
+            learned_std=("learned_std", "mean"),
+            baseline_std=("baseline_std", "mean"),
+            epochs=("epochs", "mean"),
+        )
+        .reset_index()
+        .sort_values(["instrument", "loss_type"])
+    )
 
     st.subheader(f"Learned vs. baseline — {asof}")
-    st.dataframe(
-        day[
-            [
-                "underlying",
-                "instrument",
-                "loss_type",
-                "learned_std",
-                "baseline_std",
-                "std_reduction_pct",
-                "learned_cvar",
-                "baseline_cvar",
-            ]
-        ].sort_values(["instrument", "loss_type"]),
-        hide_index=True,
-    )
+    st.dataframe(summary, hide_index=True)
     st.caption(
-        "std_reduction_pct > 0 means the learned policy has LOWER variance than the baseline. "
-        "cvar_improvement > 0 means the learned policy's CVaR is better (less negative) than the "
-        "baseline's — no single loss objective necessarily wins on both, and that is a real "
-        "finding, not a bug (see `planning/deep_hedging_plan.md`)."
+        "Mean across training seeds, with the min/max range of the std reduction. "
+        "std_reduction_pct > 0 means the learned policy has LOWER variance than the baseline; "
+        "cvar_improvement_pct > 0 means its CVaR is better (less negative). Turnover is mean "
+        "shares traded per path, counted the same way for a learned policy and its baseline. "
+        "No single loss objective necessarily wins on every measure, and that is a real finding, "
+        "not a bug (see `docs/deep_hedging_ml_framing.md`)."
     )
 
-    combo_label = day["loss_type"] + " / " + day["instrument"]
+    combo_label = summary["loss_type"] + " / " + summary["instrument"]
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=combo_label, y=day["learned_std"], name="learned std"))
-    fig.add_trace(go.Bar(x=combo_label, y=day["baseline_std"], name="baseline std"))
+    fig.add_trace(go.Bar(x=combo_label, y=summary["std_reduction_pct"], name="std reduction %"))
     fig.update_layout(
-        barmode="group",
-        yaxis_title="Hedged P&L std",
+        yaxis_title="Hedged P&L std reduction vs. baseline (%)",
         height=350,
         margin=dict(l=0, r=0, t=20, b=0),
     )

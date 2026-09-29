@@ -83,7 +83,9 @@ not tuned-to-look-clean ones:
   variance by ~33% versus the existing static-delta baseline but had WORSE CVaR than it; only the
   CVaR-trained policy improved tail risk. On the barrier, every loss objective beat the baseline on
   BOTH metrics — its static hedge is uniformly weak against a payoff whose delta changes sharply
-  near the barrier. A real persistence bug was also found this way: a naive one-row-per-CLI-call
+  near the barrier. Every result is now the mean of 3 seeds, trained to convergence with early
+  stopping; that fix also turned the vanilla result into a small but consistent win, and exposed
+  a cost-adjusted objective that had been a no-op (now fixed). A real persistence bug was also found this way: a naive one-row-per-CLI-call
   write was silently overwriting each prior combination for the same day (caught by actually
   inspecting the table, not assumed correct), fixed with a read-merge-write and two regression tests.
 
@@ -1290,7 +1292,7 @@ calibrated local-vol surface, so it's buildable now, and it's a genuinely differ
 
 **What it is:** `src/eqdrisk/ml/` trains a small PyTorch network to hedge a position — applied at
 every rebalancing step, taking (log-moneyness, time-to-maturity) and outputting a hedge ratio —
-across three loss objectives (variance, CVaR/expected-shortfall, cost-adjusted/turnover-penalized)
+across three loss objectives (variance, CVaR/expected-shortfall, cost-adjusted)
 and THREE instruments, all real positions already in this project's own book
 (`configs/portfolio.yaml`): a vanilla option, the autocallable (`P008` — $5M notional,
 100%/75%/65% autocall/coupon/put barriers, 2.25% quarterly coupon), and a down-and-in put
@@ -1306,49 +1308,59 @@ learned against it). So path generation reuses the EXISTING, already-tested
 `pricing/monte_carlo.py::simulate_local_vol_paths` directly — no reimplementation was ever needed,
 and PyTorch is only used where gradients actually matter.
 
-**Real, live validation against actual NVDA data, not synthetic-only** (2026-09-16, spot $213.90):
+**Results on real market data (2026-09-22), after Phase 6's training fixes.** Every figure is the
+mean of 3 independently seeded training runs, with the min-max range across seeds, measured on a
+held-out path set none of them trained on. "Swings" is the reduction in hedged-P&L standard
+deviation vs. the benchmark; "worst case" is the improvement in CVaR(95%).
 
-Vanilla ATM call, T=0.25y — every loss objective beat the Black-Scholes delta-hedge baseline on
-CVaR; the CVaR-trained policy achieved the single best CVaR of all four numbers compared:
-
-| Loss | Learned std | Learned CVaR(95%) | Baseline (BS-delta) std | Baseline CVaR |
+| Instrument | Loss | Swings vs benchmark | Worst case vs benchmark | Shares traded (benchmark) |
 |---|---|---|---|---|
-| variance | **3.11** | -23.55 | 3.39 | -24.82 |
-| cvar | 3.51 | **-23.46** | 3.39 | -24.82 |
-| cost | **3.12** | -23.62 | 3.39 | -24.82 |
+| Barrier (SPX down-and-in put) | variance | **+73.2%** [73.1, 73.3] | +57.9% | 3.73 (0.61) |
+| | cvar | +61.6% [61.5, 61.7] | **+67.3%** [67.2, 67.3] | 3.39 |
+| | cost | +73.0% [72.9, 73.1] | +57.7% | 3.59 |
+| Autocallable (P008) | variance | **+32.8%** [32.8, 32.8] | -3.5% [-3.7, -3.3] | 11,669 (5,303) |
+| | cvar | -8.9% [-11.3, -7.2] | **+2.2%** [2.2, 2.3] | 1,941 |
+| | cost | +32.5% [32.4, 32.7] | -3.6% | 11,572 |
+| Vanilla (NVDA ATM call, 3m) | variance | **+3.4%** [3.2, 3.7] | +0.9% | 2.36 (2.36) |
+| | cvar | -10.0% [-10.5, -9.5] | **+2.5%** [2.3, 2.7] | 2.19 |
+| | cost | +3.3% [3.1, 3.5] | +1.0% | 2.33 |
 
-Autocallable, using P008's REAL parameters, T=1y/4 quarterly observations (2026-09-22):
+**Three different, honest stories, each now checked against seed noise:**
+- **Barrier: a clean sweep.** Every objective beats the static benchmark on both measures. Its
+  benchmark is uniformly weak (never rebalancing a position whose delta and gamma change sharply
+  near the barrier), so a policy that adapts as spot moves wins outright.
+- **Autocallable: a genuine variance-vs-tail trade-off.** Minimizing variance cuts swings by a third
+  but makes the tail slightly worse, on every seed; only the CVaR-trained policy improves the tail,
+  and it pays for that with bigger swings and far less trading. Minimizing variance does not
+  minimize tail risk for this asymmetric, knock-in-put-bearing payoff.
+- **Vanilla: a small but consistent win.** The textbook Black-Scholes delta is already a strong
+  hedge here, yet the variance-trained policy is steadier on every seed, and its learned hedge
+  ratio closely tracks the Black-Scholes delta curve (mean absolute gap 0.01-0.03 shares between
+  85% and 115% of strike).
+- **Cost-aware trades 1-4% less than variance-trained for almost the same stability.** At 5bp per
+  trade, trading cost is small next to hedging risk, so pricing it in barely moves the optimal
+  hedge. A real economic result, not a no-op (see below).
+- Turnover is counted the same way for a policy and its benchmark within each instrument; the two
+  exotics' static benchmarks trade once and hold, so their turnover is not comparable with a
+  rebalancing policy.
 
-| Loss | Learned std | Learned CVaR(95%) | Baseline (static MC delta) std | Baseline CVaR |
-|---|---|---|---|---|
-| variance | **430,407** | -5,751,619 | 641,290 | -5,568,161 |
-| cvar | 629,974 | **-5,439,247** | 641,290 | **-5,568,161** |
-| cost | **430,548** | -5,754,178 | 641,290 | -5,568,161 |
-
-**A real, honest, nuanced finding — not a clean sweep, and more credible for it:** variance- and
-cost-trained policies cut the autocallable's hedged P&L variance by ~33%, but their CVaR is
-actually WORSE than the baseline's — minimizing variance does not automatically minimize tail risk
-for this asymmetric, knock-in-put-bearing payoff. Only the CVaR-trained policy beats the baseline
-on CVaR, at the cost of higher variance than the other two. No single policy dominates every
-metric, reported exactly as that.
-
-Down-and-in put (P007-style: SPX, same barrier/strike ratio as the real position, real remaining
-tenor to its actual 2027-06-17 expiry):
-
-| Loss | Learned std | Learned CVaR(95%) | Baseline (static MC delta) std | Baseline CVaR |
-|---|---|---|---|---|
-| variance | **143.4** | **-744.6** | 506.9 | -1,749.4 |
-| cvar | 196.3 | **-575.5** | 506.9 | -1,749.4 |
-| cost | **139.3** | **-737.3** | 506.9 | -1,749.4 |
-
-**A different, equally real finding here: an actual clean sweep.** Unlike the autocallable, every
-loss objective beats the static baseline on BOTH variance and CVaR for the barrier — its static
-hedge is uniformly weak (never rebalancing a position whose delta/gamma change sharply near the
-barrier is a genuinely poor baseline), so a policy that can adapt as spot moves wins outright here.
-The two exotics tell different, both-honest stories: the autocallable shows a real
-variance-vs-tail-risk tradeoff; the barrier shows a policy that dominates its baseline everywhere.
-Neither was cherry-picked to fit a narrative — the difference reflects a genuine difference between
-the two baselines' own quality.
+**Phase 6, found by testing the earlier results rather than trusting them** (full measurements in
+[docs/deep_hedging_ml_framing.md](docs/deep_hedging_ml_framing.md)):
+- **Under-training.** The original fixed 300 epochs stopped well short of convergence (loss still
+  falling 5-8% over the last 50 epochs). Training now uses early stopping on a separate 4,000-path
+  validation set (at most 3,000 epochs, best weights restored); every one of the 27 runs stopped
+  before the cap. This is what turned the vanilla result from "slightly worse than the benchmark"
+  into a consistent win.
+- **A no-op objective.** The original cost-adjusted loss, `Var + 0.1 * E[turnover]`, had a penalty
+  about 1e-8 the size of the variance term for the $5M note, so it produced exactly the
+  variance-trained policy. It is now `Std(P&L) + E[dollar trading cost]`: both terms in dollars,
+  so the trade-off does not depend on position size (pinned by a scale-invariance regression test).
+- **Single-seed noise.** Earlier published numbers were one training run each; one of them (the
+  vanilla CVaR policy's swings, reported as -18.5%) was an outlier against the 3-seed range of
+  -9.5% to -10.5%. Every run now trains 3 seeds and stores one row per seed.
+- **Checked and ruled out:** overfitting (held-out objective within about 1-5% of training), and
+  dying ReLU as a cause of lost quality (up to 64% of second-layer units die, but a LeakyReLU A/B was
+  indistinguishable within seed noise, so ReLU stays).
 
 **Three documented simplifications** (real, load-bearing, stated explicitly rather than assumed
 away): the autocallable hedges only at its 4 real quarterly observation dates, not daily; both
@@ -1380,17 +1392,20 @@ engine — this is a separate, additive research comparison. Not wired into `run
 **Where it lives:**
 - `src/eqdrisk/ml/{market,simulate,payoffs,hedge_model,losses,baseline,train,evaluate,run}.py`.
 - `eqdrisk deephedge --date X --instrument {vanilla,autocall,barrier} --loss {variance,cvar,cost}
-  [--all]` — trains, evaluates, and persists one (or all nine) combinations.
-- New curated table `deep_hedge_results` (one row per trained combination per day).
+  [--all] [--seeds 3]` — trains, evaluates, and persists one (or all nine) combinations, each
+  over `--seeds` training seeds. A full `--all` run takes about 40 minutes.
+- New curated table `deep_hedge_results` (one row per combination per seed per day).
 - Dashboard: a "Deep Hedging" tab, reading only that table (same "no live computation" rule as
   every other tab).
-- Tests: `tests/unit/test_ml_deep_hedge.py` (23 tests — payoff correctness for all three
+- Tests: `tests/unit/test_ml_deep_hedge.py` (33 tests — payoff correctness for all three
   instruments including intra-path barrier breach detection, a never-hedging network reducing
   exactly to `-payoff`, gradients actually reaching the network, BS-delta variance shrinking with
   more rebalancing, the differentiable autocallable payoff matching the real, already-tested
-  `pricing/autocallable.py::autocallable_payoff` exactly) and `tests/unit/test_ml_run.py` (5 tests,
-  real fixture curated data, tiny training configs, including regression coverage for the
-  persistence bug above). 1778 tests passing overall, all on synthetic fixtures — the test suite
+  `pricing/autocallable.py::autocallable_payoff` exactly, Phase 6's scale-free cost loss, dollar
+  costs matching exactly what the P&L pays, and early stopping restoring the best weights) and
+  `tests/unit/test_ml_run.py` (9 tests, real fixture curated data, tiny training configs, including
+  regression coverage for the persistence bug above, per-seed rows, and replacing pre-Phase-6
+  unseeded rows). 1792 tests passing overall, all on synthetic fixtures — the test suite
   never trains on or requires real market data.
 
 ---

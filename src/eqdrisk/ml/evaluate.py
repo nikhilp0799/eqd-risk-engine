@@ -15,7 +15,8 @@ import torch
 from eqdrisk.ml.baseline import (
     autocallable_static_delta_hedge_pnl,
     barrier_static_delta_hedge_pnl,
-    bs_delta_hedge_pnl,
+    bs_delta_hedge,
+    static_hedge_turnover,
 )
 from eqdrisk.ml.hedge_model import HedgeNet, rollout_autocallable_hedged_pnl, rollout_hedged_pnl
 from eqdrisk.ml.market import HedgingMarketInputs
@@ -32,15 +33,20 @@ class HedgeStats:
     mean: float
     std: float
     cvar: float  # mean of the worst (1 - CVAR_ALPHA) fraction of hedged P&L outcomes
+    # Mean shares traded per path (Phase 6). Same counting convention for the
+    # learned hedge and its benchmark within each instrument; see
+    # `baseline.static_hedge_turnover`.
+    turnover: float
 
 
-def _stats(hedged_pnl: np.ndarray) -> HedgeStats:
+def _stats(hedged_pnl: np.ndarray, turnover: np.ndarray) -> HedgeStats:
     sorted_pnl = np.sort(hedged_pnl)
     n_tail = max(1, int(len(sorted_pnl) * (1 - CVAR_ALPHA)))
     return HedgeStats(
         mean=float(np.mean(hedged_pnl)),
         std=float(np.std(hedged_pnl, ddof=1)),
         cvar=float(np.mean(sorted_pnl[:n_tail])),
+        turnover=float(np.mean(turnover)),
     )
 
 
@@ -49,6 +55,51 @@ class ComparisonResult:
     learned: HedgeStats
     baseline: HedgeStats
     n_eval_paths: int
+
+
+def autocall_benchmark_delta(
+    inputs: HedgingMarketInputs,
+    spec: AutocallableSpec,
+    greeks_n_paths: int = 2_000,
+    greeks_n_steps_per_period: int = 4,
+    greeks_seed: int = 4242,
+) -> float:
+    """The static benchmark's hedge ratio: the note's real bump-and-reval MC
+    delta at inception. Depends only on the market, not on any trained net."""
+    return autocallable_greeks(
+        spec,
+        inputs.spot,
+        inputs.grid,
+        inputs.r,
+        inputs.q,
+        greeks_n_paths,
+        greeks_n_steps_per_period,
+        greeks_seed,
+    ).delta
+
+
+def barrier_benchmark_delta(
+    inputs: HedgingMarketInputs,
+    strike: float,
+    barrier: float,
+    greeks_n_paths: int = 2_000,
+    greeks_n_steps: int = 64,
+    greeks_seed: int = 4242,
+) -> float:
+    """The static benchmark's hedge ratio for the down-and-in put, with its
+    own Brownian-bridge correction. Depends only on the market."""
+    return down_and_in_put_greeks(
+        inputs.spot,
+        strike,
+        barrier,
+        inputs.T,
+        inputs.grid,
+        inputs.r,
+        inputs.q,
+        greeks_n_paths,
+        greeks_n_steps,
+        greeks_seed,
+    ).delta
 
 
 def evaluate_vanilla_hedge(
@@ -66,7 +117,7 @@ def evaluate_vanilla_hedge(
     sim = simulate_training_paths(inputs, n_paths_eval, n_steps, seed_eval)
 
     with torch.no_grad():
-        learned_pnl = rollout_hedged_pnl(
+        learned_pnl, learned_turnover, _ = rollout_hedged_pnl(
             sim.paths,
             sim.t_grid,
             net,
@@ -74,9 +125,10 @@ def evaluate_vanilla_hedge(
             inputs.T,
             cost_bps,
             lambda p: vanilla_payoff(p, strike, is_call),
-        ).numpy()
+            return_trading=True,
+        )
 
-    baseline_pnl = bs_delta_hedge_pnl(
+    baseline_pnl, baseline_turnover = bs_delta_hedge(
         sim.paths.numpy(),
         sim.t_grid,
         strike,
@@ -89,8 +141,8 @@ def evaluate_vanilla_hedge(
     )
 
     return ComparisonResult(
-        learned=_stats(learned_pnl),
-        baseline=_stats(baseline_pnl),
+        learned=_stats(learned_pnl.numpy(), learned_turnover.numpy()),
+        baseline=_stats(baseline_pnl, baseline_turnover),
         n_eval_paths=sim.paths.shape[0],
     )
 
@@ -105,39 +157,43 @@ def evaluate_autocall_hedge(
     greeks_n_paths: int = 2_000,
     greeks_n_steps_per_period: int = 4,
     greeks_seed: int = 4242,
+    static_delta: float | None = None,
 ) -> ComparisonResult:
     """Phase 3. The baseline's static delta is a REAL bump-and-reval MC Greek
     (`pricing/autocallable.py::autocallable_greeks`), computed once — see
     `baseline.autocallable_static_delta_hedge_pnl` for why it is static, not
     dynamically re-hedged. `seed_eval` MUST differ from training's
-    `seed_train`, same held-out discipline as `evaluate_vanilla_hedge`."""
+    `seed_train`, same held-out discipline as `evaluate_vanilla_hedge`.
+    `static_delta`, if given, skips re-computing that Greek (it depends only on
+    the market, not on the trained network)."""
     n_steps = len(spec.obs_times)
     sim = simulate_training_paths(inputs, n_paths_eval, n_steps, seed_eval)
     obs_levels = sim.paths[:, 1:]
 
     with torch.no_grad():
-        learned_pnl = rollout_autocallable_hedged_pnl(
-            obs_levels, spec.obs_times, net, spec, inputs.spot, inputs.T, cost_bps
+        learned_pnl, learned_turnover, _ = rollout_autocallable_hedged_pnl(
+            obs_levels,
+            spec.obs_times,
+            net,
+            spec,
+            inputs.spot,
+            inputs.T,
+            cost_bps,
+            return_trading=True,
         )
-    assert isinstance(learned_pnl, torch.Tensor)
 
-    greeks = autocallable_greeks(
-        spec,
-        inputs.spot,
-        inputs.grid,
-        inputs.r,
-        inputs.q,
-        greeks_n_paths,
-        greeks_n_steps_per_period,
-        greeks_seed,
-    )
+    if static_delta is None:
+        static_delta = autocall_benchmark_delta(
+            inputs, spec, greeks_n_paths, greeks_n_steps_per_period, greeks_seed
+        )
     baseline_pnl = autocallable_static_delta_hedge_pnl(
-        obs_levels.numpy(), spec, inputs.spot, greeks.delta, cost_bps
+        obs_levels.numpy(), spec, inputs.spot, static_delta, cost_bps
     )
+    baseline_turnover = static_hedge_turnover(len(baseline_pnl), static_delta, count_exit=True)
 
     return ComparisonResult(
-        learned=_stats(learned_pnl.numpy()),
-        baseline=_stats(baseline_pnl),
+        learned=_stats(learned_pnl.numpy(), learned_turnover.numpy()),
+        baseline=_stats(baseline_pnl, baseline_turnover),
         n_eval_paths=obs_levels.shape[0],
     )
 
@@ -154,6 +210,7 @@ def evaluate_barrier_hedge(
     greeks_n_paths: int = 2_000,
     greeks_n_steps: int = 64,
     greeks_seed: int = 4242,
+    static_delta: float | None = None,
 ) -> ComparisonResult:
     """Phase 5. The baseline's static delta is a REAL bump-and-reval MC Greek
     (`pricing/barrier_mc.py::down_and_in_put_greeks`, WITH its own Brownian-
@@ -161,11 +218,12 @@ def evaluate_barrier_hedge(
     discrete-monitoring path generator), computed once — see
     `baseline.barrier_static_delta_hedge_pnl` for why it is static. `seed_eval`
     MUST differ from training's `seed_train`, same held-out discipline as
-    every other `evaluate_*` function here."""
+    every other `evaluate_*` function here. `static_delta`, if given, skips
+    re-computing that Greek."""
     sim = simulate_training_paths(inputs, n_paths_eval, n_steps, seed_eval)
 
     with torch.no_grad():
-        learned_pnl = rollout_hedged_pnl(
+        learned_pnl, learned_turnover, _ = rollout_hedged_pnl(
             sim.paths,
             sim.t_grid,
             net,
@@ -173,27 +231,20 @@ def evaluate_barrier_hedge(
             inputs.T,
             cost_bps,
             lambda p: down_and_in_put_payoff(p, strike, barrier),
+            return_trading=True,
         )
-    assert isinstance(learned_pnl, torch.Tensor)
 
-    greeks = down_and_in_put_greeks(
-        inputs.spot,
-        strike,
-        barrier,
-        inputs.T,
-        inputs.grid,
-        inputs.r,
-        inputs.q,
-        greeks_n_paths,
-        greeks_n_steps,
-        greeks_seed,
-    )
+    if static_delta is None:
+        static_delta = barrier_benchmark_delta(
+            inputs, strike, barrier, greeks_n_paths, greeks_n_steps, greeks_seed
+        )
     baseline_pnl = barrier_static_delta_hedge_pnl(
-        sim.paths.numpy(), strike, barrier, greeks.delta, cost_bps
+        sim.paths.numpy(), strike, barrier, static_delta, cost_bps
     )
+    baseline_turnover = static_hedge_turnover(len(baseline_pnl), static_delta, count_exit=False)
 
     return ComparisonResult(
-        learned=_stats(learned_pnl.numpy()),
-        baseline=_stats(baseline_pnl),
+        learned=_stats(learned_pnl.numpy(), learned_turnover.numpy()),
+        baseline=_stats(baseline_pnl, baseline_turnover),
         n_eval_paths=sim.paths.shape[0],
     )

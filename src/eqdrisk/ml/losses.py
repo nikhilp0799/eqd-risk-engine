@@ -7,7 +7,9 @@ from __future__ import annotations
 import torch
 
 DEFAULT_CVAR_ALPHA = 0.95
-DEFAULT_COST_LAMBDA = 0.1
+# Phase 6: a dollar saved in expected trading cost is worth a dollar more P&L
+# risk (std). Dimensionless, since both terms of `cost_adjusted_loss` are dollars.
+DEFAULT_COST_LAMBDA = 1.0
 
 
 def variance_loss(hedged_pnl: torch.Tensor) -> torch.Tensor:
@@ -29,12 +31,22 @@ def cvar_loss(hedged_pnl: torch.Tensor, alpha: float = DEFAULT_CVAR_ALPHA) -> to
 
 
 def cost_adjusted_loss(
-    hedged_pnl: torch.Tensor, turnover: torch.Tensor, lambda_turnover: float = DEFAULT_COST_LAMBDA
+    hedged_pnl: torch.Tensor,
+    trading_cost: torch.Tensor,
+    lambda_cost: float = DEFAULT_COST_LAMBDA,
 ) -> torch.Tensor:
-    """Variance PLUS an explicit turnover penalty — the bps transaction cost is
-    already deducted from `hedged_pnl` by the rollout (so every objective is
-    compared apples-to-apples on realized, cost-inclusive P&L), but this
-    objective additionally penalizes trading activity directly during
-    training, pushing the learned policy toward a lower-turnover hedge than
-    variance-minimization alone would find."""
-    return torch.var(hedged_pnl, unbiased=True) + lambda_turnover * torch.mean(turnover)
+    """P&L risk (std) plus `lambda_cost` times the expected dollar trading cost.
+
+    Both terms are dollars, so the trade-off does not depend on the size of the
+    position: scaling every price by a constant scales both terms equally.
+    Phase 6 replaced `Var + 0.1 * E[turnover]`, whose penalty was measured
+    (2026-09-28) to be negligible against the variance term — about 1e3 against
+    1.8e11 for the $5M note — so the "cost-aware" policy was identical to the
+    variance one. At `lambda_cost = 0` this has the same minimizer as
+    `variance_loss`.
+
+    The bps cost is also already deducted inside `hedged_pnl`, so every
+    objective is compared on realized, cost-inclusive P&L; this term adds an
+    explicit incentive to trade less.
+    """
+    return torch.std(hedged_pnl, unbiased=True) + lambda_cost * torch.mean(trading_cost)

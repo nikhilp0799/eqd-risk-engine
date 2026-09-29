@@ -72,25 +72,46 @@ def _reconstruct_smile(row: pd.Series) -> list[float]:
 
 
 def export_deep_hedging() -> None:
+    """One row per (instrument, objective): the mean across training seeds plus
+    the min/max range, so every published number carries its seed noise. Only
+    seeded (Phase 6) rows are used; a combination without them fails loudly
+    rather than silently publishing a single pre-Phase-6 run."""
     df = _read("deep_hedge_results")
     day = df[df["asof_date"] == DEEP_HEDGE_DATE].copy()
     if day.empty:
         raise ValueError(f"no deep_hedge_results for {DEEP_HEDGE_DATE}")
+    if "seed" not in day.columns or day["seed"].isna().any():
+        raise ValueError(
+            f"deep_hedge_results for {DEEP_HEDGE_DATE} include unseeded (pre-Phase-6) rows; "
+            "rerun `eqdrisk deephedge --all` first"
+        )
     day["std_reduction_pct"] = 100.0 * (1.0 - day["learned_std"] / day["baseline_std"])
-    day["cvar_improvement"] = day["learned_cvar"] - day["baseline_cvar"]
-    rows = day.sort_values(["instrument", "loss_type"])[
-        [
-            "underlying",
-            "instrument",
-            "loss_type",
-            "learned_std",
-            "baseline_std",
-            "std_reduction_pct",
-            "learned_cvar",
-            "baseline_cvar",
-            "cvar_improvement",
-        ]
-    ].to_dict(orient="records")
+    day["cvar_improvement_pct"] = (
+        100.0 * (day["learned_cvar"] - day["baseline_cvar"]) / day["baseline_cvar"].abs()
+    )
+    day["turnover_change_pct"] = 100.0 * (day["learned_turnover"] / day["baseline_turnover"] - 1.0)
+
+    rows = []
+    for (underlying, instrument, loss_type), g in day.groupby(
+        ["underlying", "instrument", "loss_type"]
+    ):
+        row: dict[str, Any] = {
+            "underlying": underlying,
+            "instrument": instrument,
+            "loss_type": loss_type,
+            "n_seeds": int(g["seed"].nunique()),
+            "epochs_mean": float(g["epochs"].mean()),
+            "learned_std": float(g["learned_std"].mean()),
+            "baseline_std": float(g["baseline_std"].iloc[0]),
+            "learned_turnover": float(g["learned_turnover"].mean()),
+            "baseline_turnover": float(g["baseline_turnover"].iloc[0]),
+        }
+        for metric in ("std_reduction_pct", "cvar_improvement_pct", "turnover_change_pct"):
+            row[metric] = float(g[metric].mean())
+            row[f"{metric}_min"] = float(g[metric].min())
+            row[f"{metric}_max"] = float(g[metric].max())
+        rows.append(row)
+    rows.sort(key=lambda r: (r["instrument"], r["loss_type"]))
     _write("deep_hedging", {"asof_date": DEEP_HEDGE_DATE, "rows": rows})
 
 

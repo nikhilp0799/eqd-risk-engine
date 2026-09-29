@@ -2,6 +2,7 @@ import datetime as dt
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import yaml
 
 import eqdrisk.ml.run as run_module
@@ -10,6 +11,7 @@ from eqdrisk.io import store
 from eqdrisk.io.schemas import (
     CURVE_REQUIRED_NOT_NULL,
     CURVE_SCHEMA,
+    DEEP_HEDGE_RESULT_SCHEMA,
     FORWARD_REQUIRED_NOT_NULL,
     FORWARD_SCHEMA,
     UNDERLYING_REQUIRED_NOT_NULL,
@@ -20,6 +22,8 @@ from eqdrisk.io.schemas import (
 )
 from eqdrisk.ml.run import run_deep_hedge
 from eqdrisk.ml.train import TrainConfig
+
+LEGACY_MISSING = {"seed", "learned_turnover", "baseline_turnover"}
 
 UNDERLYING = "TEST"
 ASOF = dt.date(2026, 8, 20)
@@ -158,67 +162,64 @@ def _tiny_train_cfg(instrument):
     return TrainConfig(n_paths_train=32, n_steps=n_steps, epochs=2, hidden=4, cost_bps=5.0)
 
 
+def _read_results(tmp_path):
+    return store.query(
+        "SELECT * FROM t", views={"t": str(tmp_path / "deep_hedge_results")}
+    ).to_pandas()
+
+
+def _run(tmp_path, instrument="vanilla", loss="variance", seeds=(0,)):
+    return run_deep_hedge(
+        _cfg(tmp_path),
+        ASOF,
+        instrument,
+        loss,
+        underlying=UNDERLYING,
+        n_paths_eval=32,
+        project_root=tmp_path,
+        seeds=seeds,
+    )
+
+
 def test_run_deep_hedge_returns_none_when_no_curated_data(tmp_path, monkeypatch):
     monkeypatch.setattr(run_module, "_train_cfg", _tiny_train_cfg)
     _write_portfolio(tmp_path)  # market data intentionally absent
-    cfg = _cfg(tmp_path)
-    result = run_deep_hedge(
-        cfg, ASOF, "vanilla", "variance", underlying=UNDERLYING, project_root=tmp_path
-    )
-    assert result is None
+    assert _run(tmp_path) is None
 
 
 def test_run_deep_hedge_vanilla_end_to_end_and_persists(tmp_path, monkeypatch):
     monkeypatch.setattr(run_module, "_train_cfg", _tiny_train_cfg)
     _seed_real_data(tmp_path)
-    cfg = _cfg(tmp_path)
 
-    result = run_deep_hedge(
-        cfg,
-        ASOF,
-        "vanilla",
-        "variance",
-        underlying=UNDERLYING,
-        n_paths_eval=32,
-        project_root=tmp_path,
-    )
+    results = _run(tmp_path, "vanilla", "variance")
 
-    assert result is not None
-    assert result.instrument == "vanilla"
+    assert results is not None and len(results) == 1
+    result = results[0]
+    assert result.instrument == "vanilla" and result.seed == 0
     assert np.isfinite(result.comparison.learned.std)
     assert np.isfinite(result.comparison.baseline.std)
 
-    df = store.query(
-        "SELECT * FROM t", views={"t": str(tmp_path / "deep_hedge_results")}
-    ).to_pandas()
+    df = _read_results(tmp_path)
     assert len(df) == 1
     assert df.iloc[0]["instrument"] == "vanilla"
     assert df.iloc[0]["loss_type"] == "variance"
+    assert df.iloc[0]["seed"] == 0
+    assert np.isfinite(df.iloc[0]["learned_turnover"])
+    assert np.isfinite(df.iloc[0]["baseline_turnover"])
 
 
 def test_run_deep_hedge_autocall_end_to_end_and_persists(tmp_path, monkeypatch):
     monkeypatch.setattr(run_module, "_train_cfg", _tiny_train_cfg)
     _seed_real_data(tmp_path)
-    cfg = _cfg(tmp_path)
 
-    result = run_deep_hedge(
-        cfg,
-        ASOF,
-        "autocall",
-        "cvar",
-        underlying=UNDERLYING,
-        n_paths_eval=32,
-        project_root=tmp_path,
-    )
+    results = _run(tmp_path, "autocall", "cvar")
 
-    assert result is not None
-    assert result.instrument == "autocall"
-    assert np.isfinite(result.comparison.learned.std)
-    assert np.isfinite(result.comparison.baseline.std)
+    assert results is not None
+    assert results[0].instrument == "autocall"
+    assert np.isfinite(results[0].comparison.learned.std)
+    assert np.isfinite(results[0].comparison.baseline.std)
 
-    df = store.query(
-        "SELECT * FROM t", views={"t": str(tmp_path / "deep_hedge_results")}
-    ).to_pandas()
+    df = _read_results(tmp_path)
     assert len(df) == 1
     assert df.iloc[0]["instrument"] == "autocall"
     assert df.iloc[0]["loss_type"] == "cvar"
@@ -232,30 +233,11 @@ def test_run_deep_hedge_different_combinations_same_day_accumulate(tmp_path, mon
     writes a full day's rows in one call."""
     monkeypatch.setattr(run_module, "_train_cfg", _tiny_train_cfg)
     _seed_real_data(tmp_path)
-    cfg = _cfg(tmp_path)
 
-    run_deep_hedge(
-        cfg,
-        ASOF,
-        "vanilla",
-        "variance",
-        underlying=UNDERLYING,
-        n_paths_eval=32,
-        project_root=tmp_path,
-    )
-    run_deep_hedge(
-        cfg,
-        ASOF,
-        "vanilla",
-        "cvar",
-        underlying=UNDERLYING,
-        n_paths_eval=32,
-        project_root=tmp_path,
-    )
+    _run(tmp_path, "vanilla", "variance")
+    _run(tmp_path, "vanilla", "cvar")
 
-    df = store.query(
-        "SELECT * FROM t", views={"t": str(tmp_path / "deep_hedge_results")}
-    ).to_pandas()
+    df = _read_results(tmp_path)
     assert len(df) == 2
     assert set(df["loss_type"]) == {"variance", "cvar"}
 
@@ -263,21 +245,82 @@ def test_run_deep_hedge_different_combinations_same_day_accumulate(tmp_path, mon
 def test_run_deep_hedge_same_combination_rerun_replaces_not_duplicates(tmp_path, monkeypatch):
     monkeypatch.setattr(run_module, "_train_cfg", _tiny_train_cfg)
     _seed_real_data(tmp_path)
-    cfg = _cfg(tmp_path)
 
     for _ in range(2):
-        run_deep_hedge(
-            cfg,
-            ASOF,
-            "vanilla",
-            "variance",
-            underlying=UNDERLYING,
-            n_paths_eval=32,
-            project_root=tmp_path,
-        )
+        _run(tmp_path, "vanilla", "variance")
 
-    df = store.query(
-        "SELECT * FROM t", views={"t": str(tmp_path / "deep_hedge_results")}
-    ).to_pandas()
+    df = _read_results(tmp_path)
     assert len(df) == 1
     assert df.iloc[0]["loss_type"] == "variance"
+
+
+def test_run_deep_hedge_default_trains_three_seeds_one_row_each(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_module, "_train_cfg", _tiny_train_cfg)
+    _seed_real_data(tmp_path)
+
+    results = _run(tmp_path, seeds=run_module.DEFAULT_SEEDS)
+
+    assert results is not None and [r.seed for r in results] == [0, 1, 2]
+    df = _read_results(tmp_path)
+    assert sorted(df["seed"]) == [0, 1, 2]
+    # Different seeds really are different training runs.
+    assert df["learned_std"].nunique() == 3
+
+
+def test_run_deep_hedge_separate_seed_runs_accumulate(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_module, "_train_cfg", _tiny_train_cfg)
+    _seed_real_data(tmp_path)
+
+    _run(tmp_path, seeds=(0,))
+    _run(tmp_path, seeds=(1,))
+
+    assert sorted(_read_results(tmp_path)["seed"]) == [0, 1]
+
+
+def _write_pre_phase6_row(tmp_path, loss_type):
+    """A row as written before Phase 6: no seed or turnover columns."""
+    legacy_fields = [f for f in DEEP_HEDGE_RESULT_SCHEMA if f.name not in LEGACY_MISSING]
+    row = {
+        "asof_date": ASOF,
+        "underlying": UNDERLYING,
+        "instrument": "vanilla",
+        "loss_type": loss_type,
+        "cost_bps": 5.0,
+        "n_paths_train": 32,
+        "n_steps": 4,
+        "epochs": 300,
+        "n_eval_paths": 32,
+        "learned_mean": 0.0,
+        "learned_std": 1.0,
+        "learned_cvar": -1.0,
+        "baseline_mean": 0.0,
+        "baseline_std": 1.0,
+        "baseline_cvar": -1.0,
+    }
+    table = pa.Table.from_pandas(pd.DataFrame([row]), schema=pa.schema(legacy_fields))
+    store.write_partitioned(table, tmp_path / "deep_hedge_results", ["asof_date"])
+
+
+def test_run_deep_hedge_replaces_pre_phase6_row_of_same_combination_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_module, "_train_cfg", _tiny_train_cfg)
+    _seed_real_data(tmp_path)
+    _write_pre_phase6_row(tmp_path, "variance")
+
+    _run(tmp_path, "vanilla", "variance", seeds=(0,))
+
+    df = _read_results(tmp_path)
+    assert len(df) == 1
+    assert df.iloc[0]["seed"] == 0
+
+
+def test_run_deep_hedge_keeps_pre_phase6_row_of_other_combination(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_module, "_train_cfg", _tiny_train_cfg)
+    _seed_real_data(tmp_path)
+    _write_pre_phase6_row(tmp_path, "cvar")
+
+    _run(tmp_path, "vanilla", "variance", seeds=(0,))
+
+    df = _read_results(tmp_path)
+    assert len(df) == 2
+    legacy = df[df["loss_type"] == "cvar"].iloc[0]
+    assert pd.isna(legacy["seed"])

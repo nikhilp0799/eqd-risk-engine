@@ -135,6 +135,20 @@
       "residual_bp": 434.37328973880176,
       "top_position_id": "P008",
       "top_position_share": 1.0039730061862604
+    },
+    {
+      "day0": "2026-09-25",
+      "asof_date": "2026-09-28",
+      "residual_bp": 589.9583135582417,
+      "top_position_id": "P008",
+      "top_position_share": 1.0043515333820348
+    },
+    {
+      "day0": "2026-09-28",
+      "asof_date": "2026-09-29",
+      "residual_bp": -11.106228150339371,
+      "top_position_id": "P008",
+      "top_position_share": 1.0435662033404234
     }
   ]
 }

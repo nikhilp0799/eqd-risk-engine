@@ -36,19 +36,34 @@ function chartData(metric: (r: DeepHedgeRow) => number) {
   });
 }
 
-function ResultsTable({ metric }: { metric: (r: DeepHedgeRow) => number }) {
+type RangedMetric = "std_reduction_pct" | "cvar_improvement_pct";
+
+function find(inst: DeepHedgeRow["instrument"], obj: DeepHedgeRow["loss_type"]) {
+  return deepHedging.rows.find((x) => x.instrument === inst && x.loss_type === obj);
+}
+
+function ObjectiveHeader() {
+  return (
+    <>
+      {OBJECTIVES.map((obj, i) => (
+        <th key={obj} className="py-2 pr-4 text-right font-medium">
+          <span className="mr-1.5 inline-block h-2 w-2 rounded-full" style={{ background: SERIES[i] }} />
+          {OBJECTIVE_LABELS[obj]}
+        </th>
+      ))}
+    </>
+  );
+}
+
+/** Seed mean, with the min-to-max range across seeds underneath. */
+function ResultsTable({ metric }: { metric: RangedMetric }) {
   return (
     <div className="mt-4 overflow-x-auto">
       <table className="tabular w-full text-sm">
         <thead>
           <tr className="border-b border-border text-left text-muted">
             <th className="py-2 pr-4 font-medium">Product</th>
-            {OBJECTIVES.map((obj, i) => (
-              <th key={obj} className="py-2 pr-4 text-right font-medium">
-                <span className="mr-1.5 inline-block h-2 w-2 rounded-full" style={{ background: SERIES[i] }} />
-                {OBJECTIVE_LABELS[obj]}
-              </th>
-            ))}
+            <ObjectiveHeader />
           </tr>
         </thead>
         <tbody>
@@ -56,14 +71,53 @@ function ResultsTable({ metric }: { metric: (r: DeepHedgeRow) => number }) {
             <tr key={inst} className="border-b border-border/60 last:border-0">
               <td className="py-2 pr-4 text-ink">{INSTRUMENT_LABELS[inst]}</td>
               {OBJECTIVES.map((obj) => {
-                const r = deepHedging.rows.find((x) => x.instrument === inst && x.loss_type === obj);
-                const v = r ? metric(r) : null;
+                const r = find(inst, obj);
+                if (!r) return <td key={obj} className="py-2 pr-4 text-right">—</td>;
+                const v = r[metric];
                 return (
-                  <td
-                    key={obj}
-                    className={`py-2 pr-4 text-right ${v !== null && v < 0 ? "text-critical" : "text-ink"}`}
-                  >
-                    {v === null ? "—" : signedPct(v, 1)}
+                  <td key={obj} className="py-2 pr-4 text-right">
+                    <span className={v < 0 ? "text-critical" : "text-ink"}>{signedPct(v, 1)}</span>
+                    <span className="block text-xs text-muted">
+                      {signedPct(r[`${metric}_min`], 1)} to {signedPct(r[`${metric}_max`], 1)}
+                    </span>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const shares = (x: number) =>
+  x >= 100 ? Math.round(x).toLocaleString("en-US") : x.toFixed(2);
+
+/** Average shares traded per position, benchmark next to each strategy. */
+function TradingTable() {
+  return (
+    <div className="overflow-x-auto">
+      <table className="tabular w-full text-sm">
+        <thead>
+          <tr className="border-b border-border text-left text-muted">
+            <th className="py-2 pr-4 font-medium">Product</th>
+            <th className="py-2 pr-4 text-right font-medium">Benchmark</th>
+            <ObjectiveHeader />
+          </tr>
+        </thead>
+        <tbody>
+          {INSTRUMENT_ORDER.map((inst) => (
+            <tr key={inst} className="border-b border-border/60 last:border-0">
+              <td className="py-2 pr-4 text-ink">{INSTRUMENT_LABELS[inst]}</td>
+              <td className="py-2 pr-4 text-right text-ink-2">
+                {shares(find(inst, "variance")?.baseline_turnover ?? NaN)}
+              </td>
+              {OBJECTIVES.map((obj) => {
+                const r = find(inst, obj);
+                return (
+                  <td key={obj} className="py-2 pr-4 text-right text-ink">
+                    {r ? shares(r.learned_turnover) : "—"}
                   </td>
                 );
               })}
@@ -88,13 +142,13 @@ const VERDICTS: { inst: DeepHedgeRow["instrument"]; badge: string; tone: "good" 
     inst: "autocall",
     badge: "Real trade-off",
     tone: "brand",
-    body: "Stability cuts swings by about a third but makes the worst outcomes slightly worse. Tail protection does the opposite. Which is better depends on what the desk cares about more.",
+    body: "Stability cuts swings by about a third but makes the worst outcomes slightly worse. Tail protection improves the worst outcomes, but swings get bigger and it trades far less. Which is better depends on what the desk cares about more.",
   },
   {
     inst: "vanilla",
-    badge: "Matches benchmark",
+    badge: "Small, consistent win",
     tone: "neutral",
-    body: "A plain option is already hedged well by the textbook method, so there is little to gain. Landing close to the benchmark is the expected result and a sanity check.",
+    body: "A plain option is already hedged well by the textbook method, so the gain is small, but it holds on every training run. The learned hedge also closely tracks the textbook delta, a strong sign it learned real finance.",
   },
 ];
 
@@ -114,8 +168,10 @@ export default function DeepHedgingPage() {
         On the NVIDIA structured note there is a genuine trade-off: Stability cuts swings by{" "}
         {pct(hedging.noteStabilitySwingReduction)} but its worst cases get{" "}
         {pct(Math.abs(hedging.noteStabilityTail), 1)} worse, while Tail protection improves the worst
-        cases by {pct(hedging.noteTailProtectionTail, 1)}. On a plain option the strategies match the
-        benchmark, as they should.
+        cases by {pct(hedging.noteTailProtectionTail, 1)} at the cost of bigger swings. Even on a
+        plain option, already well served by the textbook hedge, Stability is{" "}
+        {pct(hedging.optionStabilitySwingReduction, 1)} steadier. Every figure is the average of{" "}
+        {hedging.nSeeds} independent training runs, with the range shown.
       </Takeaway>
 
       <Card title="How to read the results">
@@ -135,7 +191,7 @@ export default function DeepHedgingPage() {
             <ul className="flex flex-col gap-1.5">
               <li><strong className="text-ink">Stability</strong>: keep day-to-day swings small.</li>
               <li><strong className="text-ink">Tail protection</strong>: limit the worst outcomes.</li>
-              <li><strong className="text-ink">Cost-aware</strong>: stability, while trading less.</li>
+              <li><strong className="text-ink">Cost-aware</strong>: stability, with trading costs priced in.</li>
             </ul>
           </div>
         </div>
@@ -153,7 +209,7 @@ export default function DeepHedgingPage() {
           format="signedPct1"
           labels={false}
         />
-        <ResultsTable metric={(r) => r.std_reduction_pct} />
+        <ResultsTable metric="std_reduction_pct" />
       </Card>
 
       <Card
@@ -168,7 +224,14 @@ export default function DeepHedgingPage() {
           format="signedPct1"
           labels={false}
         />
-        <ResultsTable metric={tailImprovementPct} />
+        <ResultsTable metric="cvar_improvement_pct" />
+      </Card>
+
+      <Card
+        title="Trading activity"
+        subtitle={`Average shares traded per position. Cost-aware trades ${pct(Math.min(...hedging.costAwareTradesLessPct), 0)}-${pct(Math.max(...hedging.costAwareTradesLessPct), 0)} less than Stability for almost the same stability: at 5bp per trade, trading is cheap next to the risk, so pricing costs in barely moves the best hedge. The note and barrier benchmarks trade once and hold, so their figures are not comparable with a rebalancing strategy.`}
+      >
+        <TradingTable />
       </Card>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -186,13 +249,17 @@ export default function DeepHedgingPage() {
           <strong className="text-ink">Training.</strong> Each strategy is a small PyTorch neural
           network choosing the hedge ratio at every rebalance, trained on 8,000 Sobol paths from the
           engine&apos;s own local-volatility Monte Carlo, calibrated to that day&apos;s market.
-          Results are measured on a separate, differently-seeded set of 8,000 paths. Trading costs of
-          5bp apply to every rebalance, for both the strategies and the benchmark.
+          Training stops early once a separate 4,000-path validation set stops improving (at most
+          3,000 epochs; every run stopped before the cap). Results are measured on a third,
+          differently-seeded set of 8,000 paths, and each combination is trained {hedging.nSeeds}{" "}
+          times with different seeds. Trading costs of 5bp apply to every rebalance, for both the
+          strategies and the benchmark.
         </p>
         <p>
           <strong className="text-ink">Objectives.</strong> Stability minimises the variance of
-          hedged P&amp;L; Tail protection minimises CVaR at 95%; Cost-aware minimises variance plus a
-          turnover penalty.
+          hedged P&amp;L; Tail protection minimises CVaR at 95%; Cost-aware minimises the standard
+          deviation of hedged P&amp;L plus the expected dollar trading cost (both in dollars, so the
+          trade-off does not depend on position size).
         </p>
         <p>
           <strong className="text-ink">Benchmarks, and their limits.</strong> The option benchmark

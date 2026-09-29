@@ -5,7 +5,7 @@ import { hedging, pnl, pnlExplain, pricing } from "@/lib/metrics";
 
 // Not derived from exported data: the repo's own test count at the time of the
 // last site update (`pytest --collect-only`).
-const TEST_COUNT = "1,778";
+const TEST_COUNT = "1,792";
 
 const CAPABILITIES = [
   {
