@@ -97,6 +97,13 @@ about hedge quality. Spread and tail are what matter.
 
 ## 4. What the evaluation does not do yet
 
+**Update 2026-09-29 (Phase 6):** gaps 2 (seeds), 3 (turnover at evaluation) and 6 (training
+length, no-op cost objective) are now fixed in the code: early stopping on a separate 4,000-path
+validation set, `Std(P&L) + E[dollar trading cost]` as the cost-aware loss, turnover persisted for
+both hedges, and 3 seeds per combination with one stored row each. Current results, with ranges,
+are in the README's deep hedging section. The notes below are kept as the record of what was
+measured before the fix.
+
 1. **No distribution shift.** Test paths are new but come from the same simulator as training.
    There is no test on real historical price paths or under a different market model. This is
    the largest gap.

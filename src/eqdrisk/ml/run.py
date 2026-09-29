@@ -9,12 +9,14 @@ engine at all).
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
 import pandas as pd
+import torch
 
 from eqdrisk.config import BaseConfig
 from eqdrisk.io import store
@@ -26,6 +28,8 @@ from eqdrisk.io.schemas import (
 from eqdrisk.marketdata.calendar import year_fraction
 from eqdrisk.ml.evaluate import (
     ComparisonResult,
+    autocall_benchmark_delta,
+    barrier_benchmark_delta,
     evaluate_autocall_hedge,
     evaluate_barrier_hedge,
     evaluate_vanilla_hedge,
@@ -73,16 +77,29 @@ DEFAULT_UNDERLYING: dict[Instrument, str] = {
 }
 
 
+# Phase 6: every combination trains these seeds by default. A seed changes both
+# the initial weights and the training paths; validation and held-out paths stay
+# fixed across seeds, so seed results are directly comparable.
+DEFAULT_SEEDS: tuple[int, ...] = (0, 1, 2)
+
+
 @dataclass
 class DeepHedgeRunResult:
     asof: dt.date
     underlying: str
     instrument: Instrument
     loss_type: LossType
+    seed: int
     comparison: ComparisonResult
+    epochs_run: int
+    stopped_early: bool
 
 
 def _train_cfg(instrument: Instrument) -> TrainConfig:
+    """Phase 6: early stopping on a 4,000-path validation set (seed 500,
+    distinct from training seeds and from the held-out seed 999), capped at
+    3,000 epochs. A fixed 300 epochs was measured (2026-09-28) to stop well
+    short of convergence."""
     if instrument == "vanilla":
         n_steps = 32
     elif instrument == "barrier":
@@ -90,7 +107,17 @@ def _train_cfg(instrument: Instrument) -> TrainConfig:
     else:
         n_steps = len(AUTOCALL_SPEC.obs_times)
     return TrainConfig(
-        n_steps=n_steps, n_paths_train=8_000, epochs=300, cost_bps=5.0, hidden=64, lr=2e-3
+        n_steps=n_steps,
+        n_paths_train=8_000,
+        epochs=3_000,
+        cost_bps=5.0,
+        hidden=64,
+        lr=2e-3,
+        n_paths_val=4_000,
+        seed_val=500,
+        eval_every=10,
+        patience=100,
+        min_rel_improvement=1e-3,
     )
 
 
@@ -103,107 +130,154 @@ def run_deep_hedge(
     n_paths_eval: int = 8_000,
     seed_eval: int = 999,
     project_root: Path | None = None,
-) -> DeepHedgeRunResult | None:
-    """Returns `None` if real curated market data isn't available for
-    `underlying` on `asof` — honest skip, same contract as
-    `market.load_hedging_inputs`, not a crash. `underlying=None` picks each
-    instrument's own real underlying (`DEFAULT_UNDERLYING`)."""
+    seeds: Sequence[int] = DEFAULT_SEEDS,
+) -> list[DeepHedgeRunResult] | None:
+    """Trains, evaluates and persists one result per seed. Returns `None` if
+    real curated market data isn't available for `underlying` on `asof` —
+    honest skip, same contract as `market.load_hedging_inputs`, not a crash.
+    `underlying=None` picks each instrument's own real underlying
+    (`DEFAULT_UNDERLYING`)."""
     underlying = underlying or DEFAULT_UNDERLYING[instrument]
-    train_cfg = _train_cfg(instrument)
+    base_cfg = _train_cfg(instrument)
 
     if instrument == "vanilla":
-        inputs = load_hedging_inputs(cfg, asof, VANILLA_T, underlying, project_root)
-        if inputs is None:
-            return None
-        strike = round(inputs.spot)
-        result = train_vanilla_hedge_general(inputs, strike, True, loss_type, train_cfg)
-        comparison = evaluate_vanilla_hedge(
-            inputs,
-            result.net,
-            strike,
-            True,
-            n_paths_eval,
-            train_cfg.n_steps,
-            train_cfg.cost_bps,
-            seed_eval,
-        )
+        T = VANILLA_T
     elif instrument == "barrier":
         T = year_fraction(asof, BARRIER_REAL_EXPIRY, cfg.daycount)
-        inputs = load_hedging_inputs(cfg, asof, T, underlying, project_root)
-        if inputs is None:
-            return None
-        strike = round(inputs.spot)
-        barrier = strike * BARRIER_RATIO
-        result = train_barrier_hedge(inputs, strike, barrier, loss_type, train_cfg)
-        comparison = evaluate_barrier_hedge(
-            inputs,
-            result.net,
-            strike,
-            barrier,
-            n_paths_eval,
-            train_cfg.n_steps,
-            train_cfg.cost_bps,
-            seed_eval,
-        )
     else:
         T = float(AUTOCALL_SPEC.obs_times[-1])
-        inputs = load_hedging_inputs(cfg, asof, T, underlying, project_root)
-        if inputs is None:
-            return None
-        result = train_autocall_hedge(inputs, AUTOCALL_SPEC, loss_type, train_cfg)
-        comparison = evaluate_autocall_hedge(
-            inputs, AUTOCALL_SPEC, result.net, n_paths_eval, train_cfg.cost_bps, seed_eval
+    inputs = load_hedging_inputs(cfg, asof, T, underlying, project_root)
+    if inputs is None:
+        return None
+
+    strike = round(inputs.spot)
+    barrier = strike * BARRIER_RATIO
+    # The static benchmarks' hedge ratios depend only on the market: once per call.
+    static_delta = (
+        barrier_benchmark_delta(inputs, strike, barrier)
+        if instrument == "barrier"
+        else autocall_benchmark_delta(inputs, AUTOCALL_SPEC)
+        if instrument == "autocall"
+        else None
+    )
+
+    results = []
+    for seed in seeds:
+        torch.manual_seed(seed)
+        train_cfg = replace(base_cfg, seed_train=base_cfg.seed_train + seed)
+        if instrument == "vanilla":
+            trained = train_vanilla_hedge_general(inputs, strike, True, loss_type, train_cfg)
+            comparison = evaluate_vanilla_hedge(
+                inputs,
+                trained.net,
+                strike,
+                True,
+                n_paths_eval,
+                train_cfg.n_steps,
+                train_cfg.cost_bps,
+                seed_eval,
+            )
+        elif instrument == "barrier":
+            trained = train_barrier_hedge(inputs, strike, barrier, loss_type, train_cfg)
+            comparison = evaluate_barrier_hedge(
+                inputs,
+                trained.net,
+                strike,
+                barrier,
+                n_paths_eval,
+                train_cfg.n_steps,
+                train_cfg.cost_bps,
+                seed_eval,
+                static_delta=static_delta,
+            )
+        else:
+            trained = train_autocall_hedge(inputs, AUTOCALL_SPEC, loss_type, train_cfg)
+            comparison = evaluate_autocall_hedge(
+                inputs,
+                AUTOCALL_SPEC,
+                trained.net,
+                n_paths_eval,
+                train_cfg.cost_bps,
+                seed_eval,
+                static_delta=static_delta,
+            )
+        results.append(
+            DeepHedgeRunResult(
+                asof=asof,
+                underlying=underlying,
+                instrument=instrument,
+                loss_type=loss_type,
+                seed=seed,
+                comparison=comparison,
+                epochs_run=trained.epochs_run,
+                stopped_early=trained.stopped_early,
+            )
         )
 
-    run_result = DeepHedgeRunResult(
-        asof=asof,
-        underlying=underlying,
-        instrument=instrument,
-        loss_type=loss_type,
-        comparison=comparison,
-    )
-    _persist(run_result, Path(cfg.paths.curated), train_cfg)
-    return run_result
+    _persist(results, Path(cfg.paths.curated), base_cfg)
+    return results
 
 
-def _persist(result: DeepHedgeRunResult, curated_root: Path, train_cfg: TrainConfig) -> None:
+def _persist(results: list[DeepHedgeRunResult], curated_root: Path, train_cfg: TrainConfig) -> None:
     """`store.write_partitioned` replaces a WHOLE `asof_date` partition per
     call (by design, matching every other table in this project, which always
     writes a full day's rows in one call) — but `deephedge` is invoked once
-    PER combination, so a naive single-row write here would silently erase
-    every other combination already persisted for the same day. Read any
-    existing rows for this `asof_date` first, replace only this exact
-    (instrument, loss_type) row if present, and write the full set back."""
+    PER combination, so a naive write here would silently erase every other
+    combination already persisted for the same day. Read any existing rows for
+    this `asof_date` first, drop only the rows this call replaces, and write
+    the full set back.
+
+    Rows are keyed by (instrument, loss_type, seed) since Phase 6. Rows written
+    before Phase 6 have no seed; a new run of the same combination replaces
+    those too, rather than leaving an unseeded duplicate next to seeded rows."""
+    if not results:
+        return
     table_root = curated_root / "deep_hedge_results"
-    row = {
-        "asof_date": result.asof,
-        "underlying": result.underlying,
-        "instrument": result.instrument,
-        "loss_type": result.loss_type,
-        "cost_bps": train_cfg.cost_bps,
-        "n_paths_train": train_cfg.n_paths_train,
-        "n_steps": train_cfg.n_steps,
-        "epochs": train_cfg.epochs,
-        "n_eval_paths": result.comparison.n_eval_paths,
-        "learned_mean": result.comparison.learned.mean,
-        "learned_std": result.comparison.learned.std,
-        "learned_cvar": result.comparison.learned.cvar,
-        "baseline_mean": result.comparison.baseline.mean,
-        "baseline_std": result.comparison.baseline.std,
-        "baseline_cvar": result.comparison.baseline.cvar,
-    }
+    first = results[0]
+    rows = [
+        {
+            "asof_date": r.asof,
+            "underlying": r.underlying,
+            "instrument": r.instrument,
+            "loss_type": r.loss_type,
+            "seed": r.seed,
+            "cost_bps": train_cfg.cost_bps,
+            "n_paths_train": train_cfg.n_paths_train,
+            "n_steps": train_cfg.n_steps,
+            "epochs": r.epochs_run,
+            "n_eval_paths": r.comparison.n_eval_paths,
+            "learned_mean": r.comparison.learned.mean,
+            "learned_std": r.comparison.learned.std,
+            "learned_cvar": r.comparison.learned.cvar,
+            "learned_turnover": r.comparison.learned.turnover,
+            "baseline_mean": r.comparison.baseline.mean,
+            "baseline_std": r.comparison.baseline.std,
+            "baseline_cvar": r.comparison.baseline.cvar,
+            "baseline_turnover": r.comparison.baseline.turnover,
+        }
+        for r in results
+    ]
+    new = pd.DataFrame(rows)
 
     existing = pd.DataFrame()
     if table_root.exists() and any(table_root.rglob("*.parquet")):
         existing = store.query(
-            f"SELECT * FROM t WHERE asof_date = DATE '{result.asof.isoformat()}'",
+            f"SELECT * FROM t WHERE asof_date = DATE '{first.asof.isoformat()}'",
             views={"t": str(table_root)},
         ).to_pandas()
-        same_combo = (existing["instrument"] == result.instrument) & (
-            existing["loss_type"] == result.loss_type
+        for col in new.columns:
+            if col not in existing.columns:
+                existing[col] = pd.NA  # older partitions predate Phase 6's columns
+        existing["seed"] = existing["seed"].astype("Int64")
+        same_combo = (existing["instrument"] == first.instrument) & (
+            existing["loss_type"] == first.loss_type
         )
-        existing = existing[~same_combo]
+        replaced = same_combo & (
+            existing["seed"].isna() | existing["seed"].isin([r.seed for r in results])
+        )
+        existing = existing[~replaced.fillna(False)]
 
-    combined = pd.concat([existing, pd.DataFrame([row])], ignore_index=True)
+    combined = pd.concat([existing, new], ignore_index=True)
+    combined["seed"] = combined["seed"].astype("Int64")
     table = validate(combined, DEEP_HEDGE_RESULT_SCHEMA, DEEP_HEDGE_RESULT_REQUIRED_NOT_NULL)
     store.write_partitioned(table, table_root, ["asof_date"])

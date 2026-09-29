@@ -79,9 +79,9 @@ export const INSTRUMENT_SHORT_LABELS: Record<DeepHedgeRow["instrument"], string>
   barrier: "Barrier",
 };
 
-/** Percent improvement in the average of the worst 5% of outcomes. */
+/** Percent improvement in the average of the worst 5% of outcomes (seed mean). */
 export function tailImprovementPct(r: DeepHedgeRow): number {
-  return (100 * (r.learned_cvar - r.baseline_cvar)) / Math.abs(r.baseline_cvar);
+  return r.cvar_improvement_pct;
 }
 
 function row(instrument: DeepHedgeRow["instrument"], loss: DeepHedgeRow["loss_type"]) {
@@ -103,6 +103,15 @@ export const hedging = {
   noteStabilityTail: tailImprovementPct(row("autocall", "variance")),
   noteTailProtectionTail: tailImprovementPct(row("autocall", "cvar")),
   noteTailProtectionSwingReduction: row("autocall", "cvar").std_reduction_pct,
+  noteTailProtectionTradesLessPct:
+    100 * (1 - row("autocall", "cvar").learned_turnover / row("autocall", "variance").learned_turnover),
+  optionStabilitySwingReduction: row("vanilla", "variance").std_reduction_pct,
+  optionStabilityMin: row("vanilla", "variance").std_reduction_pct_min,
+  nSeeds: Math.min(...deepHedging.rows.map((r) => r.n_seeds)),
+  // How much less Cost-aware trades than Stability, per product.
+  costAwareTradesLessPct: (["vanilla", "autocall", "barrier"] as const).map(
+    (inst) => 100 * (1 - row(inst, "cost").learned_turnover / row(inst, "variance").learned_turnover),
+  ),
 };
 
 // ---- AI analyst ------------------------------------------------------------

@@ -417,19 +417,23 @@ DEEP_HEDGE_RESULT_SCHEMA = pa.schema(
     [
         ("asof_date", pa.date32()),
         ("underlying", pa.string()),
-        ("instrument", pa.string()),  # "vanilla" | "autocall"
+        ("instrument", pa.string()),  # "vanilla" | "autocall" | "barrier"
         ("loss_type", pa.string()),  # "variance" | "cvar" | "cost"
+        # Phase 6: one row per training seed. Null only on pre-Phase-6 rows.
+        ("seed", pa.int64()),
         ("cost_bps", pa.float64()),
         ("n_paths_train", pa.int64()),
         ("n_steps", pa.int64()),
-        ("epochs", pa.int64()),
+        ("epochs", pa.int64()),  # epochs actually run (early stopping since Phase 6)
         ("n_eval_paths", pa.int64()),
         ("learned_mean", pa.float64()),
         ("learned_std", pa.float64()),
         ("learned_cvar", pa.float64()),
+        ("learned_turnover", pa.float64()),  # mean shares traded per path (Phase 6)
         ("baseline_mean", pa.float64()),
         ("baseline_std", pa.float64()),
         ("baseline_cvar", pa.float64()),
+        ("baseline_turnover", pa.float64()),
     ]
 )
 DEEP_HEDGE_RESULT_REQUIRED_NOT_NULL = [

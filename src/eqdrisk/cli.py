@@ -267,6 +267,7 @@ def deephedge(
     all_combinations: bool = typer.Option(
         False, "--all", help="Ignore --instrument/--loss and run all 9 combinations"
     ),
+    seeds: int = typer.Option(3, help="Training seeds per combination (seeds 0..N-1)"),
     config: str = typer.Option("configs/base.yaml", help="Path to base config"),
 ) -> None:
     """Train and evaluate a deep-hedging policy (README's 'beyond the 16
@@ -291,13 +292,17 @@ def deephedge(
         if instrument_ not in INSTRUMENTS or loss_ not in LOSS_TYPES:
             typer.echo(f"instrument must be one of {INSTRUMENTS}, loss one of {LOSS_TYPES}")
             raise typer.Exit(code=1)
-        result = run_deep_hedge(cfg, asof, instrument_, loss_, underlying_override)
-        if result is None:
+        results = run_deep_hedge(
+            cfg, asof, instrument_, loss_, underlying_override, seeds=range(seeds)
+        )
+        if results is None:
             typer.echo(f"No real market data available for {instrument_} on {asof}.")
             raise typer.Exit(code=1)
-        typer.echo(f"Deep hedge: {instrument_}/{loss_} on {result.underlying}, {asof}")
-        typer.echo(f"  learned : {result.comparison.learned}")
-        typer.echo(f"  baseline: {result.comparison.baseline}")
+        typer.echo(f"Deep hedge: {instrument_}/{loss_} on {results[0].underlying}, {asof}")
+        typer.echo(f"  baseline: {results[0].comparison.baseline}")
+        for r in results:
+            stop = "early stop" if r.stopped_early else "epoch cap"
+            typer.echo(f"  seed {r.seed} ({r.epochs_run} epochs, {stop}): {r.comparison.learned}")
 
 
 @app.command()

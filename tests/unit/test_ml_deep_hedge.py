@@ -9,7 +9,9 @@ from eqdrisk.config import BaseConfig, Paths, Universe
 from eqdrisk.ml.baseline import (
     autocallable_static_delta_hedge_pnl,
     barrier_static_delta_hedge_pnl,
+    bs_delta_hedge,
     bs_delta_hedge_pnl,
+    static_hedge_turnover,
 )
 from eqdrisk.ml.evaluate import (
     evaluate_autocall_hedge,
@@ -31,6 +33,7 @@ from eqdrisk.ml.payoffs import (
 from eqdrisk.ml.simulate import simulate_training_paths
 from eqdrisk.ml.train import (
     TrainConfig,
+    _fit,
     train_autocall_hedge,
     train_barrier_hedge,
     train_vanilla_hedge,
@@ -246,13 +249,11 @@ def test_cvar_loss_only_reflects_the_worst_tail():
     assert loss.item() == pytest.approx(100.0)
 
 
-def test_cost_adjusted_loss_increases_with_turnover():
+def test_cost_adjusted_loss_increases_with_trading_cost():
     hedged_pnl = torch.zeros(10, dtype=torch.float64)
-    low_turnover = torch.full((10,), 1.0, dtype=torch.float64)
-    high_turnover = torch.full((10,), 100.0, dtype=torch.float64)
-    assert cost_adjusted_loss(hedged_pnl, high_turnover) > cost_adjusted_loss(
-        hedged_pnl, low_turnover
-    )
+    low_cost = torch.full((10,), 1.0, dtype=torch.float64)
+    high_cost = torch.full((10,), 100.0, dtype=torch.float64)
+    assert cost_adjusted_loss(hedged_pnl, high_cost) > cost_adjusted_loss(hedged_pnl, low_cost)
 
 
 def test_train_vanilla_hedge_general_runs_for_every_loss_type():
@@ -472,3 +473,144 @@ def test_train_and_evaluate_barrier_hedge_runs_end_to_end():
     assert np.isfinite(comparison.learned.std)
     assert np.isfinite(comparison.baseline.std)
     assert comparison.n_eval_paths > 0
+
+
+# --- Phase 6: scale-free cost objective, trading stats, early stopping --------
+
+
+def test_cost_adjusted_loss_is_scale_free():
+    """The Phase 6 regression test for the no-op cost objective: scaling every
+    price by k scales P&L and dollar costs by k, so the whole loss scales by k
+    and the trade-off between its two terms (hence the minimizer) is unchanged.
+    The old `Var + 0.1 * E[turnover]` scaled its terms by k**2 and 1."""
+    gen = torch.Generator().manual_seed(0)
+    pnl = torch.randn(500, generator=gen, dtype=torch.float64)
+    cost = torch.rand(500, generator=gen, dtype=torch.float64)
+    k = 1e6
+    base = cost_adjusted_loss(pnl, cost, lambda_cost=0.7)
+    scaled = cost_adjusted_loss(k * pnl, k * cost, lambda_cost=0.7)
+    assert scaled.item() == pytest.approx(k * base.item(), rel=1e-10)
+
+
+def test_cost_adjusted_loss_with_zero_lambda_is_std():
+    pnl = torch.tensor([1.0, -2.0, 3.0, 0.5], dtype=torch.float64)
+    cost = torch.tensor([5.0, 5.0, 5.0, 5.0], dtype=torch.float64)
+    assert cost_adjusted_loss(pnl, cost, lambda_cost=0.0).item() == pytest.approx(
+        torch.std(pnl, unbiased=True).item()
+    )
+
+
+def test_rollout_trading_cost_is_exactly_what_the_pnl_pays():
+    inputs = _flat_inputs()
+    sim = simulate_training_paths(inputs, n_paths=64, n_steps=8, seed=3)
+    torch.manual_seed(0)
+    net = HedgeNet(hidden=4)
+    with torch.no_grad():
+        free_pnl = rollout_hedged_pnl(
+            sim.paths, sim.t_grid, net, SPOT, inputs.T, 0.0, lambda p: vanilla_payoff(p, SPOT, True)
+        )
+        pnl, turnover, cost = rollout_hedged_pnl(
+            sim.paths,
+            sim.t_grid,
+            net,
+            SPOT,
+            inputs.T,
+            10.0,
+            lambda p: vanilla_payoff(p, SPOT, True),
+            return_trading=True,
+        )
+    assert torch.allclose(free_pnl - pnl, cost)
+    assert torch.all(turnover >= 0) and torch.all(cost >= 0)
+
+
+def test_autocall_rollout_trading_cost_is_exactly_what_the_pnl_pays():
+    spec = _autocall_spec()
+    inputs = _flat_inputs(T=float(spec.obs_times[-1]))
+    sim = simulate_training_paths(inputs, n_paths=64, n_steps=len(spec.obs_times), seed=3)
+    obs = sim.paths[:, 1:]
+    torch.manual_seed(0)
+    net = HedgeNet(hidden=4)
+    with torch.no_grad():
+        free_pnl = rollout_autocallable_hedged_pnl(
+            obs, spec.obs_times, net, spec, SPOT, inputs.T, 0.0
+        )
+        pnl, _, cost = rollout_autocallable_hedged_pnl(
+            obs, spec.obs_times, net, spec, SPOT, inputs.T, 10.0, return_trading=True
+        )
+    assert torch.allclose(free_pnl - pnl, cost)
+
+
+def test_bs_delta_hedge_turnover_matches_its_own_pnl():
+    inputs = _flat_inputs()
+    sim = simulate_training_paths(inputs, n_paths=200, n_steps=8, seed=5)
+    args = (sim.paths.numpy(), sim.t_grid, SPOT, True, inputs.T, inputs.r, inputs.q, 0.3)
+    pnl_free, turnover = bs_delta_hedge(*args, cost_bps=0.0)
+    pnl_cost, _ = bs_delta_hedge(*args, cost_bps=10.0)
+    assert np.all(turnover > 0)
+    assert np.allclose(pnl_cost, bs_delta_hedge_pnl(*args, cost_bps=10.0))
+    # Every unit of cost comes from a counted trade: cost <= turnover * max price * rate.
+    max_price = sim.paths.numpy()[:, :-1].max(axis=1)
+    assert np.all(pnl_free - pnl_cost <= turnover * max_price * 10.0 / 10_000 + 1e-12)
+
+
+def test_static_hedge_turnover_counts_entry_and_optional_exit():
+    assert np.all(static_hedge_turnover(3, -0.4, count_exit=False) == 0.4)
+    assert np.all(static_hedge_turnover(3, -0.4, count_exit=True) == 0.8)
+
+
+def test_evaluate_reports_turnover_for_both_hedges():
+    inputs = _flat_inputs()
+    train_cfg = TrainConfig(n_paths_train=64, n_steps=4, epochs=2, hidden=4)
+    net = train_vanilla_hedge(inputs, strike=SPOT, is_call=True, cfg=train_cfg).net
+    comparison = evaluate_vanilla_hedge(inputs, net, SPOT, True, 64, 4, 5.0, 999)
+    assert comparison.learned.turnover > 0
+    assert comparison.baseline.turnover > 0
+
+
+def _quadratic_problem():
+    """A tiny problem with a known optimum, to test `_fit` in isolation: the
+    network's outputs on fixed inputs should all approach 1.0."""
+    x = torch.tensor([[0.1, 0.5], [0.2, 0.4], [-0.3, 0.9]], dtype=torch.float64)
+
+    class Paths:  # stands in for SimulatedPaths; `_fit` only passes it through
+        pass
+
+    def rollout(_paths):
+        out = net(x)
+        return (
+            -((out - 1.0) ** 2),
+            torch.zeros(3, dtype=torch.float64),
+            torch.zeros(3, dtype=torch.float64),
+        )
+
+    torch.manual_seed(0)
+    net = HedgeNet(hidden=8)
+    return net, rollout, Paths()
+
+
+def test_fit_stops_early_once_validation_stops_improving():
+    net, rollout, paths = _quadratic_problem()
+    cfg = TrainConfig(epochs=5_000, lr=1e-2, eval_every=10, patience=50, min_rel_improvement=1e-3)
+    result = _fit(net, rollout, paths, paths, lambda pnl, cost: -pnl.mean(), cfg)
+    assert result.stopped_early
+    assert result.epochs_run < cfg.epochs
+    assert result.best_val_loss is not None
+
+
+def test_fit_restores_the_best_validation_weights():
+    net, rollout, paths = _quadratic_problem()
+    cfg = TrainConfig(epochs=5_000, lr=1e-2, eval_every=10, patience=50, min_rel_improvement=1e-3)
+    result = _fit(net, rollout, paths, paths, lambda pnl, cost: -pnl.mean(), cfg)
+    with torch.no_grad():
+        pnl, _, cost = rollout(paths)
+        restored = float(-pnl.mean())
+    assert restored == pytest.approx(result.best_val_loss)
+
+
+def test_fit_without_validation_runs_the_full_budget():
+    net, rollout, paths = _quadratic_problem()
+    cfg = TrainConfig(epochs=40, lr=1e-2)
+    result = _fit(net, rollout, paths, None, lambda pnl, cost: -pnl.mean(), cfg)
+    assert result.epochs_run == 40
+    assert not result.stopped_early
+    assert result.best_val_loss is None

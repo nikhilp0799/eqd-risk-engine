@@ -44,7 +44,7 @@ def rollout_hedged_pnl(
     T: float,
     cost_bps: float,
     payoff_fn: Callable[[torch.Tensor], torch.Tensor],
-    return_turnover: Literal[False] = False,
+    return_trading: Literal[False] = False,
 ) -> torch.Tensor: ...
 @overload
 def rollout_hedged_pnl(
@@ -55,8 +55,8 @@ def rollout_hedged_pnl(
     T: float,
     cost_bps: float,
     payoff_fn: Callable[[torch.Tensor], torch.Tensor],
-    return_turnover: Literal[True],
-) -> tuple[torch.Tensor, torch.Tensor]: ...
+    return_trading: Literal[True],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
 def rollout_hedged_pnl(
     paths: torch.Tensor,
     t_grid: np.ndarray,
@@ -65,8 +65,8 @@ def rollout_hedged_pnl(
     T: float,
     cost_bps: float,
     payoff_fn: Callable[[torch.Tensor], torch.Tensor],
-    return_turnover: bool = False,
-) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    return_trading: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """One hedged-P&L value per path: accumulated trading P&L (financed by
     holding `net`'s chosen number of shares between each rebalance, net of bps
     transaction costs on every trade), minus the option payoff owed at expiry
@@ -74,14 +74,17 @@ def rollout_hedged_pnl(
     hedges with the underlying). `paths`/`t_grid` come from
     `simulate.simulate_training_paths` and carry no gradient of their own;
     `net`'s parameters are the only thing being learned here. If
-    `return_turnover`, also returns total per-path traded share volume — the
-    cost-adjusted training objective (`losses.cost_adjusted_loss`) penalizes
-    this directly, on top of the bps cost already deducted above."""
+    `return_trading`, also returns per-path traded share volume and per-path
+    dollar transaction cost (the cost-adjusted objective,
+    `losses.cost_adjusted_loss`, penalizes the latter directly, on top of the
+    same cost already deducted inside the P&L). Liquidation at expiry is
+    free in this accounting, so it counts toward neither."""
     n_paths, n_steps_plus1 = paths.shape
     n_steps = n_steps_plus1 - 1
     holdings = torch.zeros(n_paths, dtype=paths.dtype)
     trading_pnl = torch.zeros(n_paths, dtype=paths.dtype)
     total_turnover = torch.zeros(n_paths, dtype=paths.dtype)
+    total_cost = torch.zeros(n_paths, dtype=paths.dtype)
     cost_rate = cost_bps / 10_000.0
 
     for i in range(n_steps):
@@ -93,15 +96,17 @@ def rollout_hedged_pnl(
         new_holdings = net(features)
         trade = new_holdings - holdings
         total_turnover = total_turnover + torch.abs(trade)
-        trading_pnl = trading_pnl - trade * s_t - cost_rate * torch.abs(trade) * s_t
+        step_cost = cost_rate * torch.abs(trade) * s_t
+        total_cost = total_cost + step_cost
+        trading_pnl = trading_pnl - trade * s_t - step_cost
         holdings = new_holdings
 
     s_T = paths[:, -1]
     trading_pnl = trading_pnl + holdings * s_T  # liquidate remaining shares at expiry
     payoff = payoff_fn(paths)
     hedged_pnl = trading_pnl - payoff
-    if return_turnover:
-        return hedged_pnl, total_turnover
+    if return_trading:
+        return hedged_pnl, total_turnover, total_cost
     return hedged_pnl
 
 
@@ -114,7 +119,7 @@ def rollout_autocallable_hedged_pnl(
     initial_level: float,
     T: float,
     cost_bps: float,
-    return_turnover: Literal[False] = False,
+    return_trading: Literal[False] = False,
 ) -> torch.Tensor: ...
 @overload
 def rollout_autocallable_hedged_pnl(
@@ -125,8 +130,8 @@ def rollout_autocallable_hedged_pnl(
     initial_level: float,
     T: float,
     cost_bps: float,
-    return_turnover: Literal[True],
-) -> tuple[torch.Tensor, torch.Tensor]: ...
+    return_trading: Literal[True],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
 def rollout_autocallable_hedged_pnl(
     obs_levels: torch.Tensor,
     obs_times: np.ndarray,
@@ -135,8 +140,8 @@ def rollout_autocallable_hedged_pnl(
     initial_level: float,
     T: float,
     cost_bps: float,
-    return_turnover: bool = False,
-) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    return_trading: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Same accounting convention as `rollout_hedged_pnl`, in DOLLAR-notional
     terms rather than shares (natural for a note quoted in notional): the
     network's raw output is interpreted as a fraction of `spec.notional` held
@@ -144,12 +149,16 @@ def rollout_autocallable_hedged_pnl(
     daily — a documented simplification, see `planning/deep_hedging_plan.md`).
     Hedging STOPS the moment a path autocalls/redeems (`alive_schedule` from
     `payoffs.autocallable_payoff_and_alive_schedule`) — holding a hedge against
-    a note that no longer exists would be a real error, not a simplification."""
+    a note that no longer exists would be a real error, not a simplification.
+    With `return_trading`, also returns per-path turnover (in shares at the
+    initial level) and dollar transaction cost, both including the final
+    unwind, which this rollout does charge."""
     payoff, alive_schedule = autocallable_payoff_and_alive_schedule(obs_levels, spec, initial_level)
     n_paths, n_obs = obs_levels.shape
     dollar_position = torch.zeros(n_paths, dtype=obs_levels.dtype)
     trading_pnl = torch.zeros(n_paths, dtype=obs_levels.dtype)
     total_turnover = torch.zeros(n_paths, dtype=obs_levels.dtype)
+    total_cost = torch.zeros(n_paths, dtype=obs_levels.dtype)
     cost_rate = cost_bps / 10_000.0
 
     for i in range(n_obs - 1):
@@ -167,6 +176,7 @@ def rollout_autocallable_hedged_pnl(
         trade = desired_position - dollar_position
         total_turnover = total_turnover + torch.abs(trade) / initial_level  # in "shares" units
         cost = cost_rate * torch.abs(trade)
+        total_cost = total_cost + cost
         level_next = obs_levels[:, i + 1]
         pct_return = (level_next - level_i) / level_i
         trading_pnl = trading_pnl + desired_position * pct_return - cost
@@ -175,8 +185,9 @@ def rollout_autocallable_hedged_pnl(
     unwind_cost = cost_rate * torch.abs(dollar_position)  # close out whatever remains at maturity
     total_turnover = total_turnover + torch.abs(dollar_position) / initial_level
     trading_pnl = trading_pnl - unwind_cost
+    total_cost = total_cost + unwind_cost
 
     hedged_pnl = trading_pnl - payoff
-    if return_turnover:
-        return hedged_pnl, total_turnover
+    if return_trading:
+        return hedged_pnl, total_turnover, total_cost
     return hedged_pnl

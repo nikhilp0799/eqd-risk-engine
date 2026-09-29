@@ -18,7 +18,7 @@ from eqdrisk.pricing.autocallable import AutocallableSpec
 from eqdrisk.pricing.blackscholes import delta_spot
 
 
-def bs_delta_hedge_pnl(
+def bs_delta_hedge(
     paths: np.ndarray,
     t_grid: np.ndarray,
     strike: float,
@@ -28,15 +28,17 @@ def bs_delta_hedge_pnl(
     q: float,
     sigma: float,
     cost_bps: float,
-) -> np.ndarray:
-    """One hedged-P&L value per path, same accounting convention as
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-path (hedged P&L, turnover in shares), same accounting convention as
     `hedge_model.rollout_hedged_pnl`: accumulated trading P&L (financed by
     holding the BS delta between each rebalance, net of bps costs) minus the
-    option payoff owed at expiry."""
+    option payoff owed at expiry. Turnover counts every rebalance; the free
+    liquidation at expiry is not counted, matching the learned rollout."""
     n_paths, n_steps_plus1 = paths.shape
     n_steps = n_steps_plus1 - 1
     holdings = np.zeros(n_paths)
     trading_pnl = np.zeros(n_paths)
+    turnover = np.zeros(n_paths)
     cost_rate = cost_bps / 10_000.0
 
     for i in range(n_steps):
@@ -51,13 +53,38 @@ def bs_delta_hedge_pnl(
             ]
         )
         trade = new_holdings - holdings
+        turnover += np.abs(trade)
         trading_pnl = trading_pnl - trade * s_t - cost_rate * np.abs(trade) * s_t
         holdings = new_holdings
 
     s_T = paths[:, -1]
     trading_pnl = trading_pnl + holdings * s_T
     payoff = np.clip(s_T - strike, 0.0, None) if is_call else np.clip(strike - s_T, 0.0, None)
-    return trading_pnl - payoff
+    return trading_pnl - payoff, turnover
+
+
+def bs_delta_hedge_pnl(
+    paths: np.ndarray,
+    t_grid: np.ndarray,
+    strike: float,
+    is_call: bool,
+    T: float,
+    r: float,
+    q: float,
+    sigma: float,
+    cost_bps: float,
+) -> np.ndarray:
+    """`bs_delta_hedge`'s P&L only."""
+    return bs_delta_hedge(paths, t_grid, strike, is_call, T, r, q, sigma, cost_bps)[0]
+
+
+def static_hedge_turnover(n_paths: int, static_delta_shares: float, count_exit: bool) -> np.ndarray:
+    """Turnover of a hedge set once and never rebalanced: the entry trade, plus
+    the exit trade when the matching learned rollout also counts its own final
+    unwind (the autocallable rollout does; the vanilla-style rollout used for
+    the barrier treats liquidation at expiry as free and does not)."""
+    trades = 2 if count_exit else 1
+    return np.full(n_paths, trades * abs(static_delta_shares))
 
 
 def autocallable_static_delta_hedge_pnl(
