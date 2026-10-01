@@ -34,7 +34,8 @@ from eqdrisk.ml.evaluate import (
     evaluate_barrier_hedge,
     evaluate_vanilla_hedge,
 )
-from eqdrisk.ml.market import load_hedging_inputs
+from eqdrisk.ml.market import HedgingMarketInputs, load_hedging_inputs
+from eqdrisk.ml.registry import save_model
 from eqdrisk.ml.train import (
     TrainConfig,
     train_autocall_hedge,
@@ -121,25 +122,27 @@ def _train_cfg(instrument: Instrument) -> TrainConfig:
     )
 
 
-def run_deep_hedge(
+@dataclass
+class InstrumentSetup:
+    """Everything about one instrument that depends only on the as-of market,
+    shared by training (`run_deep_hedge`) and the Phase 7 robustness test."""
+
+    underlying: str
+    inputs: HedgingMarketInputs
+    strike: float
+    barrier: float  # only meaningful for the barrier instrument
+    static_delta: float | None  # the static benchmark's hedge ratio (exotics only)
+
+
+def instrument_setup(
     cfg: BaseConfig,
     asof: dt.date,
     instrument: Instrument,
-    loss_type: LossType,
     underlying: str | None = None,
-    n_paths_eval: int = 8_000,
-    seed_eval: int = 999,
     project_root: Path | None = None,
-    seeds: Sequence[int] = DEFAULT_SEEDS,
-) -> list[DeepHedgeRunResult] | None:
-    """Trains, evaluates and persists one result per seed. Returns `None` if
-    real curated market data isn't available for `underlying` on `asof` —
-    honest skip, same contract as `market.load_hedging_inputs`, not a crash.
-    `underlying=None` picks each instrument's own real underlying
-    (`DEFAULT_UNDERLYING`)."""
+) -> InstrumentSetup | None:
+    """`None` if real curated market data isn't available for that day."""
     underlying = underlying or DEFAULT_UNDERLYING[instrument]
-    base_cfg = _train_cfg(instrument)
-
     if instrument == "vanilla":
         T = VANILLA_T
     elif instrument == "barrier":
@@ -160,6 +163,36 @@ def run_deep_hedge(
         if instrument == "autocall"
         else None
     )
+    return InstrumentSetup(underlying, inputs, strike, barrier, static_delta)
+
+
+def run_deep_hedge(
+    cfg: BaseConfig,
+    asof: dt.date,
+    instrument: Instrument,
+    loss_type: LossType,
+    underlying: str | None = None,
+    n_paths_eval: int = 8_000,
+    seed_eval: int = 999,
+    project_root: Path | None = None,
+    seeds: Sequence[int] = DEFAULT_SEEDS,
+) -> list[DeepHedgeRunResult] | None:
+    """Trains, evaluates and persists one result per seed. Returns `None` if
+    real curated market data isn't available for `underlying` on `asof` —
+    honest skip, same contract as `market.load_hedging_inputs`, not a crash.
+    `underlying=None` picks each instrument's own real underlying
+    (`DEFAULT_UNDERLYING`)."""
+    setup = instrument_setup(cfg, asof, instrument, underlying, project_root)
+    if setup is None:
+        return None
+    underlying, inputs, strike, barrier, static_delta = (
+        setup.underlying,
+        setup.inputs,
+        setup.strike,
+        setup.barrier,
+        setup.static_delta,
+    )
+    base_cfg = _train_cfg(instrument)
 
     results = []
     for seed in seeds:
@@ -201,6 +234,7 @@ def run_deep_hedge(
                 seed_eval,
                 static_delta=static_delta,
             )
+        save_model(trained.net, Path(cfg.paths.curated), asof, instrument, loss_type, seed)
         results.append(
             DeepHedgeRunResult(
                 asof=asof,

@@ -517,6 +517,47 @@ def render_deep_hedging_tab(cfg: BaseConfig) -> None:
     )
     st.plotly_chart(fig, width="stretch")
 
+    st.subheader("Out-of-model robustness")
+    robust = read_table("deep_hedge_robustness", cfg.paths.curated)
+    if robust.empty or not (robust["asof_date"] == asof).any():
+        st.info(
+            "No robustness results for this date yet — run "
+            "`eqdrisk deephedge-robustness --date ...` after `deephedge --all`."
+        )
+        return
+    rday = robust[robust["asof_date"] == asof].copy()
+    rday["std_reduction_pct"] = 100.0 * (1.0 - rday["learned_std"] / rday["baseline_std"])
+    rday["cvar_improvement_pct"] = (
+        100.0 * (rday["learned_cvar"] - rday["baseline_cvar"]) / rday["baseline_cvar"].abs()
+    )
+    for metric, label in [
+        ("std_reduction_pct", "Std reduction vs. baseline (%)"),
+        ("cvar_improvement_pct", "CVaR improvement vs. baseline (%)"),
+    ]:
+        st.markdown(f"**{label}**, mean across seeds, by scenario")
+        pivot = (
+            rday.groupby(["instrument", "loss_type", "scenario"])[metric]
+            .mean()
+            .unstack("scenario")
+            .reindex(columns=["in_sample", "vol_up_25", "vol_down_25", "jumps", "history"])
+            .round(1)
+            .reset_index()
+        )
+        st.dataframe(pivot, hide_index=True)
+    history = rday[rday["scenario"] == "history"]
+    if not history.empty:
+        st.caption(
+            "Policies trained on the as-of date's calibrated local-vol model, then scored with no "
+            "retraining on stressed simulators and on real price history (rolling windows of each "
+            "instrument's life). History windows overlap: effective independent samples per "
+            "instrument: "
+            + ", ".join(
+                f"{inst} {n:.0f}"
+                for inst, n in history.groupby("instrument")["n_independent"].first().items()
+            )
+            + "."
+        )
+
 
 def main() -> None:
     st.set_page_config(page_title="EQD Risk Engine", layout="wide")

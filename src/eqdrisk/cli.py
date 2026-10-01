@@ -305,6 +305,35 @@ def deephedge(
             typer.echo(f"  seed {r.seed} ({r.epochs_run} epochs, {stop}): {r.comparison.learned}")
 
 
+@app.command("deephedge-robustness")
+def deephedge_robustness(
+    date: str = typer.Option(..., help="Asof date the policies were trained on, YYYY-MM-DD"),
+    history_years: int = typer.Option(20, help="Years of real price history to replay"),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Out-of-model test of the saved deep-hedging policies (Phase 7): scores
+    every policy trained by `deephedge --all` on stressed simulators (vol +/-25%,
+    crash jumps) and on real price history, against the same benchmark, with no
+    retraining. Writes the `deep_hedge_robustness` curated table."""
+    from eqdrisk.ml.robustness import run_robustness
+
+    cfg = BaseConfig.from_yaml(config)
+    asof = dt.date.fromisoformat(date)
+    df = run_robustness(cfg, asof, history_years=history_years)
+    if df is None:
+        typer.echo(f"No real market data available on {asof}.")
+        raise typer.Exit(code=1)
+    df["swings_vs_benchmark_pct"] = 100.0 * (1.0 - df["learned_std"] / df["baseline_std"])
+    summary = (
+        df.groupby(["instrument", "loss_type", "scenario"])["swings_vs_benchmark_pct"]
+        .mean()
+        .unstack("scenario")
+        .round(1)
+    )
+    typer.echo(f"Swings reduction vs benchmark (%, mean of seeds), policies trained {asof}:")
+    typer.echo(summary.to_string())
+
+
 @app.command()
 def var(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
