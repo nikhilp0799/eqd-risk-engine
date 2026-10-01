@@ -446,6 +446,39 @@ DEEP_HEDGE_RESULT_REQUIRED_NOT_NULL = [
 ]
 
 
+DEEP_HEDGE_ROBUSTNESS_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("underlying", pa.string()),
+        ("instrument", pa.string()),  # "vanilla" | "autocall" | "barrier"
+        ("loss_type", pa.string()),  # "variance" | "cvar" | "cost"
+        ("seed", pa.int64()),
+        # "in_sample" | "vol_up_25" | "vol_down_25" | "jumps" | "history"
+        ("scenario", pa.string()),
+        ("n_paths", pa.int64()),
+        # history only: history length / instrument life (overlapping windows
+        # are correlated, so this, not n_paths, is the effective sample size)
+        ("n_independent", pa.float64()),
+        ("learned_std", pa.float64()),
+        ("learned_cvar", pa.float64()),
+        ("learned_turnover", pa.float64()),
+        ("baseline_std", pa.float64()),
+        ("baseline_cvar", pa.float64()),
+        ("baseline_turnover", pa.float64()),
+    ]
+)
+DEEP_HEDGE_ROBUSTNESS_REQUIRED_NOT_NULL = [
+    "asof_date",
+    "underlying",
+    "instrument",
+    "loss_type",
+    "seed",
+    "scenario",
+    "learned_std",
+    "baseline_std",
+]
+
+
 class SchemaViolation(ValueError):
     pass
 

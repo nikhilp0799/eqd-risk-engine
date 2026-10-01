@@ -21,7 +21,7 @@ from eqdrisk.ml.baseline import (
 from eqdrisk.ml.hedge_model import HedgeNet, rollout_autocallable_hedged_pnl, rollout_hedged_pnl
 from eqdrisk.ml.market import HedgingMarketInputs
 from eqdrisk.ml.payoffs import down_and_in_put_payoff, vanilla_payoff
-from eqdrisk.ml.simulate import simulate_training_paths
+from eqdrisk.ml.simulate import SimulatedPaths, simulate_training_paths
 from eqdrisk.pricing.autocallable import AutocallableSpec, autocallable_greeks
 from eqdrisk.pricing.barrier_mc import down_and_in_put_greeks
 
@@ -102,20 +102,18 @@ def barrier_benchmark_delta(
     ).delta
 
 
-def evaluate_vanilla_hedge(
+def compare_vanilla_on_paths(
     inputs: HedgingMarketInputs,
     net: HedgeNet,
     strike: float,
     is_call: bool,
-    n_paths_eval: int,
-    n_steps: int,
+    sim: SimulatedPaths,
     cost_bps: float,
-    seed_eval: int,
 ) -> ComparisonResult:
-    """`seed_eval` MUST differ from training's `seed_train` — a held-out set,
-    never seen during training, is the only honest basis for this comparison."""
-    sim = simulate_training_paths(inputs, n_paths_eval, n_steps, seed_eval)
-
+    """Learned policy vs the BS-delta benchmark on ANY path set on the policy's
+    time grid (simulated, stressed, or historical, Phase 7). The benchmark
+    always uses the calibrated ATM vol from `inputs`: both hedgers are as
+    calibrated on the as-of date, whatever the paths then do."""
     with torch.no_grad():
         learned_pnl, learned_turnover, _ = rollout_hedged_pnl(
             sim.paths,
@@ -147,6 +145,91 @@ def evaluate_vanilla_hedge(
     )
 
 
+def compare_autocall_on_paths(
+    inputs: HedgingMarketInputs,
+    spec: AutocallableSpec,
+    net: HedgeNet,
+    sim: SimulatedPaths,
+    cost_bps: float,
+    static_delta: float,
+) -> ComparisonResult:
+    """Same as `compare_vanilla_on_paths`, for the autocallable; `sim` is on the
+    observation grid (t = 0 then one column per `spec.obs_times`)."""
+    obs_levels = sim.paths[:, 1:]
+    with torch.no_grad():
+        learned_pnl, learned_turnover, _ = rollout_autocallable_hedged_pnl(
+            obs_levels,
+            spec.obs_times,
+            net,
+            spec,
+            inputs.spot,
+            inputs.T,
+            cost_bps,
+            return_trading=True,
+        )
+
+    baseline_pnl = autocallable_static_delta_hedge_pnl(
+        obs_levels.numpy(), spec, inputs.spot, static_delta, cost_bps
+    )
+    baseline_turnover = static_hedge_turnover(len(baseline_pnl), static_delta, count_exit=True)
+
+    return ComparisonResult(
+        learned=_stats(learned_pnl.numpy(), learned_turnover.numpy()),
+        baseline=_stats(baseline_pnl, baseline_turnover),
+        n_eval_paths=obs_levels.shape[0],
+    )
+
+
+def compare_barrier_on_paths(
+    inputs: HedgingMarketInputs,
+    net: HedgeNet,
+    strike: float,
+    barrier: float,
+    sim: SimulatedPaths,
+    cost_bps: float,
+    static_delta: float,
+) -> ComparisonResult:
+    """Same as `compare_vanilla_on_paths`, for the down-and-in put."""
+    with torch.no_grad():
+        learned_pnl, learned_turnover, _ = rollout_hedged_pnl(
+            sim.paths,
+            sim.t_grid,
+            net,
+            strike,
+            inputs.T,
+            cost_bps,
+            lambda p: down_and_in_put_payoff(p, strike, barrier),
+            return_trading=True,
+        )
+
+    baseline_pnl = barrier_static_delta_hedge_pnl(
+        sim.paths.numpy(), strike, barrier, static_delta, cost_bps
+    )
+    baseline_turnover = static_hedge_turnover(len(baseline_pnl), static_delta, count_exit=False)
+
+    return ComparisonResult(
+        learned=_stats(learned_pnl.numpy(), learned_turnover.numpy()),
+        baseline=_stats(baseline_pnl, baseline_turnover),
+        n_eval_paths=sim.paths.shape[0],
+    )
+
+
+def evaluate_vanilla_hedge(
+    inputs: HedgingMarketInputs,
+    net: HedgeNet,
+    strike: float,
+    is_call: bool,
+    n_paths_eval: int,
+    n_steps: int,
+    cost_bps: float,
+    seed_eval: int,
+) -> ComparisonResult:
+    """`seed_eval` MUST differ from training's `seed_train` — a held-out set,
+    never seen during training, is the only honest basis for this comparison."""
+    sim = simulate_training_paths(inputs, n_paths_eval, n_steps, seed_eval)
+    return compare_vanilla_on_paths(inputs, net, strike, is_call, sim, cost_bps)
+
+
 def evaluate_autocall_hedge(
     inputs: HedgingMarketInputs,
     spec: AutocallableSpec,
@@ -166,36 +249,12 @@ def evaluate_autocall_hedge(
     `seed_train`, same held-out discipline as `evaluate_vanilla_hedge`.
     `static_delta`, if given, skips re-computing that Greek (it depends only on
     the market, not on the trained network)."""
-    n_steps = len(spec.obs_times)
-    sim = simulate_training_paths(inputs, n_paths_eval, n_steps, seed_eval)
-    obs_levels = sim.paths[:, 1:]
-
-    with torch.no_grad():
-        learned_pnl, learned_turnover, _ = rollout_autocallable_hedged_pnl(
-            obs_levels,
-            spec.obs_times,
-            net,
-            spec,
-            inputs.spot,
-            inputs.T,
-            cost_bps,
-            return_trading=True,
-        )
-
+    sim = simulate_training_paths(inputs, n_paths_eval, len(spec.obs_times), seed_eval)
     if static_delta is None:
         static_delta = autocall_benchmark_delta(
             inputs, spec, greeks_n_paths, greeks_n_steps_per_period, greeks_seed
         )
-    baseline_pnl = autocallable_static_delta_hedge_pnl(
-        obs_levels.numpy(), spec, inputs.spot, static_delta, cost_bps
-    )
-    baseline_turnover = static_hedge_turnover(len(baseline_pnl), static_delta, count_exit=True)
-
-    return ComparisonResult(
-        learned=_stats(learned_pnl.numpy(), learned_turnover.numpy()),
-        baseline=_stats(baseline_pnl, baseline_turnover),
-        n_eval_paths=obs_levels.shape[0],
-    )
+    return compare_autocall_on_paths(inputs, spec, net, sim, cost_bps, static_delta)
 
 
 def evaluate_barrier_hedge(
@@ -221,30 +280,8 @@ def evaluate_barrier_hedge(
     every other `evaluate_*` function here. `static_delta`, if given, skips
     re-computing that Greek."""
     sim = simulate_training_paths(inputs, n_paths_eval, n_steps, seed_eval)
-
-    with torch.no_grad():
-        learned_pnl, learned_turnover, _ = rollout_hedged_pnl(
-            sim.paths,
-            sim.t_grid,
-            net,
-            strike,
-            inputs.T,
-            cost_bps,
-            lambda p: down_and_in_put_payoff(p, strike, barrier),
-            return_trading=True,
-        )
-
     if static_delta is None:
         static_delta = barrier_benchmark_delta(
             inputs, strike, barrier, greeks_n_paths, greeks_n_steps, greeks_seed
         )
-    baseline_pnl = barrier_static_delta_hedge_pnl(
-        sim.paths.numpy(), strike, barrier, static_delta, cost_bps
-    )
-    baseline_turnover = static_hedge_turnover(len(baseline_pnl), static_delta, count_exit=False)
-
-    return ComparisonResult(
-        learned=_stats(learned_pnl.numpy(), learned_turnover.numpy()),
-        baseline=_stats(baseline_pnl, baseline_turnover),
-        n_eval_paths=sim.paths.shape[0],
-    )
+    return compare_barrier_on_paths(inputs, net, strike, barrier, sim, cost_bps, static_delta)
