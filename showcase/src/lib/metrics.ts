@@ -3,6 +3,7 @@
 // number that no longer matches the data.
 import aiAgentJson from "@/data/ai_agent.json";
 import deepHedgingJson from "@/data/deep_hedging.json";
+import robustnessJson from "@/data/deep_hedging_robustness.json";
 import pnlExplainJson from "@/data/pnl_explain.json";
 import volSurfaceJson from "@/data/vol_surface.json";
 import type {
@@ -10,11 +11,15 @@ import type {
   DeepHedgeData,
   DeepHedgeRow,
   PnlExplainData,
+  RobustnessData,
+  RobustnessRow,
+  RobustnessScenario,
   VolSurfaceData,
 } from "@/lib/types";
 
 export const aiAgent = aiAgentJson as AiAgentData;
 export const deepHedging = deepHedgingJson as DeepHedgeData;
+export const robustness = robustnessJson as RobustnessData;
 export const pnlExplain = pnlExplainJson as PnlExplainData;
 export const volSurface = volSurfaceJson as VolSurfaceData;
 
@@ -112,6 +117,49 @@ export const hedging = {
   costAwareTradesLessPct: (["vanilla", "autocall", "barrier"] as const).map(
     (inst) => 100 * (1 - row(inst, "cost").learned_turnover / row(inst, "variance").learned_turnover),
   ),
+};
+
+// ---- Hedging robustness (out-of-model) ---------------------------------------
+
+export const SCENARIO_LABELS: Record<RobustnessScenario, string> = {
+  in_sample: "In the lab",
+  vol_up_25: "Volatility +25%",
+  vol_down_25: "Volatility -25%",
+  jumps: "Crash jumps",
+  history: "Real history, 20y",
+};
+
+export const SCENARIO_SHORT_LABELS: Record<RobustnessScenario, string> = {
+  in_sample: "Lab",
+  vol_up_25: "Vol +25%",
+  vol_down_25: "Vol -25%",
+  jumps: "Jumps",
+  history: "History",
+};
+
+export function robust(
+  instrument: DeepHedgeRow["instrument"],
+  loss: DeepHedgeRow["loss_type"],
+  scenario: RobustnessScenario,
+): RobustnessRow {
+  const r = robustness.rows.find(
+    (x) => x.instrument === instrument && x.loss_type === loss && x.scenario === scenario,
+  );
+  if (!r) throw new Error(`missing robustness row ${instrument}/${loss}/${scenario}`);
+  return r;
+}
+
+const noteTailRows = robustness.scenarios.map((sc) => robust("autocall", "cvar", sc));
+
+export const robustnessHeadlines = {
+  barrierHistory: robust("barrier", "variance", "history").std_reduction_pct,
+  optionHistory: robust("vanilla", "variance", "history").std_reduction_pct,
+  noteStabilityLab: robust("autocall", "variance", "in_sample").std_reduction_pct,
+  noteStabilityHistory: robust("autocall", "variance", "history").std_reduction_pct,
+  noteTailMin: Math.min(...noteTailRows.map((r) => r.cvar_improvement_pct)),
+  noteTailMax: Math.max(...noteTailRows.map((r) => r.cvar_improvement_pct)),
+  historyYears: 20,
+  noteIndependentWindows: robustness.history_independent["autocall"],
 };
 
 // ---- AI analyst ------------------------------------------------------------

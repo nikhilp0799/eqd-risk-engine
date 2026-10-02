@@ -61,7 +61,9 @@ def autocall_benchmark_delta(
     inputs: HedgingMarketInputs,
     spec: AutocallableSpec,
     greeks_n_paths: int = 2_000,
-    greeks_n_steps_per_period: int = 4,
+    # 16, not 4: at 4 steps per quarter the first quarter's simulated vol was
+    # measured 11% below converged (2026-10-01).
+    greeks_n_steps_per_period: int = 16,
     greeks_seed: int = 4242,
 ) -> float:
     """The static benchmark's hedge ratio: the note's real bump-and-reval MC
@@ -238,9 +240,10 @@ def evaluate_autocall_hedge(
     cost_bps: float,
     seed_eval: int,
     greeks_n_paths: int = 2_000,
-    greeks_n_steps_per_period: int = 4,
+    greeks_n_steps_per_period: int = 16,
     greeks_seed: int = 4242,
     static_delta: float | None = None,
+    substeps: int = 1,
 ) -> ComparisonResult:
     """Phase 3. The baseline's static delta is a REAL bump-and-reval MC Greek
     (`pricing/autocallable.py::autocallable_greeks`), computed once — see
@@ -249,7 +252,7 @@ def evaluate_autocall_hedge(
     `seed_train`, same held-out discipline as `evaluate_vanilla_hedge`.
     `static_delta`, if given, skips re-computing that Greek (it depends only on
     the market, not on the trained network)."""
-    sim = simulate_training_paths(inputs, n_paths_eval, len(spec.obs_times), seed_eval)
+    sim = simulate_training_paths(inputs, n_paths_eval, len(spec.obs_times), seed_eval, substeps)
     if static_delta is None:
         static_delta = autocall_benchmark_delta(
             inputs, spec, greeks_n_paths, greeks_n_steps_per_period, greeks_seed

@@ -39,6 +39,22 @@ def test_saved_model_round_trips_exactly(tmp_path):
         assert torch.equal(net(x), loaded(x))
 
 
+def test_saved_model_keeps_its_position_limit(tmp_path):
+    torch.manual_seed(0)
+    save_model(HedgeNet(hidden=8, limit=1.5), tmp_path, ASOF, "barrier", "cvar", 0)
+    loaded = load_model(tmp_path, ASOF, "barrier", "cvar", 0)
+    assert loaded is not None and loaded.limit == 1.5
+
+
+def test_model_saved_before_position_limits_loads_unbounded(tmp_path):
+    torch.manual_seed(0)
+    net = HedgeNet(hidden=8)
+    path = save_model(net, tmp_path, ASOF, "vanilla", "cost", 0)
+    torch.save({"hidden": 8, "state_dict": net.state_dict()}, path)  # pre-limit format
+    loaded = load_model(tmp_path, ASOF, "vanilla", "cost", 0)
+    assert loaded is not None and loaded.limit is None
+
+
 def test_load_model_returns_none_when_never_saved(tmp_path):
     assert load_model(tmp_path, ASOF, "vanilla", "cost", 0) is None
 

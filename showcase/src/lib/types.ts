@@ -126,3 +126,26 @@ export interface AiAgentData {
   proposed_changes: AiProposedChange[];
   trace: AiTraceEntry[];
 }
+
+export type RobustnessScenario = "in_sample" | "vol_up_25" | "vol_down_25" | "jumps" | "history";
+
+/** One (instrument, objective, scenario): mean across seeds with min/max. */
+export interface RobustnessRow {
+  instrument: DeepHedgeRow["instrument"];
+  loss_type: DeepHedgeRow["loss_type"];
+  scenario: RobustnessScenario;
+  n_seeds: number;
+  std_reduction_pct: number;
+  std_reduction_pct_min: number;
+  std_reduction_pct_max: number;
+  cvar_improvement_pct: number;
+  cvar_improvement_pct_min: number;
+  cvar_improvement_pct_max: number;
+}
+
+export interface RobustnessData {
+  asof_date: string;
+  scenarios: RobustnessScenario[];
+  history_independent: Record<string, number>;
+  rows: RobustnessRow[];
+}

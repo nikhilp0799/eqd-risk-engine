@@ -21,8 +21,15 @@ from eqdrisk.pricing.autocallable import AutocallableSpec
 
 
 class HedgeNet(nn.Module):
-    def __init__(self, hidden: int = 32):
+    """`limit`, if set, caps the hedge smoothly: `limit * tanh(raw / limit)`.
+    Near-identity for hedges well inside the limit, saturating at it — a
+    position limit, as every desk has. Added in Phase 7 after one unbounded
+    policy, scored out-of-model, extrapolated to positions about 3x the size of
+    its siblings' and blew up on real price history."""
+
+    def __init__(self, hidden: int = 32, limit: float | None = None):
         super().__init__()
+        self.limit = limit
         self.net = nn.Sequential(
             nn.Linear(2, hidden),
             nn.ReLU(),
@@ -32,7 +39,10 @@ class HedgeNet(nn.Module):
         ).double()
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
-        return self.net(features).squeeze(-1)
+        raw = self.net(features).squeeze(-1)
+        if self.limit is None:
+            return raw
+        return self.limit * torch.tanh(raw / self.limit)
 
 
 @overload

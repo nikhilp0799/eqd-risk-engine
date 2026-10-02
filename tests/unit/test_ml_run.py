@@ -324,3 +324,17 @@ def test_run_deep_hedge_keeps_pre_phase6_row_of_other_combination(tmp_path, monk
     assert len(df) == 2
     legacy = df[df["loss_type"] == "cvar"].iloc[0]
     assert pd.isna(legacy["seed"])
+
+
+def test_autocallable_training_simulates_finely_between_quarterly_rebalances():
+    """Guard for the 2026-10-01 bug: the note rebalances quarterly, but one
+    simulation step per quarter understated its first-quarter vol by more than
+    half on real data."""
+    cfg = run_module._train_cfg("autocall")
+    assert cfg.n_steps == len(run_module.AUTOCALL_SPEC.obs_times)
+    assert cfg.n_steps * cfg.sim_substeps >= 64
+
+
+def test_every_instrument_trains_under_a_position_limit():
+    for instrument in run_module.INSTRUMENTS:
+        assert run_module._train_cfg(instrument).hedge_limit is not None

@@ -51,6 +51,10 @@ class TrainConfig:
     cost_bps: float = 5.0
     seed_train: int = 1
     hidden: int = 32
+    # Price-simulation steps per rebalancing step (see `simulate_training_paths`).
+    sim_substeps: int = 1
+    # Position limit on the policy's output (see `HedgeNet`); None = unbounded.
+    hedge_limit: float | None = None
     # Early stopping: off unless a validation set is requested.
     n_paths_val: int = 0
     seed_val: int = 500
@@ -75,7 +79,7 @@ def train_vanilla_hedge(
     cfg: TrainConfig,
 ) -> TrainResult:
     sim = simulate_training_paths(inputs, cfg.n_paths_train, cfg.n_steps, cfg.seed_train)
-    net = HedgeNet(hidden=cfg.hidden)
+    net = HedgeNet(hidden=cfg.hidden, limit=cfg.hedge_limit)
     optimizer = torch.optim.Adam(net.parameters(), lr=cfg.lr)
 
     def payoff_fn(paths: torch.Tensor) -> torch.Tensor:
@@ -168,7 +172,15 @@ def _fit(
 def _val_paths(inputs: HedgingMarketInputs, cfg: TrainConfig) -> SimulatedPaths | None:
     if cfg.n_paths_val <= 0:
         return None
-    return simulate_training_paths(inputs, cfg.n_paths_val, cfg.n_steps, cfg.seed_val)
+    return simulate_training_paths(
+        inputs, cfg.n_paths_val, cfg.n_steps, cfg.seed_val, cfg.sim_substeps
+    )
+
+
+def _train_paths(inputs: HedgingMarketInputs, cfg: TrainConfig) -> SimulatedPaths:
+    return simulate_training_paths(
+        inputs, cfg.n_paths_train, cfg.n_steps, cfg.seed_train, cfg.sim_substeps
+    )
 
 
 def _train_hedge_with_rollout(
@@ -185,7 +197,7 @@ def _train_hedge_with_rollout(
     down-and-in-put (Phase 5) instruments, which need no rollout logic beyond
     what `rollout_hedged_pnl` already provides (unlike the autocallable, whose
     early-redemption logic genuinely needed its own rollout function)."""
-    net = HedgeNet(hidden=cfg.hidden)
+    net = HedgeNet(hidden=cfg.hidden, limit=cfg.hedge_limit)
 
     def rollout(sim: SimulatedPaths) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return rollout_hedged_pnl(
@@ -202,7 +214,7 @@ def _train_hedge_with_rollout(
     def objective(pnl: torch.Tensor, cost: torch.Tensor) -> torch.Tensor:
         return _loss_from_hedged_pnl(pnl, cost, loss_type, cvar_alpha, cost_lambda)
 
-    train_paths = simulate_training_paths(inputs, cfg.n_paths_train, cfg.n_steps, cfg.seed_train)
+    train_paths = _train_paths(inputs, cfg)
     return _fit(net, rollout, train_paths, _val_paths(inputs, cfg), objective, cfg)
 
 
@@ -260,7 +272,7 @@ def train_autocall_hedge(
     `planning/deep_hedging_plan.md`) and both must be a power of two, the same
     exactness requirement `pricing/autocallable.py::price_autocallable`
     already documents for its own observation-date alignment."""
-    net = HedgeNet(hidden=cfg.hidden)
+    net = HedgeNet(hidden=cfg.hidden, limit=cfg.hedge_limit)
 
     def rollout(sim: SimulatedPaths) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         obs_levels = sim.paths[:, 1:]  # drop t=0 -> one column per spec.obs_times entry
@@ -278,5 +290,5 @@ def train_autocall_hedge(
     def objective(pnl: torch.Tensor, cost: torch.Tensor) -> torch.Tensor:
         return _loss_from_hedged_pnl(pnl, cost, loss_type, cvar_alpha, cost_lambda)
 
-    train_paths = simulate_training_paths(inputs, cfg.n_paths_train, cfg.n_steps, cfg.seed_train)
+    train_paths = _train_paths(inputs, cfg)
     return _fit(net, rollout, train_paths, _val_paths(inputs, cfg), objective, cfg)
