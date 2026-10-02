@@ -7,11 +7,69 @@ import {
   INSTRUMENT_LABELS,
   INSTRUMENT_SHORT_LABELS,
   OBJECTIVE_LABELS,
+  SCENARIO_LABELS,
+  SCENARIO_SHORT_LABELS,
   deepHedging,
   hedging,
+  robust,
+  robustness,
+  robustnessHeadlines as rh,
   tailImprovementPct,
 } from "@/lib/metrics";
 import type { DeepHedgeRow } from "@/lib/types";
+
+const INSTRUMENT_ORDER: DeepHedgeRow["instrument"][] = ["barrier", "autocall", "vanilla"];
+const OBJECTIVES: DeepHedgeRow["loss_type"][] = ["variance", "cvar", "cost"];
+
+function robustChartData(inst: DeepHedgeRow["instrument"]) {
+  return robustness.scenarios.map((sc) => {
+    const entry: Record<string, string | number> = {
+      scenario: SCENARIO_LABELS[sc],
+      short: SCENARIO_SHORT_LABELS[sc],
+    };
+    for (const obj of OBJECTIVES) entry[obj] = robust(inst, obj, sc).std_reduction_pct;
+    return entry;
+  });
+}
+
+/** Worst-case improvement by objective (rows) and scenario (columns). */
+function RobustTailTable({ inst }: { inst: DeepHedgeRow["instrument"] }) {
+  return (
+    <div className="mt-4 overflow-x-auto">
+      <p className="mb-2 text-sm font-medium text-ink">Improvement in worst-case loss</p>
+      <table className="tabular w-full text-sm">
+        <thead>
+          <tr className="border-b border-border text-left text-muted">
+            <th className="py-2 pr-4 font-medium">Strategy</th>
+            {robustness.scenarios.map((sc) => (
+              <th key={sc} className="py-2 pr-4 text-right font-medium">
+                {SCENARIO_LABELS[sc]}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {OBJECTIVES.map((obj, i) => (
+            <tr key={obj} className="border-b border-border/60 last:border-0">
+              <td className="py-2 pr-4 text-ink">
+                <span className="mr-1.5 inline-block h-2 w-2 rounded-full" style={{ background: SERIES[i] }} />
+                {OBJECTIVE_LABELS[obj]}
+              </td>
+              {robustness.scenarios.map((sc) => {
+                const v = robust(inst, obj, sc).cvar_improvement_pct;
+                return (
+                  <td key={sc} className={`py-2 pr-4 text-right ${v < 0 ? "text-critical" : "text-ink"}`}>
+                    {signedPct(v, 1)}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 export const metadata: Metadata = {
   title: "Hedging Strategy Lab — EQD Risk Engine",
@@ -19,8 +77,6 @@ export const metadata: Metadata = {
     "AI-trained hedging strategies tested head-to-head against the benchmark hedge on fresh simulated markets, for an option, a structured note and a barrier option.",
 };
 
-const INSTRUMENT_ORDER: DeepHedgeRow["instrument"][] = ["barrier", "autocall", "vanilla"];
-const OBJECTIVES: DeepHedgeRow["loss_type"][] = ["variance", "cvar", "cost"];
 
 function chartData(metric: (r: DeepHedgeRow) => number) {
   return INSTRUMENT_ORDER.map((inst) => {
@@ -136,19 +192,19 @@ const VERDICTS: { inst: DeepHedgeRow["instrument"]; badge: string; tone: "good" 
     inst: "barrier",
     badge: "Clear win",
     tone: "good",
-    body: "Every AI-trained strategy beat the benchmark on both measures. A barrier option's risk jumps when the index nears the barrier, which a hedge set once at the start can't follow.",
+    body: "Every AI-trained strategy beat the benchmark on both measures, in the lab and on 20 years of real S&P 500 history. A barrier option's risk jumps when the index nears the barrier, which a hedge set once at the start can't follow.",
   },
   {
     inst: "autocall",
     badge: "Real trade-off",
     tone: "brand",
-    body: "Stability cuts swings by about a third but makes the worst outcomes slightly worse. Tail protection improves the worst outcomes, but swings get bigger and it trades far less. Which is better depends on what the desk cares about more.",
+    body: "In the lab, Stability cuts swings by about a fifth, but that edge does not survive real NVIDIA history. Tail protection improves the worst outcomes in every test, real history included: the robust choice, at the price of bigger swings.",
   },
   {
     inst: "vanilla",
     badge: "Small, consistent win",
     tone: "neutral",
-    body: "A plain option is already hedged well by the textbook method, so the gain is small, but it holds on every training run. The learned hedge also closely tracks the textbook delta, a strong sign it learned real finance.",
+    body: "A plain option is already hedged well by the textbook method, so the gain is small, but it holds on every training run and on real history. The learned hedge also closely tracks the textbook delta, a strong sign it learned real finance.",
   },
 ];
 
@@ -170,8 +226,10 @@ export default function DeepHedgingPage() {
         {pct(Math.abs(hedging.noteStabilityTail), 1)} worse, while Tail protection improves the worst
         cases by {pct(hedging.noteTailProtectionTail, 1)} at the cost of bigger swings. Even on a
         plain option, already well served by the textbook hedge, Stability is{" "}
-        {pct(hedging.optionStabilitySwingReduction, 1)} steadier. Every figure is the average of{" "}
-        {hedging.nSeeds} independent training runs, with the range shown.
+        {pct(hedging.optionStabilitySwingReduction, 1)} steadier. Out of the lab, on{" "}
+        {rh.historyYears} years of real prices, the barrier&apos;s edge holds (
+        {signedPct(rh.barrierHistory, 0)}) but the note&apos;s Stability edge does not; see below.
+        Every figure is the average of {hedging.nSeeds} independent training runs.
       </Takeaway>
 
       <Card title="How to read the results">
@@ -234,6 +292,74 @@ export default function DeepHedgingPage() {
         <TradingTable />
       </Card>
 
+      <Card
+        title="Does it hold up outside the lab?"
+        subtitle={`Each strategy was trained in the lab, on the engine's own market simulator. Then, with no retraining, it was run through markets that behave differently: volatility 25% higher or lower than priced, sudden crash-style drops, and ${rh.historyYears} years of real price history (2006 to 2026, through 2008 and 2020). The benchmark faces exactly the same markets.`}
+      >
+        <ul className="flex flex-col gap-2 text-sm leading-relaxed text-ink-2">
+          <li>
+            <strong className="text-ink">Barrier option: the edge holds everywhere.</strong> Still{" "}
+            {pct(rh.barrierHistory)} steadier than the benchmark on real S&amp;P 500 history.
+          </li>
+          <li>
+            <strong className="text-ink">Plain option: small, but it holds.</strong>{" "}
+            {signedPct(rh.optionHistory, 1)} on real NVIDIA history.
+          </li>
+          <li>
+            <strong className="text-ink">NVIDIA note: the lab favourite fails in reality.</strong>{" "}
+            Stability is {signedPct(rh.noteStabilityLab, 0)} in the lab and survives every simulated
+            stress, but on real history it is {pct(Math.abs(rh.noteStabilityHistory), 0)} worse than
+            the benchmark. Tail protection improves the worst cases by{" "}
+            {pct(rh.noteTailMin, 1)}-{pct(rh.noteTailMax, 1)} in every test. A strategy that looks
+            best in the lab can be the wrong one in the market, which is why the lab tests it before
+            anyone trades it.
+          </li>
+        </ul>
+        <p className="mt-4 text-xs text-muted">
+          Real-history windows overlap, so 20 years gives only about{" "}
+          {Math.round(rh.noteIndependentWindows)} independent one-year samples for the note: strong
+          evidence, not proof.
+        </p>
+      </Card>
+
+      {INSTRUMENT_ORDER.map((inst) => (
+        <Card
+          key={inst}
+          title={`${INSTRUMENT_LABELS[inst]}: reduction in P&L swings, by market`}
+          subtitle="Higher is better. Same strategies, never retrained, in five different markets."
+        >
+          <GroupedBars
+            data={robustChartData(inst)}
+            categoryKey="scenario"
+            shortCategoryKey="short"
+            series={series}
+            format="signedPct1"
+            labels={false}
+            height={260}
+          />
+          <RobustTailTable inst={inst} />
+        </Card>
+      ))}
+
+      <Card title="Found and fixed by testing outside the lab">
+        <ul className="flex flex-col gap-2 text-sm leading-relaxed text-ink-2">
+          <li>
+            <strong className="text-ink">A simulation error.</strong> The note&apos;s market paths
+            were simulated one step per quarter, which made NVIDIA&apos;s first three months less
+            than half as volatile as the market priced (17% vs 39%). Now simulated 16 steps per
+            quarter. Together with the position limit below, this took the note&apos;s lab result from
+            about 33% to 19%.
+          </li>
+          <li>
+            <strong className="text-ink">A missing position limit.</strong> Without one, a strategy
+            facing moves it had never seen traded about three times as much as its siblings and
+            blew up on real history (its P&amp;L swings about 54 times the benchmark&apos;s). Every strategy now trades under a limit, as on any
+            real desk.
+          </li>
+        </ul>
+        <p className="mt-3 text-xs text-muted">Every number on this page is after both fixes.</p>
+      </Card>
+
       <div className="grid gap-4 md:grid-cols-3">
         {VERDICTS.map((v) => (
           <div key={v.inst} className="rounded-2xl border border-border bg-surface p-6">
@@ -270,9 +396,22 @@ export default function DeepHedgingPage() {
           those two products partly reflect a weaker benchmark.
         </p>
         <p>
+          <strong className="text-ink">Out-of-model tests.</strong> Saved policies are scored with
+          no retraining on: local volatility scaled by 1.25 and 0.75; compensated Merton jumps
+          (one a year on average, mean -10%, std 5%) overlaid on local-vol paths; and rolling
+          windows of 20 years of daily closes (stride 5 days), rescaled to start at the calibration
+          spot and sampled at the training grid. Both hedgers stay as calibrated on the as-of date.
+          The lab scenario reproduces the stored training results exactly.
+        </p>
+        <p>
+          <strong className="text-ink">Position limit.</strong> The policy&apos;s output passes
+          through <code>L · tanh(raw / L)</code>: L = 1.5 shares per option for the plain option and
+          barrier, 1.0 times notional for the note. Near-identity for normal hedges.
+        </p>
+        <p>
           <strong className="text-ink">Simplifications.</strong> The structured note is rebalanced
-          quarterly, at its observation dates. Barrier monitoring is discrete, at the simulation
-          grid.
+          quarterly, at its observation dates, with its price path simulated 16 steps per quarter.
+          Barrier monitoring is discrete, at the simulation grid.
         </p>
       </Methodology>
 

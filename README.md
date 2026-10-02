@@ -85,7 +85,10 @@ not tuned-to-look-clean ones:
   BOTH metrics — its static hedge is uniformly weak against a payoff whose delta changes sharply
   near the barrier. Every result is now the mean of 3 seeds, trained to convergence with early
   stopping; that fix also turned the vanilla result into a small but consistent win, and exposed
-  a cost-adjusted objective that had been a no-op (now fixed). A real persistence bug was also found this way: a naive one-row-per-CLI-call
+  a cost-adjusted objective that had been a no-op (now fixed). Scored out of model on stressed
+  simulators and 20 years of real history, the barrier's edge holds while the autocallable's lab
+  favourite fails; building that test also caught an autocallable simulation bug and a missing
+  position limit, both fixed. A real persistence bug was also found this way: a naive one-row-per-CLI-call
   write was silently overwriting each prior combination for the same day (caught by actually
   inspecting the table, not assumed correct), fixed with a read-merge-write and two regression tests.
 
@@ -1308,41 +1311,76 @@ learned against it). So path generation reuses the EXISTING, already-tested
 `pricing/monte_carlo.py::simulate_local_vol_paths` directly — no reimplementation was ever needed,
 and PyTorch is only used where gradients actually matter.
 
-**Results on real market data (2026-09-22), after Phase 6's training fixes.** Every figure is the
-mean of 3 independently seeded training runs, with the min-max range across seeds, measured on a
-held-out path set none of them trained on. "Swings" is the reduction in hedged-P&L standard
-deviation vs. the benchmark; "worst case" is the improvement in CVaR(95%).
+**Results on real market data (2026-09-22), after Phase 6's training fixes and Phase 7's
+simulation fix and position limit.** Every figure is the mean of 3 independently seeded training
+runs, with the min-max range across seeds, measured on a held-out path set none of them trained
+on. "Swings" is the reduction in hedged-P&L standard deviation vs. the benchmark; "worst case" is
+the improvement in CVaR(95%).
 
 | Instrument | Loss | Swings vs benchmark | Worst case vs benchmark | Shares traded (benchmark) |
 |---|---|---|---|---|
-| Barrier (SPX down-and-in put) | variance | **+73.2%** [73.1, 73.3] | +57.9% | 3.73 (0.61) |
-| | cvar | +61.6% [61.5, 61.7] | **+67.3%** [67.2, 67.3] | 3.39 |
-| | cost | +73.0% [72.9, 73.1] | +57.7% | 3.59 |
-| Autocallable (P008) | variance | **+32.8%** [32.8, 32.8] | -3.5% [-3.7, -3.3] | 11,669 (5,303) |
-| | cvar | -8.9% [-11.3, -7.2] | **+2.2%** [2.2, 2.3] | 1,941 |
-| | cost | +32.5% [32.4, 32.7] | -3.6% | 11,572 |
-| Vanilla (NVDA ATM call, 3m) | variance | **+3.4%** [3.2, 3.7] | +0.9% | 2.36 (2.36) |
-| | cvar | -10.0% [-10.5, -9.5] | **+2.5%** [2.3, 2.7] | 2.19 |
-| | cost | +3.3% [3.1, 3.5] | +1.0% | 2.33 |
+| Barrier (SPX down-and-in put) | variance | **+73.1%** [73.0, 73.1] | +57.9% | 3.8 (0.6) |
+| | cvar | +61.7% [61.4, 62.1] | **+67.1%** [67.0, 67.2] | 3.4 |
+| | cost | +72.9% [72.9, 73.0] | +57.7% | 3.6 |
+| Autocallable (P008) | variance | **+19.4%** [19.3, 19.5] | -0.5% [-0.6, -0.4] | 15,747 (8,835) |
+| | cvar | -14.3% [-16.4, -11.3] | **+3.9%** [3.9, 4.0] | 3,734 |
+| | cost | +19.3% [19.2, 19.4] | -0.5% | 15,273 |
+| Vanilla (NVDA ATM call, 3m) | variance | **+3.4%** [3.0, 3.7] | +0.9% | 2.4 (2.4) |
+| | cvar | -9.7% [-10.1, -8.9] | **+2.6%** [2.5, 2.8] | 2.2 |
+| | cost | +3.3% [3.1, 3.5] | +1.0% | 2.3 |
 
 **Three different, honest stories, each now checked against seed noise:**
 - **Barrier: a clean sweep.** Every objective beats the static benchmark on both measures. Its
   benchmark is uniformly weak (never rebalancing a position whose delta and gamma change sharply
   near the barrier), so a policy that adapts as spot moves wins outright.
-- **Autocallable: a genuine variance-vs-tail trade-off.** Minimizing variance cuts swings by a third
-  but makes the tail slightly worse, on every seed; only the CVaR-trained policy improves the tail,
-  and it pays for that with bigger swings and far less trading. Minimizing variance does not
-  minimize tail risk for this asymmetric, knock-in-put-bearing payoff.
+- **Autocallable: a genuine variance-vs-tail trade-off.** Minimizing variance cuts swings by about a
+  fifth with a slightly worse tail; only the CVaR-trained policy improves the tail, paying with
+  bigger swings and far less trading.
 - **Vanilla: a small but consistent win.** The textbook Black-Scholes delta is already a strong
   hedge here, yet the variance-trained policy is steadier on every seed, and its learned hedge
   ratio closely tracks the Black-Scholes delta curve (mean absolute gap 0.01-0.03 shares between
   85% and 115% of strike).
-- **Cost-aware trades 1-4% less than variance-trained for almost the same stability.** At 5bp per
-  trade, trading cost is small next to hedging risk, so pricing it in barely moves the optimal
-  hedge. A real economic result, not a no-op (see below).
+- **Cost-aware trades only slightly less than variance-trained for almost the same stability.** At
+  5bp per trade, trading cost is small next to hedging risk, so pricing it in barely moves the
+  optimal hedge.
 - Turnover is counted the same way for a policy and its benchmark within each instrument; the two
   exotics' static benchmarks trade once and hold, so their turnover is not comparable with a
   rebalancing policy.
+
+**Out of the lab (Phase 7): does it survive a market that does not behave like the model?**
+`eqdrisk deephedge-robustness` scores the saved policies, never retrained, on stressed simulators
+(local vol scaled by 1.25 and 0.75; compensated crash-like jumps) and on 20 years of real daily
+closes (2006-2026) replayed in rolling windows of each instrument's life. Variance-trained swings
+reduction vs. the benchmark, mean of 3 seeds:
+
+| Instrument | Lab | Vol +25% | Vol -25% | Crash jumps | Real history, 20y |
+|---|---|---|---|---|---|
+| Barrier | +73.1% | +72.8% | +62.4% | +64.3% | **+58.9%** |
+| Vanilla | +3.4% | +2.8% | +0.9% | +4.4% | **+1.4%** |
+| Autocallable | +19.4% | +7.6% | +26.7% | +16.5% | **-39.5%** |
+
+- **The barrier's edge and the vanilla's small win both survive real history.**
+- **The autocallable's lab favourite fails in reality**: it survives every simulated stress but is
+  about 40% worse than the static benchmark on real NVDA history (likely cause: the risk-neutral
+  simulator never trends, while NVDA rose about 450x over those 20 years). The CVaR-trained policy
+  is the robust one: its worst-case improvement is +3.6% to +4.0% in every scenario, real history
+  included. Overlapping windows mean only about 20 independent one-year samples for the note:
+  strong evidence, not proof.
+- **Two real problems were found by building this test, both fixed before publishing:**
+  1. The autocallable's paths were simulated with one Euler step per quarter, so local vol was
+     applied at each quarter's start: on NVDA the first quarter's vol was 17% against a converged
+     39%. Paths are now simulated 16 steps per quarter and sampled at the quarterly rebalance
+     dates (this alone took the note's lab result from about +33% to +21%).
+  2. One unbounded variance-trained note policy extrapolated outside its training range, traded
+     about 3x as much as its sibling seeds, and blew up out of model (P&L swings about 54x the
+     benchmark's on real history). Every policy now has a smooth position limit,
+     `L * tanh(raw / L)` (1.5 shares per option; 1.0 x notional for the note), which removed the
+     blow-up and changed in-lab results by at most about 2%.
+- Policies are now saved (`data/curated/deep_hedge_models/`), and a full retrain with fixed seeds
+  reproduced every stored result exactly.
+- **Open, not touched here:** the production pricer simulates P008 at 8 steps per quarter, which
+  understates its first-quarter vol by about 5% (37.6% vs 39.4%). It feeds the daily marks and P&L
+  explain, so it needs its own plan.
 
 **Phase 6, found by testing the earlier results rather than trusting them** (full measurements in
 [docs/deep_hedging_ml_framing.md](docs/deep_hedging_ml_framing.md)):
@@ -1393,19 +1431,24 @@ engine — this is a separate, additive research comparison. Not wired into `run
 - `src/eqdrisk/ml/{market,simulate,payoffs,hedge_model,losses,baseline,train,evaluate,run}.py`.
 - `eqdrisk deephedge --date X --instrument {vanilla,autocall,barrier} --loss {variance,cvar,cost}
   [--all] [--seeds 3]` — trains, evaluates, and persists one (or all nine) combinations, each
-  over `--seeds` training seeds. A full `--all` run takes about 40 minutes.
+  over `--seeds` training seeds, and saves each trained policy. A full `--all` run takes about 40
+  minutes.
+- `eqdrisk deephedge-robustness --date X [--history-years 20]` — scores every saved policy on the
+  out-of-model scenarios, writing curated table `deep_hedge_robustness`.
 - New curated table `deep_hedge_results` (one row per combination per seed per day).
 - Dashboard: a "Deep Hedging" tab, reading only that table (same "no live computation" rule as
   every other tab).
-- Tests: `tests/unit/test_ml_deep_hedge.py` (33 tests — payoff correctness for all three
+- Tests: `tests/unit/test_ml_deep_hedge.py` (38 tests — payoff correctness for all three
   instruments including intra-path barrier breach detection, a never-hedging network reducing
   exactly to `-payoff`, gradients actually reaching the network, BS-delta variance shrinking with
   more rebalancing, the differentiable autocallable payoff matching the real, already-tested
   `pricing/autocallable.py::autocallable_payoff` exactly, Phase 6's scale-free cost loss, dollar
   costs matching exactly what the P&L pays, and early stopping restoring the best weights) and
-  `tests/unit/test_ml_run.py` (9 tests, real fixture curated data, tiny training configs, including
+  `tests/unit/test_ml_run.py` (11 tests, real fixture curated data, tiny training configs, including
   regression coverage for the persistence bug above, per-seed rows, and replacing pre-Phase-6
-  unseeded rows). 1792 tests passing overall, all on synthetic fixtures — the test suite
+  unseeded rows), and `tests/unit/test_ml_robustness.py` (14 tests: saved policies round-trip,
+  every scenario generator, split-adjustment and cache checks on the history replay, and an
+  end-to-end run whose lab scenario reproduces stored results exactly). 1813 tests passing overall, all on synthetic fixtures — the test suite
   never trains on or requires real market data.
 
 ---

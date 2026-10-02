@@ -614,3 +614,78 @@ def test_fit_without_validation_runs_the_full_budget():
     assert result.epochs_run == 40
     assert not result.stopped_early
     assert result.best_val_loss is None
+
+
+# --- Phase 7 fix: fine price simulation under a coarse rebalancing grid ---------
+
+
+def _time_dependent_vol_inputs() -> HedgingMarketInputs:
+    """Local vol that is low near t=0 and high afterwards, the shape that made
+    one Euler step per quarter badly understate the autocallable's first-quarter
+    volatility on real NVDA data (17% simulated vs 39% converged)."""
+    s_grid = np.linspace(1.0, 500.0, 20)
+    t_grid = np.linspace(0.0, 1.0, 41)
+    sigma_t = np.where(t_grid < 0.02, 0.10, 0.40)
+    sigma_loc = np.tile(sigma_t[:, None], (1, len(s_grid)))
+    grid = LocalVolGrid(s_grid=s_grid, t_grid=t_grid, sigma_loc=sigma_loc, n_floored=0)
+    return HedgingMarketInputs(
+        underlying=UNDERLYING,
+        asof=ASOF,
+        T=1.0,
+        spot=SPOT,
+        r=0.03,
+        q=0.01,
+        grid=grid,
+        surface=_flat_surface(0.4, 1.0),
+    )
+
+
+def test_substeps_keep_the_rebalancing_grid_but_simulate_finely():
+    inputs = _flat_inputs(T=1.0)
+    coarse = simulate_training_paths(inputs, 64, 4, seed=3, substeps=16)
+    fine = simulate_training_paths(inputs, 64, 64, seed=3)
+    assert np.allclose(coarse.t_grid, [0.0, 0.25, 0.5, 0.75, 1.0])
+    assert torch.equal(coarse.paths, fine.paths[:, ::16])
+
+
+def test_substeps_fix_the_first_quarter_vol_understatement():
+    inputs = _time_dependent_vol_inputs()
+
+    def first_quarter_vol(substeps):
+        sim = simulate_training_paths(inputs, 8192, 4, seed=3, substeps=substeps)
+        return float(np.log(sim.paths[:, 1].numpy() / SPOT).std() / np.sqrt(0.25))
+
+    one_step, fine = first_quarter_vol(1), first_quarter_vol(16)
+    assert one_step < 0.2  # the whole quarter at the t=0 vol of 10%
+    assert fine == pytest.approx(0.40, abs=0.03)
+
+
+def test_substeps_must_be_a_power_of_two():
+    with pytest.raises(ValueError, match="power of two"):
+        simulate_training_paths(_flat_inputs(T=1.0), 64, 4, seed=3, substeps=3)
+
+
+# --- Phase 7: position limit -------------------------------------------------------
+
+
+def test_hedge_limit_bounds_every_output_but_barely_touches_normal_hedges():
+    torch.manual_seed(0)
+    free = HedgeNet(hidden=8)
+    capped = HedgeNet(hidden=8, limit=1.5)
+    capped.load_state_dict(free.state_dict())
+
+    # Far outside any training range: the unbounded net extrapolates linearly.
+    extreme = torch.tensor([[50.0, 1.0], [-50.0, 0.0]], dtype=torch.float64)
+    with torch.no_grad():
+        assert torch.all(capped(extreme).abs() < 1.5)
+        normal = torch.tensor([[0.01, 0.5]], dtype=torch.float64)
+        raw = free(normal)
+        assert capped(normal).item() == pytest.approx(1.5 * float(torch.tanh(raw / 1.5)), rel=1e-12)
+
+
+def test_hedge_without_limit_is_unchanged():
+    torch.manual_seed(0)
+    net = HedgeNet(hidden=8)
+    x = torch.tensor([[0.3, 0.2]], dtype=torch.float64)
+    with torch.no_grad():
+        assert torch.equal(net(x), net.net(x).squeeze(-1))

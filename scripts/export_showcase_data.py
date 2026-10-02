@@ -115,6 +115,52 @@ def export_deep_hedging() -> None:
     _write("deep_hedging", {"asof_date": DEEP_HEDGE_DATE, "rows": rows})
 
 
+ROBUSTNESS_SCENARIOS = ["in_sample", "vol_up_25", "vol_down_25", "jumps", "history"]
+
+
+def export_deep_hedging_robustness() -> None:
+    """Out-of-model results (Phase 7): for each (instrument, objective,
+    scenario), the mean and min/max across seeds of the swings reduction and
+    the worst-case improvement vs the benchmark, plus each instrument's
+    effective number of independent real-history windows."""
+    df = _read("deep_hedge_robustness")
+    day = df[df["asof_date"] == DEEP_HEDGE_DATE].copy()
+    if day.empty:
+        raise ValueError(f"no deep_hedge_robustness for {DEEP_HEDGE_DATE}")
+    day["std_reduction_pct"] = 100.0 * (1.0 - day["learned_std"] / day["baseline_std"])
+    day["cvar_improvement_pct"] = (
+        100.0 * (day["learned_cvar"] - day["baseline_cvar"]) / day["baseline_cvar"].abs()
+    )
+    rows = []
+    for (instrument, loss_type, scenario), g in day.groupby(
+        ["instrument", "loss_type", "scenario"]
+    ):
+        row: dict[str, Any] = {
+            "instrument": instrument,
+            "loss_type": loss_type,
+            "scenario": scenario,
+            "n_seeds": int(g["seed"].nunique()),
+        }
+        for metric in ("std_reduction_pct", "cvar_improvement_pct"):
+            row[metric] = float(g[metric].mean())
+            row[f"{metric}_min"] = float(g[metric].min())
+            row[f"{metric}_max"] = float(g[metric].max())
+        rows.append(row)
+    history = day[day["scenario"] == "history"]
+    _write(
+        "deep_hedging_robustness",
+        {
+            "asof_date": DEEP_HEDGE_DATE,
+            "scenarios": ROBUSTNESS_SCENARIOS,
+            "history_independent": {
+                inst: float(n)
+                for inst, n in history.groupby("instrument")["n_independent"].first().items()
+            },
+            "rows": rows,
+        },
+    )
+
+
 def export_vol_surface() -> dict[str, Any]:
     surface_all = _read("vol_surface")
     surface = surface_all[
@@ -337,6 +383,7 @@ def export_ai_agent() -> dict[str, Any]:
 
 def main() -> None:
     export_deep_hedging()
+    export_deep_hedging_robustness()
     export_vol_surface()
     export_pnl_explain()
     export_ai_agent()

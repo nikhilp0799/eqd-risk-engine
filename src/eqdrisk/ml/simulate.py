@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 from eqdrisk.ml.market import HedgingMarketInputs
-from eqdrisk.pricing.monte_carlo import simulate_local_vol_paths
+from eqdrisk.pricing.monte_carlo import next_power_of_two, simulate_local_vol_paths
 
 
 @dataclass
@@ -31,7 +31,21 @@ def simulate_training_paths(
     n_paths: int,
     n_steps: int,
     seed: int,
+    substeps: int = 1,
 ) -> SimulatedPaths:
+    """Paths on a grid of `n_steps` (rounded up to a power of two) rebalancing
+    times. With `substeps > 1`, the price is simulated `substeps` times finer
+    and only the rebalancing times are kept: the hedge still acts on the coarse
+    grid, but the path between those times follows the model properly.
+
+    Why this exists (Phase 7, found 2026-10-01): one Euler step per quarter
+    applies the local vol at the START of each quarter to the whole quarter.
+    For NVDA on 2026-09-22 that gave the autocallable's first quarter a
+    simulated vol of 17% against a converged 39% (64 steps per year).
+    """
+    if substeps < 1 or substeps & (substeps - 1):
+        raise ValueError(f"substeps={substeps} must be a power of two")
+    n_coarse = next_power_of_two(n_steps)
     result = simulate_local_vol_paths(
         s0=inputs.spot,
         T=inputs.T,
@@ -39,9 +53,11 @@ def simulate_training_paths(
         r=inputs.r,
         q=inputs.q,
         n_paths=n_paths,
-        n_steps=n_steps,
+        n_steps=n_coarse * substeps,
         seed=seed,
     )
-    paths = torch.from_numpy(result.paths).to(dtype=torch.float64)
+    # Both counts are powers of two, so the coarse times sit exactly on the fine grid.
+    stride = substeps
+    paths = torch.from_numpy(result.paths[:, ::stride].copy()).to(dtype=torch.float64)
     paths.requires_grad_(False)
-    return SimulatedPaths(paths=paths, t_grid=result.t_grid)
+    return SimulatedPaths(paths=paths, t_grid=result.t_grid[::stride])

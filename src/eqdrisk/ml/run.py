@@ -101,14 +101,26 @@ def _train_cfg(instrument: Instrument) -> TrainConfig:
     distinct from training seeds and from the held-out seed 999), capped at
     3,000 epochs. A fixed 300 epochs was measured (2026-09-28) to stop well
     short of convergence."""
+    sim_substeps = 1
+    # Position limits (Phase 7): shares per option for the vanilla and barrier
+    # (a single option's delta never needs more than 1), fraction of notional
+    # held in stock for the note.
+    hedge_limit = 1.5
     if instrument == "vanilla":
         n_steps = 32
     elif instrument == "barrier":
         n_steps = 64  # finer monitoring partially mitigates the discretization bias
     else:
         n_steps = len(AUTOCALL_SPEC.obs_times)
+        # The note rebalances quarterly, but its price path must be simulated
+        # finely: one Euler step per quarter gave a first-quarter vol of 17%
+        # against a converged 39% (2026-10-01). 16 per quarter = 64 per year.
+        sim_substeps = 16
+        hedge_limit = 1.0
     return TrainConfig(
         n_steps=n_steps,
+        sim_substeps=sim_substeps,
+        hedge_limit=hedge_limit,
         n_paths_train=8_000,
         epochs=3_000,
         cost_bps=5.0,
@@ -233,6 +245,7 @@ def run_deep_hedge(
                 train_cfg.cost_bps,
                 seed_eval,
                 static_delta=static_delta,
+                substeps=train_cfg.sim_substeps,
             )
         save_model(trained.net, Path(cfg.paths.curated), asof, instrument, loss_type, seed)
         results.append(

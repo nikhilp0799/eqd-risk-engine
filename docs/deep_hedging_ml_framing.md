@@ -104,6 +104,16 @@ both hedges, and 3 seeds per combination with one stored row each. Current resul
 are in the README's deep hedging section. The notes below are kept as the record of what was
 measured before the fix.
 
+**Update 2026-10-01 (Phase 7):** gap 1 (no distribution shift) is now tested: saved policies are
+scored, never retrained, on local vol scaled by 1.25 and 0.75, compensated crash-like jumps, and
+20 years of real price history. The barrier's edge and the plain option's small win survive real
+history; the autocallable's variance-trained policy does not (about 40% worse than its benchmark),
+while its CVaR-trained policy improves the tail in every scenario. Building the test also found
+an autocallable simulation bug (one Euler step per quarter: first-quarter vol 17% vs 39%) and an
+unbounded policy that blew up out of model; both are fixed (16 substeps per quarter; a smooth
+`L * tanh(raw / L)` position limit). The plain-option, note and seed numbers in gaps 5 and 6 below
+predate both fixes.
+
 1. **No distribution shift.** Test paths are new but come from the same simulator as training.
    There is no test on real historical price paths or under a different market model. This is
    the largest gap.

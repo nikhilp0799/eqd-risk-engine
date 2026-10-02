@@ -40,7 +40,7 @@ def save_model(
     path = model_path(curated_root, asof, instrument, loss_type, seed)
     path.parent.mkdir(parents=True, exist_ok=True)
     hidden = net.net[0].out_features
-    torch.save({"hidden": hidden, "state_dict": net.state_dict()}, path)
+    torch.save({"hidden": hidden, "limit": net.limit, "state_dict": net.state_dict()}, path)
     return path
 
 
@@ -52,9 +52,10 @@ def load_model(
     path = model_path(curated_root, asof, instrument, loss_type, seed)
     if not path.exists():
         return None
-    # weights_only: the file holds only tensors and an int, never arbitrary objects.
+    # weights_only: the file holds only tensors and numbers, never arbitrary objects.
     blob = torch.load(path, weights_only=True)
-    net = HedgeNet(hidden=int(blob["hidden"]))
+    limit = blob.get("limit")  # absent in files saved before position limits
+    net = HedgeNet(hidden=int(blob["hidden"]), limit=None if limit is None else float(limit))
     net.load_state_dict(blob["state_dict"])
     net.eval()
     return net

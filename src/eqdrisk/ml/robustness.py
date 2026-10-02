@@ -73,12 +73,19 @@ MAX_PLAUSIBLE_DAILY_LOG_RETURN = 0.5
 
 
 def scaled_vol_paths(
-    inputs: HedgingMarketInputs, factor: float, n_paths: int, n_steps: int, seed: int
+    inputs: HedgingMarketInputs,
+    factor: float,
+    n_paths: int,
+    n_steps: int,
+    seed: int,
+    substeps: int = 1,
 ) -> SimulatedPaths:
     """The calibrated local-vol model with every local vol multiplied by
     `factor` — a market that turns out more (or less) volatile than priced."""
     grid = dataclasses.replace(inputs.grid, sigma_loc=inputs.grid.sigma_loc * factor)
-    return simulate_training_paths(dataclasses.replace(inputs, grid=grid), n_paths, n_steps, seed)
+    return simulate_training_paths(
+        dataclasses.replace(inputs, grid=grid), n_paths, n_steps, seed, substeps
+    )
 
 
 def jump_paths(
@@ -89,6 +96,7 @@ def jump_paths(
     intensity: float = JUMP_INTENSITY,
     mean: float = JUMP_MEAN,
     std: float = JUMP_STD,
+    substeps: int = 1,
 ) -> SimulatedPaths:
     """Compensated Merton jumps overlaid on calibrated local-vol paths.
 
@@ -96,9 +104,11 @@ def jump_paths(
     simulated, so the local vol after a jump does not react to the new level:
     an overlay approximation, but a deliberate one, since the point is a shock
     the hedgers' model never saw. With `intensity = 0` the paths are identical
-    to the unshocked local-vol paths.
+    to the unshocked local-vol paths. Jumps are drawn per rebalancing step; a
+    Poisson count over a step has the same distribution however finely the
+    diffusion underneath was simulated.
     """
-    base = simulate_training_paths(inputs, n_paths, n_steps, seed)
+    base = simulate_training_paths(inputs, n_paths, n_steps, seed, substeps)
     paths = base.paths.numpy()
     dt_steps = np.diff(base.t_grid)
     log_ret = np.diff(np.log(paths), axis=1)
@@ -200,15 +210,19 @@ def build_scenarios(
     n_steps: int,
     n_paths: int,
     history_closes: np.ndarray,
+    substeps: int = 1,
 ) -> ScenarioSet:
+    """`substeps` must match training (`TrainConfig.sim_substeps`), so the
+    in-sample scenario reproduces the stored training-run results exactly."""
     inputs = setup.inputs
+    k = substeps
     history = history_paths(history_closes, inputs.spot, inputs.T, n_steps)
     return ScenarioSet(
         paths={
-            "in_sample": simulate_training_paths(inputs, n_paths, n_steps, EVAL_SEED),
-            "vol_up_25": scaled_vol_paths(inputs, 1.25, n_paths, n_steps, EVAL_SEED),
-            "vol_down_25": scaled_vol_paths(inputs, 0.75, n_paths, n_steps, EVAL_SEED),
-            "jumps": jump_paths(inputs, n_paths, n_steps, EVAL_SEED),
+            "in_sample": simulate_training_paths(inputs, n_paths, n_steps, EVAL_SEED, k),
+            "vol_up_25": scaled_vol_paths(inputs, 1.25, n_paths, n_steps, EVAL_SEED, k),
+            "vol_down_25": scaled_vol_paths(inputs, 0.75, n_paths, n_steps, EVAL_SEED, k),
+            "jumps": jump_paths(inputs, n_paths, n_steps, EVAL_SEED, substeps=k),
             "history": history.paths,
         },
         history_independent=history.n_independent,
@@ -272,7 +286,9 @@ def run_robustness(
             return None
         train_cfg = _train_cfg(instrument)
         closes = load_history_closes(setup.underlying, start, asof, cache_dir, fetch)
-        scenarios = build_scenarios(setup, train_cfg.n_steps, n_paths, closes)
+        scenarios = build_scenarios(
+            setup, train_cfg.n_steps, n_paths, closes, train_cfg.sim_substeps
+        )
 
         for loss_type in LOSS_TYPES:
             for seed in seeds:
