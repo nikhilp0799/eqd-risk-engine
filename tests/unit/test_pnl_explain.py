@@ -1,4 +1,5 @@
 import datetime as dt
+import shutil
 
 import numpy as np
 import pandas as pd
@@ -24,6 +25,8 @@ from eqdrisk.pricing.pnl_explain import (
     RESIDUAL_ALERT_THRESHOLD_BP,
     PnLExplainResult,
     StepResult,
+    latest_complete_day_before,
+    missing_market_data,
     run_pnl_explain,
 )
 
@@ -267,11 +270,10 @@ def test_vanilla_vega_materially_explains_the_vol_step(tmp_path):
 
 
 def test_run_pnl_explain_reports_skip_when_no_curated_rates_at_all(tmp_path):
-    """No curve data for either day at all -> `load_market_state` returns None
-    for both -> the global '_all_' skip. (A day1 that merely lacks its OWN spot/
-    surface/forward rows, with day0's curve still findable via `latest_available_
-    date`'s on-or-before semantics, is a different, per-position skip case —
-    covered by Step 7's own tests, not re-tested here.)"""
+    """No market data for either day at all -> the global '_all_' skip. Since
+    2026-10-04 the completeness gate (`missing_market_data`) catches this before
+    `load_market_state` is reached; a day missing only its own option data is
+    covered by the gate tests below."""
     portfolio_path = _write_portfolio_yaml(
         tmp_path, [{"id": "E1", "type": "equity", "underlying": UNDERLYING, "qty": 1}]
     )
@@ -329,3 +331,92 @@ def test_breach_detected_when_total_residual_exceeds_threshold_bp():
     assert any("position P1" in b for b in breaches)
     assert result.total_residual_bp() == pytest.approx(6.0, abs=1e-6)
     assert f"{RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp" in breaches[0]
+
+
+# --- completeness gate (2026-10-04) ----------------------------------------------
+
+
+def _vanilla_book(tmp_path) -> str:
+    return _write_portfolio_yaml(
+        tmp_path,
+        [
+            {
+                "id": "V1",
+                "type": "vanilla",
+                "underlying": UNDERLYING,
+                "cp": "C",
+                "strike": 100.0,
+                "expiry": PILLAR_EXPIRIES[0].isoformat(),
+                "qty": 100,
+            }
+        ],
+    )
+
+
+def test_missing_market_data_is_empty_for_a_complete_day(tmp_path):
+    _write_both_days(tmp_path)
+    portfolio = Portfolio.from_yaml(_vanilla_book(tmp_path))
+    assert missing_market_data(_cfg(tmp_path), DAY1, portfolio) == []
+
+
+def test_missing_market_data_names_each_gap_without_falling_back(tmp_path):
+    """Day1 has rates and spot but no option data of its own: the 2026-09-15
+    failure mode. An earlier day's surface must NOT count."""
+    _write_curve(tmp_path, DAY0, RATE_DAY0)
+    _write_curve(tmp_path, DAY1, RATE_DAY1)
+    _write_underlying(tmp_path, DAY0, SPOT_DAY0)
+    _write_underlying(tmp_path, DAY1, SPOT_DAY1)
+    _write_forwards(tmp_path, DAY0, SPOT_DAY0, RATE_DAY0)
+    _write_surface(tmp_path, DAY0)
+    portfolio = Portfolio.from_yaml(_vanilla_book(tmp_path))
+
+    assert missing_market_data(_cfg(tmp_path), DAY1, portfolio) == [
+        f"forwards {UNDERLYING}",
+        f"vol surface {UNDERLYING}",
+    ]
+
+
+def test_explain_skips_and_writes_nothing_on_an_incomplete_day(tmp_path):
+    _write_curve(tmp_path, DAY0, RATE_DAY0)
+    _write_curve(tmp_path, DAY1, RATE_DAY1)
+    _write_underlying(tmp_path, DAY0, SPOT_DAY0)
+    _write_underlying(tmp_path, DAY1, SPOT_DAY1)
+    _write_forwards(tmp_path, DAY0, SPOT_DAY0, RATE_DAY0)
+    _write_surface(tmp_path, DAY0)
+
+    result = run_pnl_explain(_cfg(tmp_path), DAY0, DAY1, _vanilla_book(tmp_path))
+
+    assert "incomplete market data" in result.skipped["_all_"]
+    assert not result.steps
+    assert not (tmp_path / "pnl_explain").exists()
+    assert not (tmp_path / "pnl_explain_by_position").exists()
+
+
+def test_equity_only_book_needs_spot_but_not_option_data(tmp_path):
+    _write_underlying(tmp_path, DAY1, SPOT_DAY1)
+    portfolio = Portfolio.from_yaml(
+        _write_portfolio_yaml(
+            tmp_path, [{"id": "E1", "type": "equity", "underlying": UNDERLYING, "qty": 1}]
+        )
+    )
+    assert missing_market_data(_cfg(tmp_path), DAY1, portfolio) == []
+    assert missing_market_data(_cfg(tmp_path), DAY0, portfolio) == [f"spot {UNDERLYING}"]
+
+
+def test_latest_complete_day_before_skips_days_without_their_own_option_data(tmp_path):
+    """DAY0 is complete; a day between DAY0 and the explain day has spot but no
+    option data (a failed ingest). day0 must be DAY0, explained across the gap."""
+    _write_both_days(tmp_path)
+    gap_day = DAY1  # complete data removed below except spot
+    day1 = DAY1 + dt.timedelta(days=3)  # the following Monday
+    for table in ("forwards", "vol_surface"):
+        for p in (tmp_path / table).glob(f"asof_date={gap_day.isoformat()}"):
+            shutil.rmtree(p)
+    portfolio = Portfolio.from_yaml(_vanilla_book(tmp_path))
+
+    assert latest_complete_day_before(_cfg(tmp_path), day1, portfolio) == DAY0
+
+
+def test_latest_complete_day_before_is_none_without_any_complete_day(tmp_path):
+    portfolio = Portfolio.from_yaml(_vanilla_book(tmp_path))
+    assert latest_complete_day_before(_cfg(tmp_path), DAY1, portfolio) is None

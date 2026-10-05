@@ -59,6 +59,7 @@ from eqdrisk.io.schemas import (
     PNL_EXPLAIN_SCHEMA,
     validate,
 )
+from eqdrisk.marketdata.calendar import last_n_trading_days
 from eqdrisk.portfolio.mark import (
     MarketState,
     PortfolioMarkResult,
@@ -221,13 +222,76 @@ def _mixed_state(
     )
 
 
+def missing_market_data(cfg: BaseConfig, asof: dt.date, portfolio: Portfolio) -> list[str]:
+    """What `asof` lacks of its OWN market data for this book: spot for every
+    underlying, plus forwards and a calibrated vol surface for every underlying
+    that holds an option-like position. No fallback to an earlier date: rates
+    may legitimately lag a day (`load_market_state` handles that), but a day
+    without its own option data is not a day the book can be revalued on.
+
+    Added 2026-10-04: on days the option-chain ingest failed, the explain used
+    to run on a half-loaded market and persist junk rows (all-zero pairs, and
+    one -$676K residual against a NAV of 0)."""
+    curated = Path(cfg.paths.curated)
+    need_spot = {p.underlying for p in portfolio.positions}
+    need_options = {p.underlying for p in portfolio.positions if p.type != "equity"}
+
+    have_spot: set[str] = set()
+    spot_root = curated / "underlyings"
+    if (spot_root / f"asof_date={asof.isoformat()}").exists():
+        have_spot = set(
+            store.query(
+                f"SELECT DISTINCT underlying FROM t WHERE asof_date = DATE '{asof.isoformat()}'",
+                views={"t": str(spot_root)},
+            )
+            .column("underlying")
+            .to_pylist()
+        )
+
+    missing = [f"spot {u}" for u in sorted(need_spot - have_spot)]
+    for table, label in (("forwards", "forwards"), ("vol_surface", "vol surface")):
+        for u in sorted(need_options):
+            partition = curated / table / f"asof_date={asof.isoformat()}" / f"underlying={u}"
+            if not (partition.exists() and any(partition.glob("*.parquet"))):
+                missing.append(f"{label} {u}")
+    return missing
+
+
+# How far back the daily run looks for a usable day0 across failed-ingest days.
+MAX_DAY0_LOOKBACK_TRADING_DAYS = 10
+
+
+def latest_complete_day_before(
+    cfg: BaseConfig, day1: dt.date, portfolio: Portfolio
+) -> dt.date | None:
+    """The most recent trading day before `day1` with complete market data of
+    its own, so a failed ingest day is explained ACROSS (e.g. 2026-09-14 ->
+    09-16 around a lost 09-15) instead of costing two explains. `None` if none
+    within `MAX_DAY0_LOOKBACK_TRADING_DAYS`."""
+    candidates = last_n_trading_days(day1, MAX_DAY0_LOOKBACK_TRADING_DAYS + 1, cfg.calendar)
+    for day in reversed([d for d in candidates if d < day1]):
+        if not missing_market_data(cfg, day, portfolio):
+            return day
+    return None
+
+
 def run_pnl_explain(
     cfg: BaseConfig, day0: dt.date, day1: dt.date, portfolio_path: str
 ) -> PnLExplainResult:
+    """Persists only when both days have complete market data of their own and
+    every position prices in all five states; otherwise reports why in
+    `skipped["_all_"]` and writes nothing."""
     portfolio = Portfolio.from_yaml(portfolio_path)
+    result = PnLExplainResult(day0=day0, day1=day1)
+    gaps = {d: missing_market_data(cfg, d, portfolio) for d in (day0, day1)}
+    if any(gaps.values()):
+        result.skipped["_all_"] = "incomplete market data: " + "; ".join(
+            f"{d} missing {', '.join(m)}" for d, m in gaps.items() if m
+        )
+        return result
+
     state_day0 = load_market_state(cfg, day0, portfolio)
     state_day1 = load_market_state(cfg, day1, portfolio)
-    result = PnLExplainResult(day0=day0, day1=day1)
     if state_day0 is None or state_day1 is None:
         result.skipped["_all_"] = "missing curated rates for day0 and/or day1"
         return result
@@ -244,6 +308,17 @@ def run_pnl_explain(
     states = [state_0, state_1, state_2, state_3, state_4]
     marks = [_marks_by_id(mark_with_state(cfg, asofs[i], portfolio, states[i])) for i in range(5)]
 
+    # Every step must cover the SAME positions, or the step totals (and the
+    # NAV-relative residual) mix different books. A position that fails to
+    # price in any of the five states is left out of every step and reported.
+    priced_all = set.intersection(*(set(m) for m in marks))
+    unpriced = {p.id for p in portfolio.positions} - priced_all
+    if unpriced:
+        result.skipped["_all_"] = (
+            f"positions not priced in every state: {', '.join(sorted(unpriced))}"
+        )
+        return result
+
     position_residuals: dict[str, float] = {}
 
     for step_idx, step in enumerate(STEP_NAMES):
@@ -251,8 +326,7 @@ def run_pnl_explain(
         actual_total = 0.0
         explained_total = 0.0
 
-        priced_both = set(marks_prev) & set(marks_cur)
-        for pid in priced_both:
+        for pid in priced_all:
             m_prev, m_cur = marks_prev[pid], marks_cur[pid]
             actual = m_cur.price - m_prev.price
             explained = _explained_for_step(
@@ -261,10 +335,6 @@ def run_pnl_explain(
             actual_total += actual
             explained_total += explained
             position_residuals[pid] = position_residuals.get(pid, 0.0) + (actual - explained)
-
-        skipped_here = {p.id for p in portfolio.positions} - priced_both
-        for pid in skipped_here:
-            result.skipped[f"{pid}@{step}"] = "position not priced in both states for this step"
 
         result.steps.append(
             StepResult(step=step, actual_pnl=actual_total, explained_pnl=explained_total)
