@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import functools
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypeVar
 
 import pandas as pd
 import pyarrow as pa
@@ -30,9 +34,43 @@ from eqdrisk.marketdata.calendar import last_n_trading_days
 NY_TZ = "America/New_York"
 
 
+# Three attempts per fetch: the daily ingest crashed on 6 of 26 trading days
+# (2026-09-11..30) from transient Yahoo failures (`^SPX` KeyError
+# 'currentTradingPeriod') and network timeouts; option chains are live-only, so
+# a lost day can never be backfilled.
+RETRY_DELAYS_SECONDS: tuple[float, ...] = (5.0, 30.0)
+_sleep = time.sleep  # patched out in tests
+
+T = TypeVar("T")
+
+
+def _with_retries(label: str, fn: Callable[[], T], retries: list[str]) -> T:
+    """Call `fn`, retrying after each delay in `RETRY_DELAYS_SECONDS`. Every
+    data-source call here is network I/O whose failures (timeouts, Yahoo
+    returning a malformed payload as a KeyError, ...) are transient, so any
+    exception is retried; the last one propagates to the caller."""
+    for attempt, delay in enumerate((*RETRY_DELAYS_SECONDS, None), start=1):
+        try:
+            return fn()
+        except Exception as exc:
+            if delay is None:
+                raise
+            retries.append(f"{label}: attempt {attempt} failed ({_describe(exc)}), retrying")
+            _sleep(delay)
+    raise AssertionError("unreachable")
+
+
+def _describe(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {exc}"[:200]
+
+
 @dataclass
 class QCReport:
     asof: dt.date
+    # What failed even after retries (one entry per underlying or data feed):
+    # the run carries on without it rather than aborting everything.
+    failures: dict[str, str] = field(default_factory=dict)
+    retries: list[str] = field(default_factory=list)
     chain_rows: dict[str, int] = field(default_factory=dict)
     null_rates: dict[str, dict[str, float]] = field(default_factory=dict)
     prior_day_row_delta: dict[str, int | None] = field(default_factory=dict)
@@ -52,9 +90,15 @@ class QCReport:
             rej = self.rejections.get(underlying)
             if rej:
                 lines.append(f"    rejected: {rej}")
-        if self.snap_alerts:
+        if self.retries:
+            lines.append("  RETRIES:")
+            lines.extend(f"    {r}" for r in self.retries)
+        alerts = self.snap_alerts + [
+            f"FAILED after retries: {name} ({why})" for name, why in self.failures.items()
+        ]
+        if alerts:
             lines.append("  ALERTS:")
-            lines.extend(f"    {a}" for a in self.snap_alerts)
+            lines.extend(f"    {a}" for a in alerts)
         return "\n".join(lines)
 
 
@@ -112,6 +156,43 @@ def _snap_offset_minutes(
     return (asof_ts - canonical).total_seconds() / 60.0
 
 
+def _snapshot_chain(
+    underlying: str,
+    asof: dt.date,
+    asof_ts: pd.Timestamp,
+    raw_root: Path,
+    chains_curated_root: Path,
+    qc: QCReport,
+) -> None:
+    raw_df = _with_retries(
+        f"{underlying} option chain",
+        lambda: sources.fetch_option_chain(underlying, asof_ts),
+        qc.retries,
+    )
+
+    raw_dir = raw_root / "chains" / f"asof_date={asof.isoformat()}" / f"underlying={underlying}"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    raw_df.to_parquet(raw_dir / "part-0.parquet", index=False)
+
+    prior_count = _prior_day_count(chains_curated_root, underlying, asof)
+
+    clean_df, rejections = _clean_chain(raw_df)
+    if rejections:
+        qc.rejections[underlying] = rejections
+
+    table = validate(clean_df, CHAIN_SCHEMA, CHAIN_REQUIRED_NOT_NULL)
+    store.write_partitioned(table, chains_curated_root, ["asof_date", "underlying"])
+
+    qc.chain_rows[underlying] = table.num_rows
+    qc.null_rates[underlying] = {
+        col: (table.column(col).null_count / table.num_rows if table.num_rows else 0.0)
+        for col in table.schema.names
+    }
+    qc.prior_day_row_delta[underlying] = (
+        None if prior_count is None else table.num_rows - prior_count
+    )
+
+
 def run_snapshot(cfg: BaseConfig, asof: dt.date) -> SnapshotResult:
     raw_root = Path(cfg.paths.raw)
     curated_root = Path(cfg.paths.curated)
@@ -130,50 +211,59 @@ def run_snapshot(cfg: BaseConfig, asof: dt.date) -> SnapshotResult:
         )
 
     for underlying in universe:
-        raw_df = sources.fetch_option_chain(underlying, asof_ts)
+        try:
+            _snapshot_chain(underlying, asof, asof_ts, raw_root, chains_curated_root, qc)
+        except Exception as exc:
+            qc.failures[f"{underlying} option chain"] = _describe(exc)
+            continue
+        try:
+            div_df = _with_retries(
+                f"{underlying} dividends",
+                functools.partial(sources.fetch_dividends, underlying),
+                qc.retries,
+            )
+            if not div_df.empty:
+                div_table = validate(div_df, DIVIDEND_SCHEMA, DIVIDEND_REQUIRED_NOT_NULL)
+                store.write_partitioned(div_table, curated_root / "dividends", ["underlying"])
+        except Exception as exc:
+            qc.failures[f"{underlying} dividends"] = _describe(exc)
 
-        raw_dir = raw_root / "chains" / f"asof_date={asof.isoformat()}" / f"underlying={underlying}"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        raw_df.to_parquet(raw_dir / "part-0.parquet", index=False)
-
-        prior_count = _prior_day_count(chains_curated_root, underlying, asof)
-
-        clean_df, rejections = _clean_chain(raw_df)
-        if rejections:
-            qc.rejections[underlying] = rejections
-
-        table = validate(clean_df, CHAIN_SCHEMA, CHAIN_REQUIRED_NOT_NULL)
-        store.write_partitioned(table, chains_curated_root, ["asof_date", "underlying"])
-
-        qc.chain_rows[underlying] = table.num_rows
-        qc.null_rates[underlying] = {
-            col: (table.column(col).null_count / table.num_rows if table.num_rows else 0.0)
-            for col in table.schema.names
-        }
-        qc.prior_day_row_delta[underlying] = (
-            None if prior_count is None else table.num_rows - prior_count
-        )
-
-        div_df = sources.fetch_dividends(underlying)
-        if not div_df.empty:
-            div_table = validate(div_df, DIVIDEND_SCHEMA, DIVIDEND_REQUIRED_NOT_NULL)
-            store.write_partitioned(div_table, curated_root / "dividends", ["underlying"])
-
+    # Spot and rates re-fetch a trailing window every day, so a failure here is
+    # recovered by the next run; it is still reported, not fatal.
     ohlc_start = last_n_trading_days(asof, 10, cfg.calendar)[0]
-    ohlc = sources.fetch_underlying_ohlc(universe, ohlc_start, asof + dt.timedelta(days=1))
-    if not ohlc.empty:
-        ohlc_table = validate(ohlc, UNDERLYING_SCHEMA, UNDERLYING_REQUIRED_NOT_NULL)
-        store.write_partitioned(ohlc_table, curated_root / "underlyings", ["asof_date"])
-
     rates_start = last_n_trading_days(asof, 15, cfg.calendar)[0]
-    rates = sources.fetch_rates(rates_start, asof)
-    if not rates.empty:
-        rates_table = validate(rates, CURVE_SCHEMA, CURVE_REQUIRED_NOT_NULL)
-        store.write_partitioned(rates_table, curated_root / "curves", ["asof_date"])
-
-    vol_indices = sources.fetch_vol_indices(rates_start, asof)
-    if not vol_indices.empty:
-        vol_index_table = validate(vol_indices, VOL_INDEX_SCHEMA, VOL_INDEX_REQUIRED_NOT_NULL)
-        store.write_partitioned(vol_index_table, curated_root / "vol_indices", ["asof_date"])
+    feeds: list[tuple[str, Callable[[], pd.DataFrame], pa.Schema, list[str], str]] = [
+        (
+            "underlyings",
+            lambda: sources.fetch_underlying_ohlc(
+                universe, ohlc_start, asof + dt.timedelta(days=1)
+            ),
+            UNDERLYING_SCHEMA,
+            UNDERLYING_REQUIRED_NOT_NULL,
+            "underlyings",
+        ),
+        (
+            "rates",
+            lambda: sources.fetch_rates(rates_start, asof),
+            CURVE_SCHEMA,
+            CURVE_REQUIRED_NOT_NULL,
+            "curves",
+        ),
+        (
+            "vol indices",
+            lambda: sources.fetch_vol_indices(rates_start, asof),
+            VOL_INDEX_SCHEMA,
+            VOL_INDEX_REQUIRED_NOT_NULL,
+            "vol_indices",
+        ),
+    ]
+    for label, fetch, schema, required, table_name in feeds:
+        try:
+            df = _with_retries(label, fetch, qc.retries)
+            if not df.empty:
+                table = validate(df, schema, required)
+                store.write_partitioned(table, curated_root / table_name, ["asof_date"])
+        except Exception as exc:
+            qc.failures[label] = _describe(exc)
 
     return SnapshotResult(asof=asof, qc=qc, curated_root=curated_root)

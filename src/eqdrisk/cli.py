@@ -26,6 +26,9 @@ def ingest(
     asof = dt.date.fromisoformat(date)
     result = run_snapshot(cfg, asof)
     typer.echo(result.qc.render())
+    # One underlying failing is reported but not fatal; nothing ingested at all is.
+    if not result.qc.chain_rows:
+        raise typer.Exit(code=1)
 
 
 @app.command()
