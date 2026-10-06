@@ -44,7 +44,11 @@ VOL_LADDER: tuple[float, ...] = (-0.20, -0.10, 0.0, 0.10, 0.25, 0.50)
 SKEW_STEEPENING_SHOCK = 0.5
 TERM_INVERSION_SHOCK = 0.5
 
-GRID_MC_SETTINGS = MCSettings(n_paths=8_000, barrier_n_steps=32, autocall_n_steps_per_period=4)
+# One plain run per cell (no RQMC sub-runs): the stress grid needs no standard
+# errors, and this keeps its cost and results exactly as before.
+GRID_MC_SETTINGS = MCSettings(
+    n_paths=8_000, barrier_n_steps=32, autocall_n_steps_per_period=4, n_batches=1
+)
 
 
 @dataclass

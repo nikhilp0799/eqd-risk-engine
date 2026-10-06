@@ -81,6 +81,9 @@ print(day0.isoformat() if day0 else '')
         if echo "$EXPLAINPNL_OUTPUT" | grep -q "ALERT:"; then
             echo "*** RESIDUAL ALERT: today's P&L-explain run breached its threshold — see ALERT lines above ***"
         fi
+        if echo "$EXPLAINPNL_OUTPUT" | grep -q "INCONCLUSIVE:"; then
+            echo "*** INCONCLUSIVE: some residuals are inside Monte Carlo noise wider than the threshold — see INCONCLUSIVE lines above ***"
+        fi
 
         # Investigate only a pair the explain actually produced (it skips, and
         # writes nothing, when either day lacks complete market data).

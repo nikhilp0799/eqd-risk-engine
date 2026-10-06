@@ -308,6 +308,13 @@ PNL_EXPLAIN_SCHEMA = pa.schema(
         ("actual_pnl", pa.float64()),
         ("explained_pnl", pa.float64()),
         ("residual", pa.float64()),
+        # MC standard error of `residual` (RQMC sub-runs); null on rows written
+        # before 2026-10-05, 0.0 when every position is closed-form.
+        ("residual_se", pa.float64()),
+        # Day-level SE of the total residual (same on every step row, like
+        # `nav`): step and position SEs are correlated through shared sub-run
+        # seeds, so the total's SE can't be rebuilt from them.
+        ("total_residual_se", pa.float64()),
         ("nav", pa.float64()),  # day1's total book value — lets readers compute bp of NAV
     ]
 )
@@ -328,6 +335,7 @@ PNL_EXPLAIN_BY_POSITION_SCHEMA = pa.schema(
         ("day0", pa.date32()),
         ("position_id", pa.string()),
         ("residual", pa.float64()),
+        ("residual_se", pa.float64()),  # see PNL_EXPLAIN_SCHEMA
     ]
 )
 PNL_EXPLAIN_BY_POSITION_REQUIRED_NOT_NULL = ["asof_date", "day0", "position_id", "residual"]

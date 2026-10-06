@@ -44,10 +44,12 @@ fair strike), so there is no real P&L to explain for them in the first place.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from eqdrisk.config import BaseConfig
@@ -138,6 +140,9 @@ class StepResult:
     step: str
     actual_pnl: float
     explained_pnl: float
+    # Monte Carlo standard error of `residual` from the RQMC sub-runs of the
+    # MC-priced positions; 0.0 when every position is closed-form.
+    residual_se: float = 0.0
 
     @property
     def residual(self) -> float:
@@ -150,8 +155,13 @@ class PnLExplainResult:
     day1: dt.date
     steps: list[StepResult] = field(default_factory=list)
     by_position_residual: dict[str, float] = field(default_factory=dict)
+    by_position_residual_se: dict[str, float] = field(default_factory=dict)
+    total_residual_se: float = 0.0
     nav: float = 0.0
     breaches: list[str] = field(default_factory=list)
+    # Residuals whose Monte Carlo noise band (2 SE) is itself wider than the
+    # alert threshold: neither an alert nor a clean bill of health.
+    inconclusive: list[str] = field(default_factory=list)
     skipped: dict[str, str] = field(default_factory=dict)
 
     def total_actual(self) -> float:
@@ -179,22 +189,29 @@ class PnLExplainResult:
         for s in self.steps:
             lines.append(
                 f"  {s.step:>10}: actual={s.actual_pnl:+,.2f}  explained={s.explained_pnl:+,.2f}"
-                f"  residual={s.residual:+,.2f}"
+                f"  residual={s.residual:+,.2f} +- {2 * s.residual_se:,.2f} (2 SE)"
             )
         lines.append(
             f"  {'TOTAL':>10}: actual={self.total_actual():+,.2f}  "
             f"explained={self.total_explained():+,.2f}  residual={self.total_residual():+,.2f}"
-            f"  ({self.total_residual_bp():+.1f}bp of NAV)"
+            f" +- {2 * self.total_residual_se:,.2f}"
+            f"  ({self.total_residual_bp():+.1f} +- {self._bp(2 * self.total_residual_se):.1f}bp"
+            f" of NAV, 2 SE)"
         )
         if self.by_position_residual:
             lines.append("  residual by position:")
             for pid, r in sorted(self.by_position_residual.items(), key=lambda kv: -abs(kv[1])):
                 bp = self._bp(r)
-                lines.append(f"    {pid}: {r:+,.2f}  ({bp:+.1f}bp of NAV)")
-        if self.breaches:
-            for b in self.breaches:
-                lines.append(f"  ALERT: {b}")
-        else:
+                se = self.by_position_residual_se.get(pid, 0.0)
+                lines.append(
+                    f"    {pid}: {r:+,.2f} +- {2 * se:,.2f}  "
+                    f"({bp:+.1f} +- {self._bp(2 * se):.1f}bp of NAV)"
+                )
+        for b in self.breaches:
+            lines.append(f"  ALERT: {b}")
+        for i in self.inconclusive:
+            lines.append(f"  INCONCLUSIVE: {i}")
+        if not self.breaches and not self.inconclusive:
             lines.append(f"  no residual breaches (threshold {RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp)")
         for name, reason in self.skipped.items():
             lines.append(f"  SKIPPED {name}: {reason}")
@@ -255,6 +272,43 @@ def missing_market_data(cfg: BaseConfig, asof: dt.date, portfolio: Portfolio) ->
             if not (partition.exists() and any(partition.glob("*.parquet"))):
                 missing.append(f"{label} {u}")
     return missing
+
+
+def _standard_error(per_batch: np.ndarray) -> float:
+    """MC standard error of the mean of `per_batch` (randomized QMC sub-runs)."""
+    if len(per_batch) < 2:
+        return 0.0
+    return float(np.std(per_batch, ddof=1) / np.sqrt(len(per_batch)))
+
+
+def _batch_residuals(
+    step: str,
+    m_prev: PositionMark,
+    m_cur: PositionMark,
+    days_elapsed: int,
+    state_prev: MarketState,
+    state_cur: MarketState,
+) -> np.ndarray | None:
+    """One residual per RQMC sub-run, or `None` for a closed-form position. The
+    explained P&L is the same formula as `_explained_for_step`, applied to each
+    sub-run's own price and Greeks."""
+    if not m_prev.batches or not m_cur.batches:
+        return None
+    out = []
+    for b_prev, b_cur in zip(m_prev.batches, m_cur.batches, strict=True):
+        sub_prev = dataclasses.replace(
+            m_prev,
+            price=b_prev["price"],
+            delta=b_prev["delta"],
+            gamma=b_prev["gamma"],
+            vega=b_prev["vega"],
+            vanna=b_prev["vanna"],
+            volga=b_prev["volga"],
+            batches=None,
+        )
+        explained = _explained_for_step(step, sub_prev, days_elapsed, state_prev, state_cur)
+        out.append((b_cur["price"] - b_prev["price"]) - explained)
+    return np.array(out)
 
 
 # How far back the daily run looks for a usable day0 across failed-ingest days.
@@ -319,12 +373,21 @@ def run_pnl_explain(
         )
         return result
 
+    # RQMC sub-runs (see `portfolio.mark.rqmc_greeks`): each MC-priced position
+    # carries one set of values per sub-run, on the same sub-run seeds in all
+    # five states. Each sub-run gives its own residual; the reported residual is
+    # their mean (exactly the residual of the averaged values) and their spread
+    # gives its standard error. Closed-form positions contribute the same
+    # residual to every sub-run.
+    n_batches = max((len(m.batches) for m in marks[0].values() if m.batches), default=1)
     position_residuals: dict[str, float] = {}
+    position_batches: dict[str, np.ndarray] = {}
 
     for step_idx, step in enumerate(STEP_NAMES):
         marks_prev, marks_cur = marks[step_idx], marks[step_idx + 1]
         actual_total = 0.0
         explained_total = 0.0
+        step_batches = np.zeros(n_batches)
 
         for pid in priced_all:
             m_prev, m_cur = marks_prev[pid], marks_cur[pid]
@@ -336,10 +399,28 @@ def run_pnl_explain(
             explained_total += explained
             position_residuals[pid] = position_residuals.get(pid, 0.0) + (actual - explained)
 
+            batches = _batch_residuals(
+                step, m_prev, m_cur, days_elapsed, states[step_idx], states[step_idx + 1]
+            )
+            per_batch = batches if batches is not None else np.full(n_batches, actual - explained)
+            step_batches += per_batch
+            position_batches[pid] = position_batches.get(pid, np.zeros(n_batches)) + per_batch
+
         result.steps.append(
-            StepResult(step=step, actual_pnl=actual_total, explained_pnl=explained_total)
+            StepResult(
+                step=step,
+                actual_pnl=actual_total,
+                explained_pnl=explained_total,
+                residual_se=_standard_error(step_batches),
+            )
         )
 
+    result.by_position_residual_se = {
+        pid: _standard_error(v) for pid, v in position_batches.items()
+    }
+    result.total_residual_se = _standard_error(
+        np.sum(list(position_batches.values()), axis=0) if position_batches else np.zeros(1)
+    )
     result.by_position_residual = position_residuals
     result.nav = sum(m.price for m in marks[-1].values())
     result.breaches = _detect_breaches(result)
@@ -347,23 +428,46 @@ def run_pnl_explain(
     return result
 
 
+def _classify(dollars: float, se: float, nav: float, label: str) -> tuple[str | None, str | None]:
+    """(alert, inconclusive) message for one residual, at most one non-None.
+
+    Breach beyond noise (planning/pnl_explain_noise_plan.md, user decision
+    2026-10-05): an alert only when the residual exceeds the threshold even
+    after allowing 2 standard errors of Monte Carlo noise. If the residual
+    clears that bar it is an alert however noisy it is. Otherwise, if 2 SE alone
+    is wider than the threshold, the residual cannot be told apart from noise
+    either way: inconclusive, not an alert and not a clean pass."""
+    threshold = RESIDUAL_ALERT_THRESHOLD_BP * nav / 10_000.0 if nav else 0.0
+    bp = 10_000.0 * dollars / nav if nav else 0.0
+    band_bp = 10_000.0 * 2 * se / nav if nav else 0.0
+    shown = f"{label} residual {bp:+.1f}bp of NAV (+- {band_bp:.1f}bp, 2 SE)"
+    if abs(dollars) - 2 * se > threshold:
+        return f"{shown} exceeds the {RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp threshold", None
+    if 2 * se > threshold:
+        return None, (
+            f"{shown}: Monte Carlo noise is wider than the "
+            f"{RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp threshold"
+        )
+    return None, None
+
+
 def _detect_breaches(result: PnLExplainResult) -> list[str]:
     """README 12.3: 'set a threshold (e.g. 5bp of NAV) and generate an alert when
     breached' — applied to both the total residual and, per position, the same
-    convention. Returns human-readable breach descriptions, empty if none."""
-    breaches = []
-    total_bp = result.total_residual_bp()
-    if abs(total_bp) > RESIDUAL_ALERT_THRESHOLD_BP:
-        breaches.append(
-            f"total residual {total_bp:+.1f}bp of NAV exceeds the "
-            f"{RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp threshold"
-        )
-    for pid, bp in sorted(result.by_position_residual_bp().items()):
-        if abs(bp) > RESIDUAL_ALERT_THRESHOLD_BP:
-            breaches.append(
-                f"position {pid} residual {bp:+.1f}bp of NAV exceeds the "
-                f"{RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp threshold"
-            )
+    convention, beyond Monte Carlo noise (see `_classify`). Returns the alert
+    messages and sets `result.inconclusive` for noise-dominated residuals."""
+    breaches, inconclusive = [], []
+    checks = [("total", result.total_residual(), result.total_residual_se)] + [
+        (f"position {pid}", r, result.by_position_residual_se.get(pid, 0.0))
+        for pid, r in sorted(result.by_position_residual.items())
+    ]
+    for label, dollars, se in checks:
+        alert, unclear = _classify(dollars, se, result.nav, label)
+        if alert:
+            breaches.append(alert)
+        if unclear:
+            inconclusive.append(unclear)
+    result.inconclusive = inconclusive
     return breaches
 
 
@@ -378,6 +482,8 @@ def _persist(result: PnLExplainResult, curated_root: Path) -> None:
             "actual_pnl": s.actual_pnl,
             "explained_pnl": s.explained_pnl,
             "residual": s.residual,
+            "residual_se": s.residual_se,
+            "total_residual_se": result.total_residual_se,
             "nav": result.nav,
         }
         for s in result.steps
@@ -392,6 +498,7 @@ def _persist(result: PnLExplainResult, curated_root: Path) -> None:
                 "day0": result.day0,
                 "position_id": pid,
                 "residual": r,
+                "residual_se": result.by_position_residual_se.get(pid, 0.0),
             }
             for pid, r in result.by_position_residual.items()
         ]
