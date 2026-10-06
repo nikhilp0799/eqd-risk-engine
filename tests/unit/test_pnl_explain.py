@@ -420,3 +420,140 @@ def test_latest_complete_day_before_skips_days_without_their_own_option_data(tmp
 def test_latest_complete_day_before_is_none_without_any_complete_day(tmp_path):
     portfolio = Portfolio.from_yaml(_vanilla_book(tmp_path))
     assert latest_complete_day_before(_cfg(tmp_path), DAY1, portfolio) is None
+
+
+# --- noise-aware residual: RQMC sub-runs (2026-10-05) -------------------------
+
+
+def test_rqmc_greeks_reports_the_mean_of_independent_sub_runs():
+    from types import SimpleNamespace
+
+    from eqdrisk.portfolio.mark import GREEK_FIELDS, MCSettings, rqmc_greeks
+
+    seen = []
+
+    def fake_greeks(n_paths, seed):
+        seen.append((n_paths, seed))
+        v = float(seed % 97)
+        return SimpleNamespace(**{f: v for f in GREEK_FIELDS})
+
+    mean, batches, stderr = rqmc_greeks(fake_greeks, MCSettings(n_paths=800, n_batches=4), 2.0)
+
+    assert len(batches) == 4 and len({s for _, s in seen}) == 4
+    assert all(n == 200 for n, _ in seen)
+    assert mean["price"] == pytest.approx(np.mean([b["price"] for b in batches]))
+    assert batches[0]["delta"] == 2.0 * (seen[0][1] % 97)  # scaled by quantity
+    assert stderr == pytest.approx(np.std([b["price"] for b in batches], ddof=1) / 2.0)
+
+
+def test_one_batch_is_exactly_the_old_single_run():
+    from eqdrisk.portfolio.mark import batch_seeds
+
+    assert batch_seeds(12345, 1) == [12345]
+    assert batch_seeds(12345, 16) == batch_seeds(12345, 16)  # reproducible
+    assert len(set(batch_seeds(12345, 16))) == 16
+
+
+def test_reported_residual_is_exactly_the_mean_of_sub_run_residuals():
+    """The identity that makes the error bar valid: price and every Greek enter
+    the residual linearly, so averaging sub-runs then explaining equals
+    explaining each sub-run then averaging."""
+    from types import SimpleNamespace
+
+    from eqdrisk.portfolio.mark import PositionMark
+    from eqdrisk.pricing.pnl_explain import _batch_residuals, _explained_for_step
+
+    rng = np.random.default_rng(0)
+
+    def mark(price_shift):
+        batches = [
+            {
+                f: float(v)
+                for f, v in zip(
+                    ("price", "delta", "gamma", "vega", "vanna", "volga"),
+                    rng.normal([100 + price_shift, 0.5, 0.02, 3.0, 0.1, 1.0], 0.3),
+                    strict=True,
+                )
+            }
+            for _ in range(6)
+        ]
+        mean = {f: float(np.mean([b[f] for b in batches])) for f in batches[0]}
+        return PositionMark(
+            position_id="B1",
+            type="barrier",
+            underlying="X",
+            expiry=DAY1,
+            T=0.5,
+            batches=batches,
+            **mean,
+        )
+
+    prev, cur = mark(0.0), mark(1.5)
+    s_prev, s_cur = SimpleNamespace(spot={"X": 100.0}), SimpleNamespace(spot={"X": 104.0})
+    per_batch = _batch_residuals("spot", prev, cur, 1, s_prev, s_cur)
+    whole = (cur.price - prev.price) - _explained_for_step("spot", prev, 1, s_prev, s_cur)
+    assert per_batch is not None
+    assert per_batch.mean() == pytest.approx(whole, rel=1e-12)
+
+
+def test_alert_rule_is_breach_beyond_noise():
+    from eqdrisk.pricing.pnl_explain import _classify
+
+    nav = 1_000_000.0  # 5bp threshold = $500
+    alert, unclear = _classify(900.0, 100.0, nav, "total")  # 900 - 200 > 500
+    assert alert and unclear is None
+    alert, unclear = _classify(600.0, 100.0, nav, "total")  # 600 - 200 < 500, 200 < 500
+    assert alert is None and unclear is None
+    alert, unclear = _classify(300.0, 400.0, nav, "total")  # band 800 wider than 500
+    assert alert is None and "Monte Carlo noise" in unclear
+    alert, unclear = _classify(5_000.0, 400.0, nav, "total")  # huge even net of noise
+    assert alert and unclear is None
+
+
+def test_explain_with_an_mc_exotic_reports_a_standard_error(tmp_path, monkeypatch):
+    import functools
+
+    import eqdrisk.pricing.pnl_explain as pe
+    from eqdrisk.portfolio.mark import MCSettings, mark_with_state
+
+    _write_both_days(tmp_path, vol_bump_day1=0.02)
+    book = _write_portfolio_yaml(
+        tmp_path,
+        [
+            {
+                "id": "B1",
+                "type": "barrier",
+                "underlying": UNDERLYING,
+                "sub": "down_and_in_put",
+                "strike": 100.0,
+                "barrier": 80.0,
+                "expiry": PILLAR_EXPIRIES[0].isoformat(),
+                "qty": 10,
+            },
+            {
+                "id": "V1",
+                "type": "vanilla",
+                "underlying": UNDERLYING,
+                "cp": "C",
+                "strike": 100.0,
+                "expiry": PILLAR_EXPIRIES[0].isoformat(),
+                "qty": 10,
+            },
+        ],
+    )
+    cheap = MCSettings(n_paths=2_048, barrier_n_steps=16, n_batches=4)
+    monkeypatch.setattr(
+        pe, "mark_with_state", functools.partial(mark_with_state, mc_settings=cheap)
+    )
+
+    result = run_pnl_explain(_cfg(tmp_path), DAY0, DAY1, book)
+
+    assert not result.skipped
+    assert result.by_position_residual_se["B1"] > 0
+    assert result.by_position_residual_se["V1"] == 0.0  # closed form: no MC noise
+    assert result.total_residual_se > 0
+    assert "2 SE" in result.render()
+    stored = store.query(
+        "SELECT * FROM t", views={"t": str(tmp_path / "pnl_explain_by_position")}
+    ).to_pandas()
+    assert set(stored.columns) >= {"residual", "residual_se"}

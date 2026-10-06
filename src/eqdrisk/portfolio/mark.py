@@ -40,8 +40,10 @@ is the convenience wrapper that does both for the plain, unshocked daily mark.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -93,6 +95,12 @@ MC_N_PATHS = 50_000
 BARRIER_N_STEPS = 64
 AUTOCALL_N_STEPS_PER_PERIOD = 8
 MC_SEED = 12345
+# Randomized QMC (planning/pnl_explain_noise_plan.md): MC exotics are priced as
+# this many independently scrambled Sobol sub-runs and averaged, so their
+# spread gives a valid Monte Carlo standard error (contiguous blocks of ONE
+# Sobol set are not independent samples). 16 x 4,096 paths = 65,536, the same
+# path count 50,000 already rounded up to, so the daily cost is unchanged.
+MC_N_BATCHES = 16
 
 
 @dataclass
@@ -106,6 +114,44 @@ class MCSettings:
     barrier_n_steps: int = BARRIER_N_STEPS
     autocall_n_steps_per_period: int = AUTOCALL_N_STEPS_PER_PERIOD
     seed: int = MC_SEED
+    # 1 = a single run on `seed` (no standard error), exactly the pre-RQMC behavior.
+    n_batches: int = MC_N_BATCHES
+
+
+GREEK_FIELDS = ("price", "delta", "gamma", "vega", "vanna", "volga")
+
+
+def batch_seeds(seed: int, n_batches: int) -> list[int]:
+    """Independent, reproducible scrambling seeds for each RQMC sub-run. The same
+    `seed` gives the same list, so every state of a P&L explain reuses the same
+    sub-run seeds and common random numbers still hold across states."""
+    if n_batches == 1:
+        return [seed]
+    return [int(x) for x in np.random.SeedSequence(seed).generate_state(n_batches)]
+
+
+def rqmc_greeks(
+    greeks_fn: Callable[[int, int], Any], mc: MCSettings, scale: float = 1.0
+) -> tuple[dict[str, float], list[dict[str, float]], float | None]:
+    """Run `greeks_fn(n_paths, seed)` once per RQMC sub-run and average.
+
+    Returns (mean values, per-sub-run values, standard error of the price), all
+    times `scale` (a position quantity). Every Greek here is a finite
+    difference of prices, so the mean of the sub-runs' Greeks is the Greek of
+    the averaged prices: the averages are what the single run used to report,
+    just from independent pieces."""
+    per_batch_paths = max(1, mc.n_paths // mc.n_batches)
+    batches = []
+    for seed in batch_seeds(mc.seed, mc.n_batches):
+        g = greeks_fn(per_batch_paths, seed)
+        batches.append({f: scale * float(getattr(g, f)) for f in GREEK_FIELDS})
+    mean = {f: float(np.mean([b[f] for b in batches])) for f in GREEK_FIELDS}
+    stderr = (
+        float(np.std([b["price"] for b in batches], ddof=1) / np.sqrt(len(batches)))
+        if len(batches) > 1
+        else None
+    )
+    return mean, batches, stderr
 
 
 def _expiry_bucket(T: float) -> str:
@@ -142,6 +188,8 @@ class PositionMark:
     k: float | None = None
     stderr: float | None = None
     note: str | None = None
+    # RQMC sub-run values (MC exotics only, see `rqmc_greeks`); never persisted.
+    batches: list[dict[str, float]] | None = None
 
     @property
     def expiry_bucket(self) -> str:
@@ -538,17 +586,21 @@ def _mark_barrier(
     r = curve.zero_rate(T)
     q = _implied_q(spot, forward, r, T)
     grid = shock_local_vol_grid(grid, fwd_curve, shock)
-    greeks = down_and_in_put_greeks(
-        spot,
-        p.strike,
-        p.barrier,
-        T,
-        grid,
-        r,
-        q,
-        mc_settings.n_paths,
-        mc_settings.barrier_n_steps,
-        mc_settings.seed,
+    mean, batches, stderr = rqmc_greeks(
+        lambda n_paths, seed: down_and_in_put_greeks(
+            spot,
+            p.strike,
+            p.barrier,
+            T,
+            grid,
+            r,
+            q,
+            n_paths,
+            mc_settings.barrier_n_steps,
+            seed,
+        ),
+        mc_settings,
+        scale=p.qty,
     )
     return PositionMark(
         position_id=p.id,
@@ -556,13 +608,15 @@ def _mark_barrier(
         underlying=p.underlying,
         expiry=p.expiry,
         T=T,
-        price=p.qty * greeks.price,
-        delta=p.qty * greeks.delta,
-        gamma=p.qty * greeks.gamma,
-        vega=p.qty * greeks.vega,
-        vanna=p.qty * greeks.vanna,
-        volga=p.qty * greeks.volga,
+        price=mean["price"],
+        delta=mean["delta"],
+        gamma=mean["gamma"],
+        vega=mean["vega"],
+        vanna=mean["vanna"],
+        volga=mean["volga"],
         k=float(np.log(p.strike / spot)),
+        stderr=stderr,
+        batches=batches,
     )
 
 
@@ -593,15 +647,18 @@ def _mark_autocall(
         coupon_rate=p.coupon,
         obs_times=obs_times,
     )
-    greeks = autocallable_greeks(
-        spec,
-        spot,
-        grid,
-        r,
-        q,
-        mc_settings.n_paths,
-        mc_settings.autocall_n_steps_per_period,
-        mc_settings.seed,
+    mean, batches, stderr = rqmc_greeks(
+        lambda n_paths, seed: autocallable_greeks(
+            spec,
+            spot,
+            grid,
+            r,
+            q,
+            n_paths,
+            mc_settings.autocall_n_steps_per_period,
+            seed,
+        ),
+        mc_settings,
     )
     return PositionMark(
         position_id=p.id,
@@ -609,13 +666,15 @@ def _mark_autocall(
         underlying=p.underlying,
         expiry=p.expiry,
         T=T,
-        price=greeks.price,
-        delta=greeks.delta,
-        gamma=greeks.gamma,
-        vega=greeks.vega,
-        vanna=greeks.vanna,
-        volga=greeks.volga,
+        price=mean["price"],
+        delta=mean["delta"],
+        gamma=mean["gamma"],
+        vega=mean["vega"],
+        vanna=mean["vanna"],
+        volga=mean["volga"],
         k=None,
+        stderr=stderr,
+        batches=batches,
     )
 
 

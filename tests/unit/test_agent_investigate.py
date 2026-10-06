@@ -103,6 +103,8 @@ def test_historical_trend_summarizes_real_persisted_residuals(tmp_path):
                 "actual_pnl": 100.0,
                 "explained_pnl": 100.0 - i,
                 "residual": float(i),
+                "residual_se": 0.0,
+                "total_residual_se": 0.0,
                 "nav": 1_000_000.0,
             }
         )
