@@ -8,4 +8,4 @@ paths:
 calendar: "NYSE"
 daycount: "ACT/365F"
 canonical_snap_time: "16:00:00"   # ET — SPX settles 4:15pm, index prints 4:00pm; see Step 1.4
-snap_tolerance_minutes: 15
+snap_tolerance_minutes: 45   # the launchd job deliberately runs at 16:30 (docs/AUTOMATION.md); this flags genuinely late runs (e.g. a Mac asleep at 16:30), not the planned 30-min lag

@@ -24,6 +24,8 @@ finding to review, not a crash.
 - **`~/Library/LaunchAgents/com.eqdrisk.daily-ingest.plist`** — a launchd agent that runs the script
   Mon-Fri at 16:30 local time (30 minutes after the 16:00 ET close, matching `canonical_snap_time`
   in `configs/base.yaml`). Loaded via `launchctl load ~/Library/LaunchAgents/com.eqdrisk.daily-ingest.plist`.
+  `snap_tolerance_minutes` is 45 so this planned 30-minute lag does not raise the capture-time
+  alert every day (it did at 15); the alert still fires for genuinely late runs.
   launchd's own behavior: if the Mac is asleep at 16:30, it runs the job as soon as the machine
   wakes up next (not silently skipped, unlike plain cron) — but it still won't run if the Mac was
   fully shut down the whole time.

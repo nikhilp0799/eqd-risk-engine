@@ -39,10 +39,12 @@ is the convenience wrapper that does both for the plain, unshocked daily mark.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -62,8 +64,12 @@ from eqdrisk.portfolio.schema import (
     VanillaPosition,
     VarSwapPosition,
 )
-from eqdrisk.pricing.autocallable import AutocallableSpec, autocallable_greeks
-from eqdrisk.pricing.barrier_mc import down_and_in_put_greeks
+from eqdrisk.pricing.autocallable import (
+    AutocallableSpec,
+    autocallable_greeks,
+    price_autocallable,
+)
+from eqdrisk.pricing.barrier_mc import down_and_in_put_greeks, simulate_down_and_in_put
 from eqdrisk.pricing.blackscholes import compute_greeks
 from eqdrisk.pricing.varswap import fair_variance_strike_from_w_func
 from eqdrisk.stress.shock import MarketShock, shock_local_vol_grid, shocked_spot, shocked_w
@@ -116,9 +122,19 @@ class MCSettings:
     seed: int = MC_SEED
     # 1 = a single run on `seed` (no standard error), exactly the pre-RQMC behavior.
     n_batches: int = MC_N_BATCHES
+    # Exotic Greek bumps (planning/pnl_explain_noise_plan.md, Part A): 1% / 1 vol
+    # point made gamma and volga pure MC noise on barrier-laden payoffs (seed-to-
+    # seed variation 100-2,300%); 5% / 3 points cut the P&L-explain noise on
+    # P008 by 40-100x on real data. Set here, not as pricing-function defaults,
+    # which the deep-hedging benchmark depends on.
+    exotic_spot_bump_frac: float = 0.05
+    exotic_vol_bump: float = 0.03
+    # Exotic theta by one-day revaluation (same seed): the time step used to
+    # explain nothing for MC exotics. About one extra reprice per mark.
+    exotic_theta: bool = True
 
 
-GREEK_FIELDS = ("price", "delta", "gamma", "vega", "vanna", "volga")
+GREEK_FIELDS = ("price", "delta", "gamma", "vega", "vanna", "volga", "theta")
 
 
 def batch_seeds(seed: int, n_batches: int) -> list[int]:
@@ -144,7 +160,7 @@ def rqmc_greeks(
     batches = []
     for seed in batch_seeds(mc.seed, mc.n_batches):
         g = greeks_fn(per_batch_paths, seed)
-        batches.append({f: scale * float(getattr(g, f)) for f in GREEK_FIELDS})
+        batches.append({f: scale * float(getattr(g, f, 0.0)) for f in GREEK_FIELDS})
     mean = {f: float(np.mean([b[f] for b in batches])) for f in GREEK_FIELDS}
     stderr = (
         float(np.std([b["price"] for b in batches], ddof=1) / np.sqrt(len(batches)))
@@ -190,6 +206,10 @@ class PositionMark:
     note: str | None = None
     # RQMC sub-run values (MC exotics only, see `rqmc_greeks`); never persisted.
     batches: list[dict[str, float]] | None = None
+    # Times (years) at which the position's vol exposure sits: an autocallable's
+    # observation dates, otherwise its maturity. The P&L explain measures the
+    # day's vol move there. None = [T].
+    vol_times: list[float] | None = None
 
     @property
     def expiry_bucket(self) -> str:
@@ -586,8 +606,10 @@ def _mark_barrier(
     r = curve.zero_rate(T)
     q = _implied_q(spot, forward, r, T)
     grid = shock_local_vol_grid(grid, fwd_curve, shock)
-    mean, batches, stderr = rqmc_greeks(
-        lambda n_paths, seed: down_and_in_put_greeks(
+    T_next = year_fraction(asof + dt.timedelta(days=1), p.expiry, cfg.daycount)
+
+    def greeks_fn(n_paths: int, seed: int) -> SimpleNamespace:
+        g = down_and_in_put_greeks(
             spot,
             p.strike,
             p.barrier,
@@ -598,10 +620,20 @@ def _mark_barrier(
             n_paths,
             mc_settings.barrier_n_steps,
             seed,
-        ),
-        mc_settings,
-        scale=p.qty,
-    )
+            spot_bump_frac=mc_settings.exotic_spot_bump_frac,
+            vol_bump=mc_settings.exotic_vol_bump,
+        )
+        theta = 0.0
+        if mc_settings.exotic_theta and T_next > 0:
+            sim = simulate_down_and_in_put(
+                spot, p.barrier, T_next, grid, r, q, n_paths, mc_settings.barrier_n_steps, seed
+            )
+            theta = sim.price_and_stderr(p.strike, float(np.exp(-r * T_next)))[0] - g.price
+        return SimpleNamespace(
+            **{f: getattr(g, f) for f in GREEK_FIELDS if f != "theta"}, theta=theta
+        )
+
+    mean, batches, stderr = rqmc_greeks(greeks_fn, mc_settings, scale=p.qty)
     return PositionMark(
         position_id=p.id,
         type="barrier",
@@ -614,6 +646,7 @@ def _mark_barrier(
         vega=mean["vega"],
         vanna=mean["vanna"],
         volga=mean["volga"],
+        theta=mean["theta"],
         k=float(np.log(p.strike / spot)),
         stderr=stderr,
         batches=batches,
@@ -647,8 +680,13 @@ def _mark_autocall(
         coupon_rate=p.coupon,
         obs_times=obs_times,
     )
-    mean, batches, stderr = rqmc_greeks(
-        lambda n_paths, seed: autocallable_greeks(
+    next_day = asof + dt.timedelta(days=1)
+    spec_next = dataclasses.replace(
+        spec, obs_times=_quarterly_obs_times(next_day, p.expiry, cfg.daycount)
+    )
+
+    def greeks_fn(n_paths: int, seed: int) -> SimpleNamespace:
+        g = autocallable_greeks(
             spec,
             spot,
             grid,
@@ -657,9 +695,20 @@ def _mark_autocall(
             n_paths,
             mc_settings.autocall_n_steps_per_period,
             seed,
-        ),
-        mc_settings,
-    )
+            spot_bump_frac=mc_settings.exotic_spot_bump_frac,
+            vol_bump=mc_settings.exotic_vol_bump,
+        )
+        theta = 0.0
+        if mc_settings.exotic_theta and len(spec_next.obs_times):
+            price_next = price_autocallable(
+                spec_next, spot, grid, r, q, n_paths, mc_settings.autocall_n_steps_per_period, seed
+            )[0]
+            theta = price_next - g.price
+        return SimpleNamespace(
+            **{f: getattr(g, f) for f in GREEK_FIELDS if f != "theta"}, theta=theta
+        )
+
+    mean, batches, stderr = rqmc_greeks(greeks_fn, mc_settings)
     return PositionMark(
         position_id=p.id,
         type="autocall",
@@ -672,9 +721,11 @@ def _mark_autocall(
         vega=mean["vega"],
         vanna=mean["vanna"],
         volga=mean["volga"],
+        theta=mean["theta"],
         k=None,
         stderr=stderr,
         batches=batches,
+        vol_times=[float(t) for t in obs_times],
     )
 
 
