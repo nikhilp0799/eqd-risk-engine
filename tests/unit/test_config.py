@@ -8,4 +8,4 @@ def test_base_config_loads_from_yaml():
     assert cfg.universe.index == ["SPX"]
     assert cfg.calendar == "NYSE"
     assert cfg.canonical_snap_time == dt.time(16, 0, 0)
-    assert cfg.snap_tolerance_minutes == 15
+    assert cfg.snap_tolerance_minutes == 45

@@ -88,6 +88,48 @@ def _atm_iv(surface: pd.DataFrame, T: float) -> float | None:
     return float((max(lv.w, 1e-12) / T) ** 0.5)
 
 
+def _vol_move(
+    m: PositionMark, surface_prev: pd.DataFrame, surface_cur: pd.DataFrame
+) -> float | None:
+    """The day's ATM vol move where the position's vol exposure sits (its
+    `vol_times`), measured only at maturities BOTH days' surfaces cover.
+
+    Beyond its last pillar a surface holds total variance flat (zero forward
+    vol), so when the long end appears or disappears between two days (thinly
+    traded long-dated quotes passing the quality filters one day and not the
+    next) an ATM vol read beyond it jumps for no market reason: measured on
+    real NVDA data, a fake +12 vol-point move for the 1.88y autocallable on
+    2026-09-03 and 09-17. Clamping to the common coverage removes that."""
+    t_last = min(float(surface_prev["T"].max()), float(surface_cur["T"].max()))
+    moves = []
+    for t in m.vol_times or [m.T]:
+        t_eff = min(t, t_last)
+        a_prev, a_cur = _atm_iv(surface_prev, t_eff), _atm_iv(surface_cur, t_eff)
+        if a_prev is None or a_cur is None:
+            return None
+        moves.append(a_cur - a_prev)
+    return float(np.mean(moves)) if moves else None
+
+
+# Change in the surface's longest calibrated maturity (years) treated as a
+# coverage change worth flagging for a position whose exposure extends beyond it.
+COVERAGE_CHANGE_FLAG_YEARS = 0.1
+
+
+def _coverage_note(
+    m: PositionMark, surface_prev: pd.DataFrame, surface_cur: pd.DataFrame
+) -> str | None:
+    t_prev, t_cur = float(surface_prev["T"].max()), float(surface_cur["T"].max())
+    if max(m.vol_times or [m.T]) <= min(t_prev, t_cur):
+        return None
+    if abs(t_cur - t_prev) <= COVERAGE_CHANGE_FLAG_YEARS:
+        return None
+    return (
+        f"surface coverage changed for {m.underlying} (longest maturity {t_prev:.2f}y -> "
+        f"{t_cur:.2f}y); residual may reflect data coverage, not market moves"
+    )
+
+
 def _marks_by_id(result: PortfolioMarkResult) -> dict[str, PositionMark]:
     return {m.position_id: m for m in result.marks}
 
@@ -103,7 +145,10 @@ def _explained_for_step(
         return 0.0  # always marked to 0 by construction (see module docstring) — nothing to explain
 
     if step == "time":
-        return m_prev.theta * days_elapsed if m_prev.type == "vanilla" else 0.0
+        # Exotic theta (one-day revaluation) since 2026-10-07; before, the time
+        # step explained nothing for MC exotics.
+        explains_time = m_prev.type in ("vanilla", "barrier", "autocall")
+        return m_prev.theta * days_elapsed if explains_time else 0.0
 
     if step == "rates_divs":
         if m_prev.type != "vanilla":
@@ -125,11 +170,9 @@ def _explained_for_step(
         u = m_prev.underlying
         if u not in state_prev.surface or u not in state_cur.surface:
             return 0.0
-        atm_prev = _atm_iv(state_prev.surface[u], m_prev.T)
-        atm_cur = _atm_iv(state_cur.surface[u], m_prev.T)
-        if atm_prev is None or atm_cur is None:
+        d_sigma = _vol_move(m_prev, state_prev.surface[u], state_cur.surface[u])
+        if d_sigma is None:
             return 0.0
-        d_sigma = atm_cur - atm_prev
         return m_prev.vega * d_sigma + 0.5 * m_prev.volga * d_sigma**2
 
     raise ValueError(f"unknown step: {step}")  # pragma: no cover - exhaustive over STEP_NAMES
@@ -162,6 +205,8 @@ class PnLExplainResult:
     # Residuals whose Monte Carlo noise band (2 SE) is itself wider than the
     # alert threshold: neither an alert nor a clean bill of health.
     inconclusive: list[str] = field(default_factory=list)
+    # Per-position caveats (e.g. surface coverage changed between the two days).
+    notes: dict[str, str] = field(default_factory=dict)
     skipped: dict[str, str] = field(default_factory=dict)
 
     def total_actual(self) -> float:
@@ -211,6 +256,8 @@ class PnLExplainResult:
             lines.append(f"  ALERT: {b}")
         for i in self.inconclusive:
             lines.append(f"  INCONCLUSIVE: {i}")
+        for pid, note in sorted(self.notes.items()):
+            lines.append(f"  NOTE {pid}: {note}")
         if not self.breaches and not self.inconclusive:
             lines.append(f"  no residual breaches (threshold {RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp)")
         for name, reason in self.skipped.items():
@@ -415,6 +462,18 @@ def run_pnl_explain(
             )
         )
 
+    for pid in priced_all:
+        m = marks[3][pid]
+        u = m.underlying
+        if (
+            m.type in ("vanilla", "barrier", "autocall")
+            and u in states[3].surface
+            and u in states[4].surface
+        ):
+            note = _coverage_note(m, states[3].surface[u], states[4].surface[u])
+            if note:
+                result.notes[pid] = note
+
     result.by_position_residual_se = {
         pid: _standard_error(v) for pid, v in position_batches.items()
     }
@@ -499,6 +558,7 @@ def _persist(result: PnLExplainResult, curated_root: Path) -> None:
                 "position_id": pid,
                 "residual": r,
                 "residual_se": result.by_position_residual_se.get(pid, 0.0),
+                "note": result.notes.get(pid),
             }
             for pid, r in result.by_position_residual.items()
         ]

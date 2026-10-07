@@ -336,6 +336,9 @@ PNL_EXPLAIN_BY_POSITION_SCHEMA = pa.schema(
         ("position_id", pa.string()),
         ("residual", pa.float64()),
         ("residual_se", pa.float64()),  # see PNL_EXPLAIN_SCHEMA
+        # Caveat for this position's residual, e.g. the surface's long end changed
+        # between the two days. Null when there is none.
+        ("note", pa.string()),
     ]
 )
 PNL_EXPLAIN_BY_POSITION_REQUIRED_NOT_NULL = ["asof_date", "day0", "position_id", "residual"]

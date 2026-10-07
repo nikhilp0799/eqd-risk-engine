@@ -47,7 +47,14 @@ TERM_INVERSION_SHOCK = 0.5
 # One plain run per cell (no RQMC sub-runs): the stress grid needs no standard
 # errors, and this keeps its cost and results exactly as before.
 GRID_MC_SETTINGS = MCSettings(
-    n_paths=8_000, barrier_n_steps=32, autocall_n_steps_per_period=4, n_batches=1
+    n_paths=8_000,
+    barrier_n_steps=32,
+    autocall_n_steps_per_period=4,
+    n_batches=1,
+    # The grid reports prices only: keep its original bumps and skip exotic theta.
+    exotic_spot_bump_frac=0.01,
+    exotic_vol_bump=0.01,
+    exotic_theta=False,
 )
 
 

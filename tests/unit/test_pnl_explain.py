@@ -557,3 +557,96 @@ def test_explain_with_an_mc_exotic_reports_a_standard_error(tmp_path, monkeypatc
         "SELECT * FROM t", views={"t": str(tmp_path / "pnl_explain_by_position")}
     ).to_pandas()
     assert set(stored.columns) >= {"residual", "residual_se"}
+
+
+# --- Part A+B: vol move on common coverage, exotic theta, coverage flag (2026-10-07) ---
+
+
+def _surface_tagged(tag, t_max):
+    return pd.DataFrame({"T": [0.1, t_max], "tag": [tag, tag]})
+
+
+def test_vol_move_is_measured_only_where_both_surfaces_have_data(monkeypatch):
+    """The fake +12pt move: on a short-surface day, ATM vol beyond the last
+    pillar is an extrapolation artefact. Every exposure time is clamped to the
+    longest maturity BOTH days cover."""
+    import eqdrisk.pricing.pnl_explain as pe
+    from eqdrisk.portfolio.mark import PositionMark
+
+    calls = []
+
+    def fake_atm(surface, t):
+        calls.append((surface["tag"].iloc[0], round(t, 6)))
+        return 0.30 + (0.01 if surface["tag"].iloc[0] == "cur" else 0.0)
+
+    monkeypatch.setattr(pe, "_atm_iv", fake_atm)
+    m = PositionMark(
+        position_id="N",
+        type="autocall",
+        underlying="X",
+        expiry=DAY1,
+        T=1.8,
+        price=1.0,
+        vol_times=[0.25, 1.0, 1.8],
+    )
+    move = pe._vol_move(m, _surface_tagged("prev", 0.5), _surface_tagged("cur", 1.3))
+
+    assert move == pytest.approx(0.01)
+    assert sorted({t for _, t in calls}) == [0.25, 0.5]
+
+
+def test_coverage_note_flags_only_a_real_change_beyond_the_exposure():
+    from eqdrisk.portfolio.mark import PositionMark
+    from eqdrisk.pricing.pnl_explain import _coverage_note
+
+    note_m = PositionMark(
+        position_id="N",
+        type="autocall",
+        underlying="NVDA",
+        expiry=DAY1,
+        T=1.8,
+        price=1.0,
+        vol_times=[0.5, 1.8],
+    )
+    assert "0.54y -> 1.29y" in _coverage_note(
+        note_m, _surface_tagged("a", 0.54), _surface_tagged("b", 1.29)
+    )
+    assert _coverage_note(note_m, _surface_tagged("a", 0.72), _surface_tagged("b", 0.72)) is None
+    short = PositionMark(
+        position_id="V", type="vanilla", underlying="NVDA", expiry=DAY1, T=0.3, price=1.0
+    )
+    assert _coverage_note(short, _surface_tagged("a", 0.54), _surface_tagged("b", 1.29)) is None
+
+
+def test_time_step_now_uses_exotic_theta():
+    from eqdrisk.portfolio.mark import PositionMark
+    from eqdrisk.pricing.pnl_explain import _explained_for_step
+
+    for kind in ("autocall", "barrier", "vanilla"):
+        m = PositionMark(
+            position_id="P", type=kind, underlying="X", expiry=DAY1, T=1.0, price=1.0, theta=-10.0
+        )
+        assert _explained_for_step("time", m, 3, None, None) == -30.0
+    eq = PositionMark(
+        position_id="E", type="equity", underlying="X", expiry=DAY1, T=0.0, price=1.0, theta=-10.0
+    )
+    assert _explained_for_step("time", eq, 3, None, None) == 0.0
+
+
+def test_daily_marking_uses_the_better_conditioned_bumps_but_the_stress_grid_does_not():
+    from eqdrisk.portfolio.mark import MCSettings
+    from eqdrisk.stress.hypothetical_grid import GRID_MC_SETTINGS
+
+    daily = MCSettings()
+    assert (daily.exotic_spot_bump_frac, daily.exotic_vol_bump, daily.exotic_theta) == (
+        0.05,
+        0.03,
+        True,
+    )
+    grid = GRID_MC_SETTINGS
+    assert (
+        grid.exotic_spot_bump_frac,
+        grid.exotic_vol_bump,
+        grid.exotic_theta,
+        grid.n_batches,
+    ) == (0.01, 0.01, False, 1)
