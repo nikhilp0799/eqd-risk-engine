@@ -93,6 +93,9 @@ def _write_forwards(tmp_path, asof, spot, r, q=0.01):
                 "dividend_yield_diff": None,
                 "flag_r2": False,
                 "flag_discount_factor_bp": False,
+                "method": "parity_2p",
+                "dispersion_bp": None,
+                "reliable": True,
             }
         )
     table = validate(pd.DataFrame(rows), FORWARD_SCHEMA, FORWARD_REQUIRED_NOT_NULL)

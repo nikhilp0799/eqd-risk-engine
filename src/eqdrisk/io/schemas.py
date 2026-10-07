@@ -102,6 +102,13 @@ FORWARD_SCHEMA = pa.schema(
         ("dividend_yield_diff", pa.float64()),
         ("flag_r2", pa.bool_()),
         ("flag_discount_factor_bp", pa.bool_()),
+        # 2026-10-07 (planning/input_stability_plan.md): how the forward was fitted
+        # ("parity_2p" | "curve_df"), the strikes' disagreement on it (curve_df
+        # only), and the ONE reliability verdict both the vol surface and the
+        # pricing forward curve use. Null on rows written before then.
+        ("method", pa.string()),
+        ("dispersion_bp", pa.float64()),
+        ("reliable", pa.bool_()),
     ]
 )
 FORWARD_REQUIRED_NOT_NULL = [

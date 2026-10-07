@@ -55,7 +55,7 @@ from eqdrisk.io import store
 from eqdrisk.io.schemas import PORTFOLIO_MARKS_REQUIRED_NOT_NULL, PORTFOLIO_MARKS_SCHEMA, validate
 from eqdrisk.marketdata.calendar import year_fraction
 from eqdrisk.marketdata.curve import Curve, bootstrap_curve
-from eqdrisk.marketdata.forward import ForwardCurve, build_forward_curve
+from eqdrisk.marketdata.forward import ForwardCurve, build_forward_curve, reliable_forwards
 from eqdrisk.portfolio.schema import (
     AutocallPosition,
     BarrierPosition,
@@ -374,6 +374,10 @@ def load_market_state(cfg: BaseConfig, asof: dt.date, portfolio: Portfolio) -> M
                 f"AND underlying = '{u}'",
                 views={"fwd": str(forwards_root)},
             ).to_pandas()
+            # Only forwards the vol surface also accepts (one reliability rule,
+            # planning/input_stability_plan.md C3): pricing used to include fits
+            # hundreds of bp off, so the forward curve's long end jumped daily.
+            fwd = reliable_forwards(fwd)
             if not fwd.empty:
                 forward_curve[u] = build_forward_curve(fwd)
 

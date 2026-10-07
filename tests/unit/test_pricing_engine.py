@@ -76,6 +76,9 @@ def _write_forward(tmp_path):
             "dividend_yield_diff": [None],
             "flag_r2": [False],
             "flag_discount_factor_bp": [False],
+            "method": ["parity_2p"],
+            "dispersion_bp": [None],
+            "reliable": [True],
         }
     )
     table = validate(df, FORWARD_SCHEMA, FORWARD_REQUIRED_NOT_NULL)

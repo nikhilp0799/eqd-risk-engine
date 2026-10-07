@@ -83,6 +83,9 @@ def _write_forwards(tmp_path, asof, spot, r=3.0, q=0.01):
                 "dividend_yield_diff": None,
                 "flag_r2": False,
                 "flag_discount_factor_bp": False,
+                "method": "parity_2p",
+                "dispersion_bp": None,
+                "reliable": True,
             }
         ]
     )
