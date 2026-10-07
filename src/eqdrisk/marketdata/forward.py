@@ -42,6 +42,49 @@ R2_FLAG_THRESHOLD = 0.999
 DISCOUNT_FACTOR_BP_FLAG_THRESHOLD = 5.0
 DIVIDEND_LOOKBACK_DAYS = 370  # trailing ~12mo of announced dividends
 
+# Reliability, ONE definition used by both the vol surface (IV extraction) and the
+# pricing forward curve (planning/input_stability_plan.md, C3).
+# - "parity_2p" (European index options): R^2 and the parity-implied discount
+#   factor's distance from the curve; the original rule (decisions.md, 2026-08-21).
+RELIABLE_R2_THRESHOLD = 0.995
+RELIABLE_BP_THRESHOLD = 150.0
+# - "curve_df" (American single names): how tightly the strikes agree on the
+#   forward. Measured on all stored history (2026-10-07): median 4-27bp, worst
+#   58bp (NVDA beyond 1y); 100bp accepts every observed fit and still rejects a
+#   genuinely broken one. The old DF test rejected 77% of NVDA fits beyond 1y.
+RELIABLE_DISPERSION_BP = 100.0
+
+
+def is_reliable_forward(
+    r_squared: float,
+    discount_factor_diff_bp: float,
+    method: str | None = None,
+    dispersion_bp: float | None = None,
+) -> bool:
+    if method == "curve_df":
+        return dispersion_bp is not None and dispersion_bp <= RELIABLE_DISPERSION_BP
+    return (
+        r_squared >= RELIABLE_R2_THRESHOLD and abs(discount_factor_diff_bp) <= RELIABLE_BP_THRESHOLD
+    )
+
+
+def reliable_forwards(forwards: pd.DataFrame) -> pd.DataFrame:
+    """The rows of a `forwards` slice that are reliable. Rows written before the
+    `reliable` column existed fall back to the original two-parameter rule."""
+    if forwards.empty:
+        return forwards
+    if "reliable" in forwards.columns:
+        stored = forwards["reliable"]
+        legacy = stored.isna()
+    else:
+        stored = pd.Series(False, index=forwards.index)
+        legacy = pd.Series(True, index=forwards.index)
+    legacy_ok = forwards.apply(
+        lambda r: is_reliable_forward(r["r_squared"], r["discount_factor_diff_bp"]), axis=1
+    )
+    keep = stored.where(~legacy, legacy_ok).astype(bool)
+    return forwards[keep]
+
 
 @dataclass
 class ForwardCurve:
@@ -82,6 +125,16 @@ class ForwardFitResult:
     forward: float
     discount_factor_implied: float
     r_squared: float
+    # "parity_2p": discount factor and forward both fitted from put-call parity
+    # (European index options). "curve_df": discount factor taken from the rates
+    # curve and only the forward fitted (American single-name options, whose
+    # parity-implied discount factor drifts with maturity; planning/
+    # input_stability_plan.md). `discount_factor_implied`/`r_squared` always come
+    # from the two-parameter fit, kept as diagnostics.
+    method: str = "parity_2p"
+    # Weighted spread, across strikes, of the forward each strike implies, in bp
+    # of the forward: how much the strikes agree. Only for "curve_df".
+    dispersion_bp: float | None = None
 
 
 def _mid(bid: pd.Series, ask: pd.Series) -> pd.Series:
@@ -113,9 +166,14 @@ def fit_forward(
     expiry: dt.date,
     T: float,
     reference_ts: pd.Timestamp | None = None,
+    curve_discount_factor: float | None = None,
 ) -> ForwardFitResult | None:
     """Fit one (underlying, expiry) slice. Returns None if too few clean matched strikes
     or the fit is economically nonsensical (non-positive implied discount factor).
+
+    With `curve_discount_factor`, the forward is fitted with the discount factor
+    fixed at the curve's: each strike's pair implies F_i = (C - P)/DF + K, and F
+    is their spread-weighted mean (method "curve_df").
 
     Quality-filters legs first (`quality.classify_quotes` — ZERO_BID, CROSSED, STALE,
     LOW_OI, WIDE_SPREAD) before matching call/put pairs, rather than fitting against
@@ -137,9 +195,27 @@ def fit_forward(
     fit = sm.WLS(y, X, weights=weights).fit()
     alpha, neg_beta = fit.params
     beta = -neg_beta
+
+    if curve_discount_factor is not None:
+        implied = y / curve_discount_factor + strikes
+        forward = float(np.average(implied, weights=weights))
+        dispersion = float(np.sqrt(np.average((implied - forward) ** 2, weights=weights)))
+        if forward <= 0:
+            return None
+        return ForwardFitResult(
+            underlying=underlying,
+            expiry=expiry,
+            T=T,
+            n_strikes=len(pairs),
+            forward=forward,
+            discount_factor_implied=float(beta),
+            r_squared=float(fit.rsquared),
+            method="curve_df",
+            dispersion_bp=10_000.0 * dispersion / forward,
+        )
+
     if beta <= 0:
         return None
-
     return ForwardFitResult(
         underlying=underlying,
         expiry=expiry,
@@ -240,17 +316,29 @@ def run_forward_construction(cfg: BaseConfig, asof: dt.date) -> ForwardConstruct
             chain["asof_ts"].iloc[0], asof, cfg.canonical_snap_time, cfg.calendar
         )
 
+        # American single-name options: parity's implied discount factor drifts with
+        # maturity, so fix it at the curve's and fit only the forward.
+        use_curve_df = underlying in cfg.universe.single_names
+
         for expiry, chain_expiry in chain.groupby("expiry"):
             expiry_date = pd.Timestamp(expiry).date()
             T = year_fraction(asof, expiry_date, cfg.daycount)
             if T <= 0:
                 continue
-            fit = fit_forward(chain_expiry, spot, underlying, expiry_date, T, reference_ts)
+            df_curve = curve.discount_factor(T)
+            fit = fit_forward(
+                chain_expiry,
+                spot,
+                underlying,
+                expiry_date,
+                T,
+                reference_ts,
+                curve_discount_factor=df_curve if use_curve_df else None,
+            )
             if fit is None:
                 continue
             result.fits.append(fit)
 
-            df_curve = curve.discount_factor(T)
             diff_bp = (fit.discount_factor_implied - df_curve) / df_curve * 10_000
             # Deliberate choice: use the regression's OWN discount factor here, not
             # df_curve. Since forward = alpha/beta and beta = discount_factor_implied,
@@ -260,11 +348,24 @@ def run_forward_construction(cfg: BaseConfig, asof: dt.date) -> ForwardConstruct
             # would inject the option-market-vs-Treasury financing basis (the thing
             # discount_factor_diff_bp already measures) directly into the dividend
             # estimate, contaminating it with a different economic effect.
-            q_impl = implied_dividend_yield(fit.forward, fit.discount_factor_implied, spot, T)
+            # For "curve_df" the forward was built WITH the curve's discount factor,
+            # so the implied yield must use it too (it then absorbs borrow and the
+            # financing basis, which is what a single-name carry is).
+            df_for_q = df_curve if fit.method == "curve_df" else fit.discount_factor_implied
+            q_impl = implied_dividend_yield(fit.forward, df_for_q, spot, T)
             flag_r2 = fit.r_squared < R2_FLAG_THRESHOLD
             flag_bp = abs(diff_bp) > DISCOUNT_FACTOR_BP_FLAG_THRESHOLD
+            reliable = is_reliable_forward(
+                fit.r_squared, diff_bp, method=fit.method, dispersion_bp=fit.dispersion_bp
+            )
 
-            if flag_r2 or flag_bp:
+            if fit.method == "curve_df" and not reliable:
+                result.flagged.append(
+                    f"{underlying} {expiry_date}: strikes disagree on the forward by "
+                    f"{fit.dispersion_bp:.0f}bp (limit {RELIABLE_DISPERSION_BP:.0f}bp), "
+                    f"n={fit.n_strikes}"
+                )
+            elif fit.method != "curve_df" and (flag_r2 or flag_bp):
                 result.flagged.append(
                     f"{underlying} {expiry_date}: R²={fit.r_squared:.4f} "
                     f"(flag={flag_r2}), DF diff={diff_bp:+.1f}bp (flag={flag_bp}), "
@@ -288,6 +389,9 @@ def run_forward_construction(cfg: BaseConfig, asof: dt.date) -> ForwardConstruct
                     "dividend_yield_diff": (None if div_yield is None else q_impl - div_yield),
                     "flag_r2": flag_r2,
                     "flag_discount_factor_bp": flag_bp,
+                    "method": fit.method,
+                    "dispersion_bp": fit.dispersion_bp,
+                    "reliable": reliable,
                 }
             )
 

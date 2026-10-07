@@ -19,6 +19,12 @@ from eqdrisk.config import BaseConfig
 from eqdrisk.io import store
 from eqdrisk.io.schemas import IMPLIED_VOL_REQUIRED_NOT_NULL, IMPLIED_VOL_SCHEMA, validate
 from eqdrisk.marketdata.calendar import year_fraction
+from eqdrisk.marketdata.forward import (  # noqa: F401  (re-exported for callers/tests)
+    RELIABLE_BP_THRESHOLD,
+    RELIABLE_R2_THRESHOLD,
+    is_reliable_forward,
+    reliable_forwards,
+)
 from eqdrisk.marketdata.quality import OK, classify_quotes, staleness_reference_ts
 from eqdrisk.pricing.blackscholes import call_price, put_price
 from eqdrisk.pricing.blackscholes import vega as bs_vega
@@ -33,15 +39,6 @@ NO_RELIABLE_FORWARD = "NO_RELIABLE_FORWARD"
 SIGMA_LO, SIGMA_HI = 1e-4, 5.0
 EXTREME_K_MULTIPLE = 4.0
 MIN_SLICE_QUOTES = 8  # README's own number: fewer surviving quotes -> THIN_SLICE
-
-# Gate for "is this Step 2 forward usable at all downstream" — deliberately much more
-# permissive than Step 2's own strict acceptance-bar flags (flag_r2 < 0.999, bp > 5).
-# An R²=0.9999 fit that misses the institutional 5bp target by 8bp is still an
-# excellent forward for computing moneyness; only genuinely broken fits (the
-# hundreds-to-thousands-of-bp disasters seen pre-quality-filter) should be excluded
-# here. See planning/decisions.md, 2026-08-21, for the reasoning.
-RELIABLE_R2_THRESHOLD = 0.995
-RELIABLE_BP_THRESHOLD = 150.0
 
 
 def invert_iv(
@@ -61,12 +58,6 @@ def invert_iv(
         return float(brentq(objective, SIGMA_LO, SIGMA_HI, xtol=1e-13, rtol=1e-14))
     except (ValueError, RuntimeError):
         return None
-
-
-def is_reliable_forward(r_squared: float, discount_factor_diff_bp: float) -> bool:
-    return (
-        r_squared >= RELIABLE_R2_THRESHOLD and abs(discount_factor_diff_bp) <= RELIABLE_BP_THRESHOLD
-    )
 
 
 def extract_slice_ivs(
@@ -193,9 +184,7 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
             T = year_fraction(asof, expiry_date, cfg.daycount)
             fwd_row = forward_by_expiry.get(expiry_date)
 
-            if fwd_row is None or not is_reliable_forward(
-                fwd_row["r_squared"], fwd_row["discount_factor_diff_bp"]
-            ):
+            if fwd_row is None or reliable_forwards(fwd_row.to_frame().T).empty:
                 underlying_skipped.append(expiry_date)
                 underlying_counts[NO_RELIABLE_FORWARD] = underlying_counts.get(
                     NO_RELIABLE_FORWARD, 0
