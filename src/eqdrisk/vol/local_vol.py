@@ -116,6 +116,22 @@ K_DERIVATIVE_H = 1e-4  # finite-difference step for SSVI's numeric k-derivatives
 LOCAL_VARIANCE_FLOOR = 1e-6  # sigma_loc^2 floor when interpolation dips non-positive
 
 
+def _beyond_last_scale(T: float, T_last: float) -> float:
+    """Beyond the last calibrated pillar, each strike's implied vol is held at
+    its last-pillar level: w(k, T) = w(k, T_N) * T / T_N, so total variance keeps
+    growing at the last pillar's average rate w(k, T_N) / T_N (and k-derivatives
+    scale the same way). Returns T / T_N there, 1.0 at or before T_N.
+
+    Replaced a clamp (w held flat at T_N = zero forward variance), under which
+    implied vol fell like 1/sqrt(T) past the last pillar and every change in the
+    surface's longest maturity moved long-dated prices for no market reason
+    (planning/input_stability_plan.md, C4). The average rate was chosen over the
+    interpolant's slope at T_N because it moved about half as much day to day on
+    real data (2026-10-07: median 1.0-1.1 vol points vs 1.2-3.9 for NVDA, SPX,
+    AAPL) and is positive by construction, so no calendar arbitrage."""
+    return max(T / T_last, 1.0)
+
+
 def _t_interpolant(T_pillars: np.ndarray, values: np.ndarray):
     """Smoothing spline (GCV-selected smoothness, robust to per-expiry calibration
     noise) when there are enough pillars, else an exact PCHIP fallback — see the
@@ -209,12 +225,15 @@ def local_variance_at(
     dk_w_interp = _t_interpolant(T_pillars, dk_w_vals)
     dkk_w_interp = _t_interpolant(T_pillars, dkk_w_vals)
 
-    w = float(w_interp(T_clamped))
-    dk_w = float(dk_w_interp(T_clamped))
-    dkk_w = float(dkk_w_interp(T_clamped))
+    scale = _beyond_last_scale(T, T_pillars[-1])
+    w = float(w_interp(T_clamped)) * scale
+    dk_w = float(dk_w_interp(T_clamped)) * scale
+    dkk_w = float(dkk_w_interp(T_clamped)) * scale
     dT_w = float(w_interp.derivative()(T_clamped))
 
-    if T <= T_pillars[0]:
+    if T > T_pillars[-1]:
+        dT_w = w / T
+    elif T <= T_pillars[0]:
         # No data before the first calibrated expiry: assume local vol is flat
         # from 0 to T_1, at exactly the level that reproduces the first pillar's
         # own total variance (dT_w = w(k, T_1) / T_1, not the interior fit's
@@ -260,17 +279,19 @@ def _row_w_and_dT_w(
     neighboring, already-computed grid points in the SAME row (see the module
     docstring's "Fourth finding"): one smoothed w-surface, differentiated once,
     rather than three independently-smoothed quantities that are supposed to be
-    related in the first place. Same `T <= T_pillars[0]` flat-local-vol special
-    case as `local_variance_at`."""
+    related in the first place. Same `T <= T_pillars[0]` flat-local-vol and
+    beyond-last-pillar flat-implied-vol cases as `local_variance_at`."""
     k_arr = np.asarray(k)
     w_vals = np.array(
         [float(np.asarray(_slice_w_dk_dkk(row, k_arr)[0])) for _, row in pillars.iterrows()]
     )
     T_clamped = float(np.clip(T, T_pillars[0], T_pillars[-1]))
     w_interp = _t_interpolant(T_pillars, w_vals)
-    w = float(w_interp(T_clamped))
+    w = float(w_interp(T_clamped)) * _beyond_last_scale(T, T_pillars[-1])
     dT_w = float(w_interp.derivative()(T_clamped))
-    if T <= T_pillars[0]:
+    if T > T_pillars[-1]:
+        dT_w = w / T
+    elif T <= T_pillars[0]:
         dT_w = w / T_pillars[0]
     return w, dT_w
 
@@ -371,6 +392,7 @@ def _sigma_loc_row(
     # approach `local_variance_at` uses, to match its already-validated wing
     # behavior exactly rather than silently changing it.
     T_clamped = float(np.clip(t_eff, T_pillars[0], T_pillars[-1]))
+    scale = _beyond_last_scale(t_eff, T_pillars[-1])
     for boundary_k in (-k_cap, k_cap):
         capped_mask = k_arr == boundary_k
         if not np.any(capped_mask):
@@ -379,8 +401,8 @@ def _sigma_loc_row(
         dkk_w_vals = np.empty(len(pillars))
         for i, (_, prow) in enumerate(pillars.iterrows()):
             _, dk_w_vals[i], dkk_w_vals[i] = _slice_w_dk_dkk(prow, np.asarray(boundary_k))
-        dk_w_boundary = float(_t_interpolant(T_pillars, dk_w_vals)(T_clamped))
-        dkk_w_boundary = float(_t_interpolant(T_pillars, dkk_w_vals)(T_clamped))
+        dk_w_boundary = float(_t_interpolant(T_pillars, dk_w_vals)(T_clamped)) * scale
+        dkk_w_boundary = float(_t_interpolant(T_pillars, dkk_w_vals)(T_clamped)) * scale
         dk_w_arr[capped_mask] = dk_w_boundary
         dkk_w_arr[capped_mask] = dkk_w_boundary
 

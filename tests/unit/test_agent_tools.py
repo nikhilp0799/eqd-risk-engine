@@ -119,6 +119,7 @@ def _write_surface(tmp_path, asof, rho=-0.3):
                 "max_abs_error_k": 0.0,
                 "butterfly_violations": 0,
                 "calendar_violated": False,
+                "n_carried": 0,
             }
         ]
     )

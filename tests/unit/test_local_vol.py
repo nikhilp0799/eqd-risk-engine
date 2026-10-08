@@ -205,3 +205,41 @@ def test_build_local_vol_grid_row_based_derivatives_are_close_to_per_point_refer
     # reference on a smooth, well-behaved surface — not an exact-equality bar
     # (the two methods are mathematically different), but not wildly off either.
     assert max_rel_diff < 0.05
+
+
+def test_beyond_last_pillar_holds_implied_vol_flat_per_strike():
+    """Beyond the last pillar each strike keeps its last-pillar implied vol
+    (planning/input_stability_plan.md, C4): w(k, T) = w(k, T_N) * T / T_N, so
+    total variance keeps growing (positive forward variance, no calendar
+    arbitrage) instead of freezing, under which implied vol fell like 1/sqrt(T)."""
+    surface = _svi_surface([0.1, 0.3, 0.6, 1.0])
+    T_last = 1.0
+    for k in [-0.2, 0.0, 0.15]:
+        at_last = local_variance_at(surface, k, T_last)
+        assert at_last is not None
+        iv_last = np.sqrt(at_last.w / T_last)
+        for T in [1.2, 2.0, 3.0]:
+            beyond = local_variance_at(surface, k, T)
+            assert beyond is not None
+            assert np.sqrt(beyond.w / T) == pytest.approx(iv_last, rel=1e-12)
+            assert beyond.dT_w == pytest.approx(at_last.w / T_last, rel=1e-12)
+            assert beyond.dk_w == pytest.approx(at_last.dk_w * T / T_last, rel=1e-12)
+            assert beyond.local_variance > 0
+
+
+def test_build_local_vol_grid_beyond_last_pillar_matches_reference():
+    """The grid hot path must extrapolate the same way as `local_variance_at`."""
+    surface = _svi_surface([0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1.0])
+    s0 = 100.0
+    fc = ForwardCurve(pillar_T=np.array([0.05, 1.0]), pillar_log_forward=np.log([s0, s0]))
+    s_grid = np.linspace(80.0, 125.0, 30)
+    t_grid = np.array([1.25, 1.5, 2.0])
+
+    grid = build_local_vol_grid(surface, fc, s_grid, t_grid)
+    assert grid is not None
+    for ti, t in enumerate(t_grid):
+        for si in range(2, len(s_grid) - 2):  # interior: away from one-sided stencils
+            k = float(np.log(s_grid[si] / fc.forward(t)))
+            reference = local_variance_at(surface, k, t)
+            assert reference is not None
+            assert grid.sigma_loc[ti, si] ** 2 == pytest.approx(reference.local_variance, rel=0.05)

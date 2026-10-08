@@ -86,6 +86,7 @@ def _write_synthetic_iv_store(root, asof, expiries_and_params, underlying="TEST"
                     "vega": np.ones(n),
                     "weight": np.ones(n),
                     "reason": ["OK"] * n,
+                    "carried_from": [None] * n,
                 }
             )
         )
@@ -130,3 +131,29 @@ def test_ssvi_params_type_used_in_calendar_fallback():
     # Sanity: SSVIParams import above is exercised via the fallback path already
     # covered in test_calibrate_underlying_falls_back_to_ssvi_on_calendar_violation.
     assert SSVIParams(rho=0.0, eta=1.0).total_variance(0.0, 0.01) > 0
+
+
+def test_calibrate_underlying_counts_carried_quotes():
+    import datetime as dt
+
+    import numpy as np
+    import pandas as pd
+
+    from eqdrisk.vol.surface import calibrate_underlying
+
+    groups = {}
+    for i, T in enumerate([0.25, 0.5]):
+        k = np.linspace(-0.3, 0.3, 12)
+        w = (0.04 + 0.02 * k**2) * T
+        groups[dt.date(2027, 1 + 6 * i, 15)] = pd.DataFrame(
+            {
+                "T": [T] * len(k),
+                "k": k,
+                "total_variance": w,
+                "weight": [1.0] * len(k),
+                "carried_from": [dt.date(2026, 8, 19) if i == 1 else None] * len(k),
+            }
+        )
+    slices, _ = calibrate_underlying("TEST", groups)
+    by_T = {s.T: s.n_carried for s in slices}
+    assert by_T == {0.25: 0, 0.5: 12}

@@ -90,18 +90,33 @@ def reliable_forwards(forwards: pd.DataFrame) -> pd.DataFrame:
 class ForwardCurve:
     """Continuous forward term structure F(0,T), interpolated log-linearly (same
     convention as `curve.Curve`'s discount-factor interpolation) across the day's
-    calibrated per-expiry forwards, flat-extrapolated beyond the shortest/longest
-    pillar. Needed by Step 6's local-vol grid, which evaluates sigma_loc at (spot,
-    calendar-time) pairs that fall off the handful of expiries options actually
-    settle on.
+    calibrated per-expiry forwards, flat before the shortest pillar. Needed by
+    Step 6's local-vol grid, which evaluates sigma_loc at (spot, calendar-time)
+    pairs that fall off the handful of expiries options actually settle on.
+
+    Beyond the longest pillar the log-forward continues at `long_end_carry`
+    (per year) rather than staying flat: a flat forward means zero carry, so
+    every change in which expiries are reliable moved long-dated forwards for no
+    market reason (planning/input_stability_plan.md, C4).
     """
 
     pillar_T: np.ndarray
     pillar_log_forward: np.ndarray
+    long_end_carry: float = 0.0
 
     def forward(self, T: float) -> float:
         log_f = np.interp(T, self.pillar_T, self.pillar_log_forward)
+        beyond = T - self.pillar_T[-1]
+        if beyond > 0:
+            log_f += self.long_end_carry * beyond
         return float(np.exp(log_f))
+
+
+# The long-end carry is the log-forward slope from the pillar at least this far
+# before the last one (or the first pillar if none is), so two nearly coincident
+# long expiries can't produce a wild slope. Measured on stored history
+# (2026-10-07), last-segment carry was 2.7-5.4%/yr for NVDA/SPX/AAPL.
+LONG_END_CARRY_MIN_SPAN_YEARS = 0.25
 
 
 def build_forward_curve(forwards_for_underlying: pd.DataFrame) -> ForwardCurve:
@@ -110,10 +125,15 @@ def build_forward_curve(forwards_for_underlying: pd.DataFrame) -> ForwardCurve:
     df = forwards_for_underlying.sort_values("T")
     if df.empty:
         raise ValueError("no forward pillars to build a forward curve from")
-    return ForwardCurve(
-        pillar_T=df["T"].to_numpy(dtype=float),
-        pillar_log_forward=np.log(df["forward"].to_numpy(dtype=float)),
-    )
+    T = df["T"].to_numpy(dtype=float)
+    log_f = np.log(df["forward"].to_numpy(dtype=float))
+    carry = 0.0
+    if len(T) >= 2:
+        earlier = np.nonzero(T <= T[-1] - LONG_END_CARRY_MIN_SPAN_YEARS)[0]
+        i = int(earlier[-1]) if len(earlier) else 0
+        if T[-1] > T[i]:
+            carry = float((log_f[-1] - log_f[i]) / (T[-1] - T[i]))
+    return ForwardCurve(pillar_T=T, pillar_log_forward=log_f, long_end_carry=carry)
 
 
 @dataclass

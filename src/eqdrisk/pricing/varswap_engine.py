@@ -21,6 +21,7 @@ from eqdrisk.io import store
 from eqdrisk.io.schemas import VARSWAP_REQUIRED_NOT_NULL, VARSWAP_SCHEMA, validate
 from eqdrisk.marketdata.curve import bootstrap_curve
 from eqdrisk.pricing.varswap import fair_variance_strike, wide_k_cap
+from eqdrisk.vol.implied import observed_quotes
 
 MIN_OBSERVED_STRIKES = 2  # need at least a put and a call side to bound a "narrow" range
 VIX_TARGET_T = 30 / 365
@@ -101,6 +102,8 @@ def run_varswap(
                 f"AND underlying = '{underlying}' AND reason = 'OK'",
                 views={"iv": str(iv_root)},
             ).to_pandas()
+
+        ivs = observed_quotes(ivs)
 
         n_priced = 0
         best_gap = None

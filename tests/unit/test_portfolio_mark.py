@@ -19,7 +19,13 @@ from eqdrisk.io.schemas import (
     VOL_SURFACE_SCHEMA,
     validate,
 )
-from eqdrisk.portfolio.mark import _expiry_bucket, _moneyness_bucket, mark_portfolio
+from eqdrisk.portfolio.mark import (
+    _expiry_bucket,
+    _moneyness_bucket,
+    load_market_state,
+    mark_portfolio,
+)
+from eqdrisk.portfolio.schema import Portfolio
 from eqdrisk.pricing.blackscholes import call_price
 from eqdrisk.vol.svi import SVIParams
 
@@ -83,7 +89,9 @@ def _write_underlying(tmp_path):
     store.write_partitioned(table, tmp_path / "underlyings", ["asof_date"])
 
 
-def _write_forwards(tmp_path, r: float = 0.03, q: float = 0.01):
+def _write_forwards(
+    tmp_path, r: float = 0.03, q: float = 0.01, extra_rows: list[dict] | None = None
+):
     rows = []
     for T, expiry in zip(PILLAR_TS, PILLAR_EXPIRIES, strict=True):
         forward = SPOT * np.exp((r - q) * T)
@@ -109,6 +117,8 @@ def _write_forwards(tmp_path, r: float = 0.03, q: float = 0.01):
                 "reliable": True,
             }
         )
+    for extra in extra_rows or []:
+        rows.append({**rows[-1], **extra})
     table = validate(pd.DataFrame(rows), FORWARD_SCHEMA, FORWARD_REQUIRED_NOT_NULL)
     store.write_partitioned(table, tmp_path / "forwards", ["asof_date", "underlying"])
 
@@ -139,6 +149,7 @@ def _write_surface(tmp_path, rho: float = -0.3):
                 "max_abs_error_k": 0.0,
                 "butterfly_violations": 0,
                 "calendar_violated": False,
+                "n_carried": 0,
             }
         )
     table = validate(pd.DataFrame(rows), VOL_SURFACE_SCHEMA, VOL_SURFACE_REQUIRED_NOT_NULL)
@@ -204,6 +215,38 @@ def test_vanilla_and_equity_marks_match_independent_computation(tmp_path):
     iv = float(np.sqrt(params.total_variance(np.log(100.0 / forward)) / T))
     expected_price = 10 * call_price(forward, 100.0, T, iv, discount_factor)
     assert vanilla_mark.price == pytest.approx(expected_price, rel=1e-6)
+
+
+def test_pricing_forward_curve_excludes_unreliable_forwards(tmp_path):
+    # A long-dated fit flagged unreliable (and wildly off) must not become the
+    # forward curve's long end: pricing uses the same rule as the vol surface.
+    _write_curve(tmp_path)
+    _write_underlying(tmp_path)
+    _write_forwards(
+        tmp_path,
+        extra_rows=[
+            {
+                "expiry": ASOF + dt.timedelta(days=730),
+                "T": 2.0,
+                "forward": 3 * SPOT,
+                "discount_factor_diff_bp": 500.0,
+                "reliable": False,
+            }
+        ],
+    )
+    _write_surface(tmp_path)
+    portfolio = Portfolio.from_yaml(
+        _write_portfolio_yaml(
+            tmp_path, [{"id": "E1", "type": "equity", "underlying": UNDERLYING, "qty": 1}]
+        )
+    )
+
+    state = load_market_state(_cfg(tmp_path), ASOF, portfolio)
+
+    assert state is not None
+    curve = state.forward_curve[UNDERLYING]
+    assert curve.pillar_T.tolist() == PILLAR_TS
+    assert curve.forward(2.0) < 1.1 * SPOT
 
 
 def test_varswap_mark_has_zero_price_and_vega_equal_to_notional(tmp_path):

@@ -105,6 +105,7 @@ def _write_iv_and_surface(tmp_path, params: SVIParams):
             "vega": np.ones(len(k)),
             "weight": np.ones(len(k)),
             "reason": ["OK"] * len(k),
+            "carried_from": [None] * len(k),
         }
     )
     iv_table = validate(iv_df, IMPLIED_VOL_SCHEMA, IMPLIED_VOL_REQUIRED_NOT_NULL)
@@ -130,6 +131,7 @@ def _write_iv_and_surface(tmp_path, params: SVIParams):
             "max_abs_error_k": [0.0],
             "butterfly_violations": [0],
             "calendar_violated": [False],
+            "n_carried": [0],
         }
     )
     surface_table = validate(surface_df, VOL_SURFACE_SCHEMA, VOL_SURFACE_REQUIRED_NOT_NULL)

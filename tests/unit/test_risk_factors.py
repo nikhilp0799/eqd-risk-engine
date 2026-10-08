@@ -45,6 +45,7 @@ def _surface_df(pillar_Ts: list[float], rho: float = -0.3) -> pd.DataFrame:
                 "max_abs_error_k": 0.0,
                 "butterfly_violations": 0,
                 "calendar_violated": False,
+                "n_carried": 0,
             }
         )
     return pd.DataFrame(rows)
