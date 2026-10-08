@@ -138,6 +138,9 @@ IMPLIED_VOL_SCHEMA = pa.schema(
         ("vega", pa.float64()),
         ("weight", pa.float64()),
         ("reason", pa.string()),
+        # Stale fill: the date this quote was actually observed, when it was
+        # carried forward from an earlier day (null for today's own quotes).
+        ("carried_from", pa.date32()),
     ]
 )
 IMPLIED_VOL_REQUIRED_NOT_NULL = [
@@ -170,6 +173,8 @@ VOL_SURFACE_SCHEMA = pa.schema(
         ("max_abs_error_k", pa.float64()),
         ("butterfly_violations", pa.int64()),
         ("calendar_violated", pa.bool_()),
+        # Of n_points, how many were carried from an earlier day (stale fill).
+        ("n_carried", pa.int64()),
     ]
 )
 VOL_SURFACE_REQUIRED_NOT_NULL = [

@@ -18,7 +18,7 @@ from scipy.optimize import brentq
 from eqdrisk.config import BaseConfig
 from eqdrisk.io import store
 from eqdrisk.io.schemas import IMPLIED_VOL_REQUIRED_NOT_NULL, IMPLIED_VOL_SCHEMA, validate
-from eqdrisk.marketdata.calendar import year_fraction
+from eqdrisk.marketdata.calendar import trading_days, year_fraction
 from eqdrisk.marketdata.forward import (  # noqa: F401  (re-exported for callers/tests)
     RELIABLE_BP_THRESHOLD,
     RELIABLE_R2_THRESHOLD,
@@ -129,11 +129,91 @@ def extract_slice_ivs(
     return df
 
 
+# Stale fill (planning/input_stability_plan.md, decision 2): an expiry that had
+# usable quotes on the previous stored day but none today keeps yesterday's
+# quotes for a few trading days, so the surface's long end doesn't vanish and
+# reappear with thinly traded long-dated quotes.
+IV_COLUMNS = [
+    "asof_date",
+    "underlying",
+    "expiry",
+    "strike",
+    "cp",
+    "T",
+    "k",
+    "iv",
+    "total_variance",
+    "vega",
+    "weight",
+    "reason",
+    "carried_from",
+]
+
+STALE_FILL_MAX_TRADING_DAYS = 3
+STALE_FILL_WEIGHT = 0.5
+
+
+def carry_forward_quotes(
+    prev_ok: pd.DataFrame,
+    expiries_ok_today: set[dt.date],
+    asof: dt.date,
+    daycount: str = "ACT/365F",
+    calendar: str = "NYSE",
+) -> pd.DataFrame:
+    """OK quotes from the previous stored day, re-expressed for `asof`, for every
+    expiry with no OK quote today. Done at the quote level (not by copying fitted
+    parameters) because SPX's surface can be a joint SSVI fit, where one slice
+    can't be copied on its own.
+
+    Same log-moneyness and implied vol; T shortened to today's, so total variance
+    is recomputed; weight halved once (a quote carried a second time keeps its
+    already-halved weight). `carried_from` is the date the quote was actually
+    observed, and a quote older than `STALE_FILL_MAX_TRADING_DAYS` trading days
+    is dropped."""
+    if prev_ok.empty:
+        return prev_ok.iloc[0:0]
+    df = prev_ok.copy()
+    df["expiry"] = pd.to_datetime(df["expiry"]).dt.date
+    if "carried_from" not in df.columns:
+        df["carried_from"] = None
+    already_carried = df["carried_from"].notna()
+    origin = df["carried_from"].where(already_carried, df["asof_date"])
+    df["carried_from"] = pd.to_datetime(origin).dt.date
+
+    df = df[~df["expiry"].isin(expiries_ok_today) & (df["expiry"] > asof)]
+    if df.empty:
+        return df
+    age = {
+        d: len(trading_days(d + dt.timedelta(days=1), asof, calendar))
+        for d in df["carried_from"].unique()
+    }
+    df = df[df["carried_from"].map(age) <= STALE_FILL_MAX_TRADING_DAYS]
+    if df.empty:
+        return df
+
+    already_carried = df["carried_from"] != pd.to_datetime(df["asof_date"]).dt.date
+    df["asof_date"] = asof
+    df["T"] = [year_fraction(asof, e, daycount) for e in df["expiry"]]
+    df["total_variance"] = df["iv"] ** 2 * df["T"]
+    df["weight"] = df["weight"].where(already_carried, df["weight"] * STALE_FILL_WEIGHT)
+    df["reason"] = OK
+    return df
+
+
+def observed_quotes(ivs: pd.DataFrame) -> pd.DataFrame:
+    """Quotes actually observed on their `asof_date` (excludes stale-fill rows),
+    for consumers that compare the model with the day's market prices."""
+    if "carried_from" not in ivs.columns:
+        return ivs
+    return ivs[ivs["carried_from"].isna()]
+
+
 @dataclass
 class IVExtractionResult:
     asof: dt.date
     rejection_counts: dict[str, dict[str, int]] = field(default_factory=dict)
     skipped_expiries: dict[str, list[dt.date]] = field(default_factory=dict)
+    carried_expiries: dict[str, list[dt.date]] = field(default_factory=dict)
 
     def render(self) -> str:
         lines = [f"IV extraction — {self.asof}"]
@@ -142,6 +222,9 @@ class IVExtractionResult:
             skipped = self.skipped_expiries.get(underlying)
             if skipped:
                 lines.append(f"    skipped (no reliable forward): {skipped}")
+            carried = self.carried_expiries.get(underlying)
+            if carried:
+                lines.append(f"    carried from a previous day (stale fill): {carried}")
         return "\n".join(lines)
 
 
@@ -150,6 +233,9 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
     chains_root = curated_root / "chains"
     forwards_root = curated_root / "forwards"
     universe = cfg.universe.index + cfg.universe.single_names
+
+    iv_root = curated_root / "implied_vols"
+    prev_date = store.latest_available_date(iv_root, asof - dt.timedelta(days=1))
 
     result = IVExtractionResult(asof=asof)
     out_rows = []
@@ -178,6 +264,7 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
 
         underlying_counts: dict[str, int] = {}
         underlying_skipped: list[dt.date] = []
+        expiries_ok_today: set[dt.date] = set()
 
         for expiry, chain_expiry in chain.groupby("expiry"):
             expiry_date = pd.Timestamp(expiry).date()
@@ -208,29 +295,28 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
                 for reason, n in tagged["reason"].value_counts().items():
                     if reason != OK:
                         underlying_counts[reason] = underlying_counts.get(reason, 0) + int(n)
+                if (tagged["reason"] == OK).any():
+                    expiries_ok_today.add(expiry_date)
 
             tagged["asof_date"] = asof
             tagged["underlying"] = underlying
             tagged["expiry"] = expiry_date
             tagged["T"] = T
-            out_rows.append(
-                tagged[
-                    [
-                        "asof_date",
-                        "underlying",
-                        "expiry",
-                        "strike",
-                        "cp",
-                        "T",
-                        "k",
-                        "iv",
-                        "total_variance",
-                        "vega",
-                        "weight",
-                        "reason",
-                    ]
-                ]
+            tagged["carried_from"] = None
+            out_rows.append(tagged[IV_COLUMNS])
+
+        if prev_date is not None:
+            prev_ok = store.query(
+                f"SELECT * FROM iv WHERE asof_date = DATE '{prev_date.isoformat()}' "
+                f"AND underlying = '{underlying}' AND reason = 'OK'",
+                views={"iv": str(iv_root)},
+            ).to_pandas()
+            carried = carry_forward_quotes(
+                prev_ok, expiries_ok_today, asof, cfg.daycount, cfg.calendar
             )
+            if not carried.empty:
+                out_rows.append(carried[IV_COLUMNS])
+                result.carried_expiries[underlying] = sorted(set(carried["expiry"]))
 
         result.rejection_counts[underlying] = underlying_counts
         if underlying_skipped:

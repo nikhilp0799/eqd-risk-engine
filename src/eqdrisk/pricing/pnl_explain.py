@@ -94,12 +94,14 @@ def _vol_move(
     """The day's ATM vol move where the position's vol exposure sits (its
     `vol_times`), measured only at maturities BOTH days' surfaces cover.
 
-    Beyond its last pillar a surface holds total variance flat (zero forward
-    vol), so when the long end appears or disappears between two days (thinly
-    traded long-dated quotes passing the quality filters one day and not the
-    next) an ATM vol read beyond it jumps for no market reason: measured on
-    real NVDA data, a fake +12 vol-point move for the 1.88y autocallable on
-    2026-09-03 and 09-17. Clamping to the common coverage removes that."""
+    Beyond its last pillar a surface is extrapolated, not observed, so when the
+    long end appears or disappears between two days (thinly traded long-dated
+    quotes passing the quality filters one day and not the next) an ATM vol read
+    beyond it moves for no market reason: measured on real NVDA data under the
+    old flat-total-variance extrapolation, a fake +12 vol-point move for the
+    1.88y autocallable on 2026-09-03 and 09-17. Flat-implied-vol extrapolation
+    (C4) shrinks this but two days can still extrapolate from different last
+    pillars, so the move is measured only where both surfaces have data."""
     t_last = min(float(surface_prev["T"].max()), float(surface_cur["T"].max()))
     moves = []
     for t in m.vol_times or [m.T]:

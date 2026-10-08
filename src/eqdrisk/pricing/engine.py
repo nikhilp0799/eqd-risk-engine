@@ -28,6 +28,7 @@ from eqdrisk.io.schemas import GREEKS_REQUIRED_NOT_NULL, GREEKS_SCHEMA, validate
 from eqdrisk.marketdata.curve import bootstrap_curve
 from eqdrisk.pricing.blackscholes import compute_greeks
 from eqdrisk.pricing.stickiness import compute_stickiness_deltas
+from eqdrisk.vol.implied import observed_quotes
 from eqdrisk.vol.ssvi import SSVIParams
 from eqdrisk.vol.svi import SVIParams
 
@@ -120,6 +121,7 @@ def run_pricing(
             f"AND underlying = '{underlying}' AND reason = 'OK'",
             views={"iv": str(iv_root)},
         ).to_pandas()
+        ivs = observed_quotes(ivs)
         if ivs.empty:
             result.skipped[underlying] = ["no OK-tagged implied vols for this date"]
             continue

@@ -42,6 +42,7 @@ class SliceCalibration:
     max_abs_error_k: float
     butterfly_violations: int
     calendar_violated: bool
+    n_carried: int = 0  # of n_points, quotes carried from an earlier day (stale fill)
 
 
 @dataclass
@@ -72,6 +73,9 @@ class SurfaceCalibrationResult:
                     f"RMSE_sabr={cmp['rmse_sabr']:.3f}, RMSE_svi={cmp['rmse_svi']:.3f}"
                 )
             skipped = self.skipped.get(underlying)
+            n_carried = sum(s.n_carried for s in slices)
+            if n_carried:
+                lines.append(f"    stale fill: {n_carried} quotes carried from earlier days")
             if skipped:
                 lines.append(f"    skipped: {skipped}")
         if self.vix_check:
@@ -192,6 +196,9 @@ def calibrate_underlying(
                 max_abs_error_k=max_err_k,
                 butterfly_violations=butterfly_violations,
                 calendar_violated=calendar_violated,
+                n_carried=(
+                    int(df["carried_from"].notna().sum()) if "carried_from" in df.columns else 0
+                ),
             )
         )
 
@@ -292,6 +299,7 @@ def run_surface_calibration(
                     "max_abs_error_k": s.max_abs_error_k,
                     "butterfly_violations": s.butterfly_violations,
                     "calendar_violated": s.calendar_violated,
+                    "n_carried": s.n_carried,
                 }
             )
 
