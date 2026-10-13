@@ -19,9 +19,11 @@ from eqdrisk.config import BaseConfig
 from eqdrisk.io import store
 from eqdrisk.io.schemas import IMPLIED_VOL_REQUIRED_NOT_NULL, IMPLIED_VOL_SCHEMA, validate
 from eqdrisk.marketdata.calendar import trading_days, year_fraction
+from eqdrisk.marketdata.curve import bootstrap_curve
 from eqdrisk.marketdata.forward import (  # noqa: F401  (re-exported for callers/tests)
     RELIABLE_BP_THRESHOLD,
     RELIABLE_R2_THRESHOLD,
+    build_forward_curve,
     is_reliable_forward,
     reliable_forwards,
 )
@@ -147,7 +149,14 @@ IV_COLUMNS = [
     "weight",
     "reason",
     "carried_from",
+    "forward_source",
 ]
+
+# Where a slice's forward came from (planning/input_stability_plan.md, C7):
+# "fit" = that expiry's own put-call parity fit; "curve" = that day's forward
+# curve, for a single-name expiry with no reliable fit of its own.
+FORWARD_FROM_FIT = "fit"
+FORWARD_FROM_CURVE = "curve"
 
 STALE_FILL_MAX_TRADING_DAYS = 3
 STALE_FILL_WEIGHT = 0.5
@@ -176,6 +185,8 @@ def carry_forward_quotes(
     df["expiry"] = pd.to_datetime(df["expiry"]).dt.date
     if "carried_from" not in df.columns:
         df["carried_from"] = None
+    if "forward_source" not in df.columns:
+        df["forward_source"] = None
     already_carried = df["carried_from"].notna()
     origin = df["carried_from"].where(already_carried, df["asof_date"])
     df["carried_from"] = pd.to_datetime(origin).dt.date
@@ -214,6 +225,7 @@ class IVExtractionResult:
     rejection_counts: dict[str, dict[str, int]] = field(default_factory=dict)
     skipped_expiries: dict[str, list[dt.date]] = field(default_factory=dict)
     carried_expiries: dict[str, list[dt.date]] = field(default_factory=dict)
+    curve_forward_expiries: dict[str, list[dt.date]] = field(default_factory=dict)
 
     def render(self) -> str:
         lines = [f"IV extraction — {self.asof}"]
@@ -222,6 +234,9 @@ class IVExtractionResult:
             skipped = self.skipped_expiries.get(underlying)
             if skipped:
                 lines.append(f"    skipped (no reliable forward): {skipped}")
+            from_curve = self.curve_forward_expiries.get(underlying)
+            if from_curve:
+                lines.append(f"    forward taken from the forward curve: {from_curve}")
             carried = self.carried_expiries.get(underlying)
             if carried:
                 lines.append(f"    carried from a previous day (stale fill): {carried}")
@@ -236,6 +251,16 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
 
     iv_root = curated_root / "implied_vols"
     prev_date = store.latest_available_date(iv_root, asof - dt.timedelta(days=1))
+
+    rates_curve = None
+    curves_date = store.latest_available_date(curated_root / "curves", asof)
+    if curves_date is not None:
+        rates_curve = bootstrap_curve(
+            store.query(
+                f"SELECT * FROM curves WHERE asof_date = DATE '{curves_date.isoformat()}'",
+                views={"curves": str(curated_root / "curves")},
+            ).to_pandas()
+        )
 
     result = IVExtractionResult(asof=asof)
     out_rows = []
@@ -262,6 +287,23 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
             ).to_pandas()
         forward_by_expiry = {row["expiry"]: row for _, row in forwards.iterrows()}
 
+        # Single names (American options) often have long expiries with clean
+        # out-of-the-money quotes but too few strikes where BOTH legs are clean
+        # for a forward fit (the in-the-money leg rarely trades): measured on all
+        # history, 80% of NVDA's no-forward expiry-days beyond 0.5y had >= 8 clean
+        # OTM quotes but a median of 2 usable call-put pairs (the fit needs 6).
+        # Those expiries take their forward from the day's forward curve
+        # (reliable fits + long-end carry) instead of being dropped.
+        fallback_curve = None
+        reliable = reliable_forwards(forwards)
+        if (
+            underlying in cfg.universe.single_names
+            and rates_curve is not None
+            and not reliable.empty
+        ):
+            fallback_curve = build_forward_curve(reliable)
+        underlying_from_curve: list[dt.date] = []
+
         underlying_counts: dict[str, int] = {}
         underlying_skipped: list[dt.date] = []
         expiries_ok_today: set[dt.date] = set()
@@ -271,7 +313,25 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
             T = year_fraction(asof, expiry_date, cfg.daycount)
             fwd_row = forward_by_expiry.get(expiry_date)
 
-            if fwd_row is None or reliable_forwards(fwd_row.to_frame().T).empty:
+            forward_source: str | None = None
+            forward = discount_factor = float("nan")
+            if fwd_row is not None and not reliable_forwards(fwd_row.to_frame().T).empty:
+                forward_source = FORWARD_FROM_FIT
+                forward = float(fwd_row["forward"])
+                # A "curve_df" forward was fitted WITH the curve's discount factor,
+                # so its IVs must use that one too, not the drifting parity DF.
+                discount_factor = float(
+                    fwd_row["discount_factor_curve"]
+                    if fwd_row.get("method") == "curve_df"
+                    else fwd_row["discount_factor_implied"]
+                )
+            elif fallback_curve is not None and rates_curve is not None and T > 0:
+                forward = fallback_curve.forward(T)
+                discount_factor = rates_curve.discount_factor(T)
+                forward_source = FORWARD_FROM_CURVE
+                underlying_from_curve.append(expiry_date)
+
+            if forward_source is None:
                 underlying_skipped.append(expiry_date)
                 underlying_counts[NO_RELIABLE_FORWARD] = underlying_counts.get(
                     NO_RELIABLE_FORWARD, 0
@@ -285,12 +345,7 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
                 tagged["weight"] = np.nan
             else:
                 tagged = extract_slice_ivs(
-                    chain_expiry,
-                    spot,
-                    float(fwd_row["forward"]),
-                    float(fwd_row["discount_factor_implied"]),
-                    T,
-                    reference_ts,
+                    chain_expiry, spot, forward, discount_factor, T, reference_ts
                 )
                 for reason, n in tagged["reason"].value_counts().items():
                     if reason != OK:
@@ -303,6 +358,7 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
             tagged["expiry"] = expiry_date
             tagged["T"] = T
             tagged["carried_from"] = None
+            tagged["forward_source"] = forward_source
             out_rows.append(tagged[IV_COLUMNS])
 
         if prev_date is not None:
@@ -318,6 +374,8 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
                 out_rows.append(carried[IV_COLUMNS])
                 result.carried_expiries[underlying] = sorted(set(carried["expiry"]))
 
+        if underlying_from_curve:
+            result.curve_forward_expiries[underlying] = underlying_from_curve
         result.rejection_counts[underlying] = underlying_counts
         if underlying_skipped:
             result.skipped_expiries[underlying] = underlying_skipped

@@ -76,6 +76,8 @@ class QCReport:
     prior_day_row_delta: dict[str, int | None] = field(default_factory=dict)
     rejections: dict[str, dict[str, int]] = field(default_factory=dict)
     snap_alerts: list[str] = field(default_factory=list)
+    # Underlyings whose existing snapshot for this date was kept, not replaced.
+    kept_existing: list[str] = field(default_factory=list)
 
     def render(self) -> str:
         lines = [f"QC report — {self.asof}"]
@@ -90,6 +92,11 @@ class QCReport:
             rej = self.rejections.get(underlying)
             if rej:
                 lines.append(f"    rejected: {rej}")
+        if self.kept_existing:
+            lines.append(
+                f"  kept existing snapshot (not re-fetched, use --force to replace): "
+                f"{self.kept_existing}"
+            )
         if self.retries:
             lines.append("  RETRIES:")
             lines.extend(f"    {r}" for r in self.retries)
@@ -193,7 +200,18 @@ def _snapshot_chain(
     )
 
 
-def run_snapshot(cfg: BaseConfig, asof: dt.date) -> SnapshotResult:
+def _has_snapshot(chains_curated_root: Path, asof: dt.date, underlying: str) -> bool:
+    part = chains_curated_root / f"asof_date={asof.isoformat()}" / f"underlying={underlying}"
+    return part.is_dir() and any(part.glob("*.parquet"))
+
+
+def run_snapshot(cfg: BaseConfig, asof: dt.date, force: bool = False) -> SnapshotResult:
+    """Without `force`, an underlying that already has a chain snapshot for `asof`
+    keeps it: a re-run after the close used to overwrite the day's real snapshot
+    with an after-hours one whose quotes mostly fail the staleness filter, and the
+    original was lost (SPX on 2026-09-09 and 2026-09-14, found while rebuilding
+    history, planning/input_stability_plan.md). Missing underlyings are still
+    fetched, so re-running after a partial failure fills only the gaps."""
     raw_root = Path(cfg.paths.raw)
     curated_root = Path(cfg.paths.curated)
     asof_ts = pd.Timestamp.now(tz=NY_TZ)
@@ -211,6 +229,9 @@ def run_snapshot(cfg: BaseConfig, asof: dt.date) -> SnapshotResult:
         )
 
     for underlying in universe:
+        if not force and _has_snapshot(chains_curated_root, asof, underlying):
+            qc.kept_existing.append(underlying)
+            continue
         try:
             _snapshot_chain(underlying, asof, asof_ts, raw_root, chains_curated_root, qc)
         except Exception as exc:

@@ -105,6 +105,7 @@ def _write_surface_and_iv(tmp_path, params: SVIParams):
             "weight": np.ones(n),
             "reason": ["OK"] * n,
             "carried_from": [None] * n,
+            "forward_source": ["fit"] * n,
         }
     )
     iv_table = validate(iv_df, IMPLIED_VOL_SCHEMA, IMPLIED_VOL_REQUIRED_NOT_NULL)
