@@ -243,3 +243,29 @@ def test_build_local_vol_grid_beyond_last_pillar_matches_reference():
             reference = local_variance_at(surface, k, t)
             assert reference is not None
             assert grid.sigma_loc[ti, si] ** 2 == pytest.approx(reference.local_variance, rel=0.05)
+
+
+def test_tiny_calibration_noise_moves_local_variance_only_a_little():
+    """Two days whose calibrations differ only by tiny per-expiry noise must give
+    nearly the same local variance. The T-spline's smoothness is fixed
+    (`T_SMOOTHING_LAM`) rather than re-chosen by GCV per call, which on real NVDA
+    data swung from exact interpolation to a near-straight line between
+    neighbouring grid points and drove day-to-day model noise
+    (planning/input_stability_plan.md). On this fixture, GCV's worst case was
+    5.6% vs 2.9% with the fixed value (seeded, measured 2026-10-13)."""
+    surface = _svi_surface([0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 2.3])
+    rng = np.random.default_rng(0)
+    worst = 0.0
+    for _ in range(20):
+        day0, day1 = surface.copy(), surface.copy()
+        day0["a"] += rng.normal(0, 2e-4, len(surface))
+        day1["a"] += rng.normal(0, 2e-4, len(surface))
+        for T in [0.6, 1.2, 1.88]:
+            for k in [-0.3, 0.0, 0.2]:
+                lv0 = local_variance_at(day0, k, T)
+                lv1 = local_variance_at(day1, k, T)
+                assert lv0 is not None and lv1 is not None
+                worst = max(
+                    worst, abs(lv0.local_variance - lv1.local_variance) / lv1.local_variance
+                )
+    assert worst < 0.04

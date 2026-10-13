@@ -31,8 +31,9 @@ to <1 standard error on smooth synthetic surfaces — i.e. the *formula* was rig
 the *raw derivative estimator* wasn't robust to real calibration noise, exactly
 the "differentiating noisy data is hopeless" trap this module's own docstring
 warns about, just one level removed (across expiries instead of across strikes).
-Fixed by replacing the exact PCHIP interpolant with `scipy`'s automatic
-generalised-cross-validation smoothing spline (`make_smoothing_spline`) for the
+Fixed by replacing the exact PCHIP interpolant with `scipy`'s smoothing spline
+(`make_smoothing_spline`; smoothness originally GCV-selected per call, fixed at
+`T_SMOOTHING_LAM` since 2026-10-13 because the per-call choice was unstable) for the
 T-direction fit of `w`, `dk_w`, and `dkk_w` — trades exact pillar reproduction for
 a smooth, noise-robust derivative, which is what `dT_w` actually needs. Falls back
 to the exact PCHIP interpolant when there are too few pillars for the smoothing
@@ -132,13 +133,27 @@ def _beyond_last_scale(T: float, T_last: float) -> float:
     return max(T / T_last, 1.0)
 
 
+# Smoothing strength for the T-direction spline (`make_smoothing_spline`'s `lam`;
+# T in years, total variance in its own units). Fixed, not GCV-selected per call
+# (2026-10-13, planning/input_stability_plan.md): GCV re-chose `lam` independently
+# at every grid point and every day, spanning 3.7e-6 to 19 across ONE day's NVDA
+# grid (anything from exact interpolation to a near-straight line), and Dupire's
+# derivatives turned that into day-to-day model noise. Measured at P008's 1.88y on
+# all stored days, the local-vol MC vs Black-76 gap's daily change fell from
+# 1.7-2.4 to 0.26-0.36 vol pts and its mean from +0.8 to ~0, with fewer floored
+# grid points than GCV (0.001 was noisier, 0.1 slightly biased; exact PCHIP floored
+# 100-330 of 6000 points a day). Tuned on this universe: revisit if it changes.
+T_SMOOTHING_LAM = 0.01
+
+
 def _t_interpolant(T_pillars: np.ndarray, values: np.ndarray):
-    """Smoothing spline (GCV-selected smoothness, robust to per-expiry calibration
-    noise) when there are enough pillars, else an exact PCHIP fallback — see the
-    module docstring for why an exact interpolant's derivative isn't safe to use
-    here in general, and why a fallback is still needed for thin names."""
+    """Smoothing spline with fixed smoothness `T_SMOOTHING_LAM` (robust to
+    per-expiry calibration noise, and stable day to day) when there are enough
+    pillars, else an exact PCHIP fallback — see the module docstring for why an
+    exact interpolant's derivative isn't safe to use here in general, and why a
+    fallback is still needed for thin names."""
     if len(T_pillars) >= MIN_PILLARS_FOR_SMOOTHING:
-        return make_smoothing_spline(T_pillars, values)
+        return make_smoothing_spline(T_pillars, values, lam=T_SMOOTHING_LAM)
     return PchipInterpolator(T_pillars, values, extrapolate=True)
 
 
