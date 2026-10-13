@@ -18,16 +18,19 @@ app = typer.Typer(help="eqd-risk-engine: equity derivatives risk analytics")
 def ingest(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+    force: bool = typer.Option(
+        False, "--force", help="Replace an existing snapshot for this date (default: keep it)"
+    ),
 ) -> None:
     """Pull raw data, validate schema, write curated Parquet."""
     from eqdrisk.io.snapshot import run_snapshot
 
     cfg = BaseConfig.from_yaml(config)
     asof = dt.date.fromisoformat(date)
-    result = run_snapshot(cfg, asof)
+    result = run_snapshot(cfg, asof, force=force)
     typer.echo(result.qc.render())
     # One underlying failing is reported but not fatal; nothing ingested at all is.
-    if not result.qc.chain_rows:
+    if not result.qc.chain_rows and not result.qc.kept_existing:
         raise typer.Exit(code=1)
 
 

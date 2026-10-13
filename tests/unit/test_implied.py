@@ -427,3 +427,178 @@ def test_run_iv_extraction_carries_an_expiry_that_loses_its_forward(tmp_path):
     assert len(carried) == len(strikes)
     assert (pd.to_datetime(carried["carried_from"]).dt.date == day1).all()
     assert carried["T"].iloc[0] == year_fraction(day2, expiry, "ACT/365F")
+
+
+def _write_c7_inputs(tmp_path, asof, rate, chain_expiries, forward_rows, underlying="TEST"):
+    """Chains for `chain_expiries` priced at FORWARD / TRUE_SIGMA with the flat
+    `rate` curve's discount factor, a flat `rate` rates curve, and the given
+    forward rows (expiry -> dict of overrides)."""
+    import numpy as np
+
+    from eqdrisk.io import store
+    from eqdrisk.io.schemas import (
+        CHAIN_REQUIRED_NOT_NULL,
+        CHAIN_SCHEMA,
+        CURVE_REQUIRED_NOT_NULL,
+        CURVE_SCHEMA,
+        FORWARD_REQUIRED_NOT_NULL,
+        FORWARD_SCHEMA,
+        validate,
+    )
+    from eqdrisk.marketdata.calendar import year_fraction
+
+    ts = pd.Timestamp(asof.isoformat() + " 16:00", tz="America/New_York")
+    rows = []
+    for expiry in chain_expiries:
+        T_e = year_fraction(asof, expiry, "ACT/365F")
+        df_e = float(np.exp(-rate * T_e))
+        for strike in [70, 75, 80, 85, 90, 95, 100.01, 105, 110, 115, 120, 125, 130]:
+            cp = "C" if strike > FORWARD else "P"
+            price = (call_price if cp == "C" else put_price)(FORWARD, strike, T_e, TRUE_SIGMA, df_e)
+            rows.append(
+                {
+                    "asof_date": asof,
+                    "asof_ts": ts,
+                    "underlying": underlying,
+                    "expiry": expiry,
+                    "strike": strike,
+                    "cp": cp,
+                    "bid": price - 0.02,
+                    "ask": price + 0.02,
+                    "volume": 10,
+                    "open_interest": 100,
+                    "underlying_px": FORWARD,
+                    "last_trade_ts": ts,
+                    "source": "test",
+                }
+            )
+    chain = pd.DataFrame(rows)
+    chain["bid_size"] = pd.array([None] * len(chain), dtype="Int64")
+    chain["ask_size"] = pd.array([None] * len(chain), dtype="Int64")
+    store.write_partitioned(
+        validate(chain, CHAIN_SCHEMA, CHAIN_REQUIRED_NOT_NULL),
+        tmp_path / "chains",
+        ["asof_date", "underlying"],
+    )
+    rates = pd.DataFrame(
+        {
+            "asof_date": [asof] * 4,
+            "tenor": ["3M", "1Y", "2Y", "5Y"],
+            "rate": [100 * rate] * 4,
+            "source": ["test"] * 4,
+        }
+    )
+    store.write_partitioned(
+        validate(rates, CURVE_SCHEMA, CURVE_REQUIRED_NOT_NULL), tmp_path / "curves", ["asof_date"]
+    )
+    fwd = []
+    for expiry, overrides in forward_rows.items():
+        T_e = year_fraction(asof, expiry, "ACT/365F")
+        df_e = float(np.exp(-rate * T_e))
+        fwd.append(
+            {
+                "asof_date": asof,
+                "underlying": underlying,
+                "expiry": expiry,
+                "T": T_e,
+                "n_strikes": 9,
+                "forward": FORWARD,
+                "discount_factor_implied": df_e,
+                "discount_factor_curve": df_e,
+                "discount_factor_diff_bp": 0.0,
+                "r_squared": 0.9999,
+                "implied_dividend_yield": 0.0,
+                "announced_dividend_yield": None,
+                "dividend_yield_diff": None,
+                "flag_r2": False,
+                "flag_discount_factor_bp": False,
+                "method": "parity_2p",
+                "dispersion_bp": None,
+                "reliable": True,
+                **overrides,
+            }
+        )
+    store.write_partitioned(
+        validate(pd.DataFrame(fwd), FORWARD_SCHEMA, FORWARD_REQUIRED_NOT_NULL),
+        tmp_path / "forwards",
+        ["asof_date", "underlying"],
+    )
+
+
+def _c7_cfg(tmp_path, asof, single_name: bool):
+    from eqdrisk.config import BaseConfig, Paths, Universe
+
+    return BaseConfig(
+        run_date=asof,
+        universe=Universe(
+            index=[] if single_name else ["TEST"], single_names=["TEST"] if single_name else []
+        ),
+        paths=Paths(raw=str(tmp_path / "raw"), curated=str(tmp_path)),
+        calendar="NYSE",
+        daycount="ACT/365F",
+    )
+
+
+def _ivs(tmp_path):
+    from eqdrisk.io import store
+
+    return store.query("SELECT * FROM iv", views={"iv": str(tmp_path / "implied_vols")}).to_pandas()
+
+
+def test_single_name_expiry_without_a_fit_uses_the_forward_curve(tmp_path):
+    """C7: a long single-name expiry with clean OTM quotes but no forward fit
+    gets its forward from the day's forward curve (here flat, zero carry, so
+    exactly FORWARD) and the rates curve's DF, so today's own quotes are used and
+    recover the true vol, flagged forward_source = curve."""
+    from eqdrisk.vol.implied import FORWARD_FROM_CURVE, FORWARD_FROM_FIT, run_iv_extraction
+
+    asof, short, long_ = dt.date(2026, 8, 20), dt.date(2026, 12, 18), dt.date(2028, 6, 16)
+    _write_c7_inputs(tmp_path, asof, 0.03, [short, long_], {short: {}})
+
+    result = run_iv_extraction(_c7_cfg(tmp_path, asof, single_name=True), asof)
+
+    assert result.curve_forward_expiries["TEST"] == [long_]
+    assert "TEST" not in result.skipped_expiries
+    out = _ivs(tmp_path)
+    out["expiry"] = pd.to_datetime(out["expiry"]).dt.date
+    long_ok = out[(out["expiry"] == long_) & (out["reason"] == OK)]
+    assert len(long_ok) >= 8
+    assert (long_ok["forward_source"] == FORWARD_FROM_CURVE).all()
+    assert (long_ok["iv"] - TRUE_SIGMA).abs().max() < 1e-6
+    assert (out.loc[out["expiry"] == short, "forward_source"] == FORWARD_FROM_FIT).all()
+
+
+def test_index_expiry_without_a_fit_is_still_skipped(tmp_path):
+    from eqdrisk.vol.implied import NO_RELIABLE_FORWARD, run_iv_extraction
+
+    asof, short, long_ = dt.date(2026, 8, 20), dt.date(2026, 12, 18), dt.date(2028, 6, 16)
+    _write_c7_inputs(tmp_path, asof, 0.03, [short, long_], {short: {}})
+
+    result = run_iv_extraction(_c7_cfg(tmp_path, asof, single_name=False), asof)
+
+    assert result.skipped_expiries["TEST"] == [long_]
+    out = _ivs(tmp_path)
+    long_rows = out[pd.to_datetime(out["expiry"]).dt.date == long_]
+    assert (long_rows["reason"] == NO_RELIABLE_FORWARD).all()
+    assert long_rows["forward_source"].isna().all()
+
+
+def test_curve_df_forward_extracts_ivs_with_the_curve_discount_factor(tmp_path):
+    """A curve_df fit was made with the curve's DF; its IVs must use that DF too,
+    not the (drifting, for American options) parity-implied one."""
+    from eqdrisk.vol.implied import run_iv_extraction
+
+    asof, expiry = dt.date(2026, 8, 20), dt.date(2027, 6, 17)
+    _write_c7_inputs(
+        tmp_path,
+        asof,
+        0.03,
+        [expiry],
+        {expiry: {"method": "curve_df", "dispersion_bp": 5.0, "discount_factor_implied": 0.90}},
+    )
+
+    run_iv_extraction(_c7_cfg(tmp_path, asof, single_name=True), asof)
+
+    ok = _ivs(tmp_path).query("reason == 'OK'")
+    assert len(ok) >= 8
+    assert (ok["iv"] - TRUE_SIGMA).abs().max() < 1e-6

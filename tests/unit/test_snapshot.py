@@ -165,3 +165,45 @@ def test_a_failing_rates_feed_is_reported_not_fatal(tmp_path, monkeypatch, make_
 
     assert set(result.qc.chain_rows) == {"SPX", "NVDA", "AAPL"}
     assert "rates" in result.qc.failures
+
+
+def test_rerun_keeps_existing_snapshots_and_fills_only_the_gaps(
+    tmp_path, monkeypatch, make_chain_df, no_sleep
+):
+    """A re-run after the close used to overwrite the day's real snapshot (SPX
+    2026-09-09 and 09-14 were lost that way). It must now keep what exists and
+    fetch only what failed the first time."""
+    _fake_sources(monkeypatch, make_chain_df, failing={"SPX"})
+    run_snapshot(_cfg(tmp_path), dt.date(2026, 9, 15))
+    nvda = (
+        tmp_path
+        / "curated"
+        / "chains"
+        / "asof_date=2026-09-15"
+        / "underlying=NVDA"
+        / "part-0.parquet"
+    )
+    before = nvda.read_bytes()
+
+    fetched: list[str] = []
+
+    def fetch_option_chain(underlying, asof_ts):
+        fetched.append(underlying)
+        return make_chain_df(dt.date(2026, 9, 15), underlying, 7)
+
+    monkeypatch.setattr(snapshot_module.sources, "fetch_option_chain", fetch_option_chain)
+    result = run_snapshot(_cfg(tmp_path), dt.date(2026, 9, 15))
+
+    assert fetched == ["SPX"]
+    assert sorted(result.qc.kept_existing) == ["AAPL", "NVDA"]
+    assert "kept existing snapshot" in result.qc.render()
+    assert nvda.read_bytes() == before
+
+
+def test_force_replaces_an_existing_snapshot(tmp_path, monkeypatch, make_chain_df, no_sleep):
+    _fake_sources(monkeypatch, make_chain_df, failing=set())
+    run_snapshot(_cfg(tmp_path), dt.date(2026, 9, 15))
+    result = run_snapshot(_cfg(tmp_path), dt.date(2026, 9, 15), force=True)
+
+    assert result.qc.kept_existing == []
+    assert set(result.qc.chain_rows) == {"SPX", "NVDA", "AAPL"}

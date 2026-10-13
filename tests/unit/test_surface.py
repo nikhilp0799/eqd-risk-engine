@@ -87,6 +87,7 @@ def _write_synthetic_iv_store(root, asof, expiries_and_params, underlying="TEST"
                     "weight": np.ones(n),
                     "reason": ["OK"] * n,
                     "carried_from": [None] * n,
+                    "forward_source": ["fit"] * n,
                 }
             )
         )

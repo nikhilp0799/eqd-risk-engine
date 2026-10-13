@@ -141,6 +141,9 @@ IMPLIED_VOL_SCHEMA = pa.schema(
         # Stale fill: the date this quote was actually observed, when it was
         # carried forward from an earlier day (null for today's own quotes).
         ("carried_from", pa.date32()),
+        # "fit" (the expiry's own parity fit) or "curve" (the day's forward curve,
+        # single names with no reliable fit); null when the expiry was skipped.
+        ("forward_source", pa.string()),
     ]
 )
 IMPLIED_VOL_REQUIRED_NOT_NULL = [
