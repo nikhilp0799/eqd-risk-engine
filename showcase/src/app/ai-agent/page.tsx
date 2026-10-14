@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Badge, Card, DemoNote, Methodology, NextLink, PageHeader, StatTile, Takeaway } from "@/components/ui";
-import { fmtDate, pct, usdCompact } from "@/lib/format";
-import { ai, aiAgent, pnl } from "@/lib/metrics";
+import { fmtDate, pct, signedUsdCompact, usdCompact } from "@/lib/format";
+import { ai, aiAgent } from "@/lib/metrics";
 
 export const metadata: Metadata = {
   title: "AI Risk Analyst — EQD Risk Engine",
@@ -50,7 +50,7 @@ export default function AiAgentPage() {
 
       {r && (
         <Takeaway>
-          Given the <strong>{usdCompact(pnl.unexplained)}</strong> gap, the analyst didn&apos;t just
+          Given a <strong>{usdCompact(Math.abs(ai.unexplained))}</strong> gap ({pct(Math.abs(ai.unexplainedPctOfBook), 2)} of book), the analyst didn&apos;t just
           summarise the numbers. It ran its own stress test on the {r.positionLabel}: NVIDIA down{" "}
           {pct(-r.spotShockPct)} and volatility up by a quarter. That took{" "}
           <strong>{usdCompact(-r.priceDelta)}</strong> ({pct(-r.priceDeltaPct, 1)}) off the
@@ -68,7 +68,7 @@ export default function AiAgentPage() {
         <StatTile
           label="Position it flagged"
           value={aiAgent.flagged_positions[0]?.position_id ?? "None"}
-          detail={pnl.topPositionLabel}
+          detail={ai.topPositionLabel}
         />
         <StatTile
           label="Where it runs"
@@ -80,8 +80,8 @@ export default function AiAgentPage() {
       <Card title="How the investigation went">
         <ol>
           <Step n={1} title="Spotted the outlier">
-            Of the day&apos;s {usdCompact(pnl.unexplained)} unexplained P&amp;L, the largest share
-            ({pct(pnl.topPositionShare)}) sat in the {pnl.topPositionLabel}. The analyst picked it
+            Of the day&apos;s {signedUsdCompact(ai.unexplained)} unexplained P&amp;L, the largest share
+            ({pct(Math.min(ai.topPositionShare, 100))}) sat in the {ai.topPositionLabel}. The analyst picked it
             for a closer look.
           </Step>
           {r && (
@@ -114,6 +114,11 @@ export default function AiAgentPage() {
             <blockquote className="rounded-xl border-l-4 border-brand bg-subtle px-4 py-3 text-ink">
               {aiAgent.root_cause_hypothesis}
             </blockquote>
+            <p className="mt-2 text-xs text-muted">
+              An AI hypothesis for a person to check, not a conclusion. On an earlier day the team&apos;s own
+              investigation of this note&apos;s gaps found the causes in the engine&apos;s inputs and
+              model; see the Daily P&amp;L Explain case study.
+            </p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Badge tone={confidenceTone}>AI confidence: {aiAgent.confidence}</Badge>
               <span className="text-xs text-muted">Written by the AI analyst, not independently verified.</span>
@@ -137,7 +142,7 @@ export default function AiAgentPage() {
       </Card>
 
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border bg-surface px-6 py-5">
-        <p className="text-ink-2">See the P&amp;L breakdown the analyst was working from.</p>
+        <p className="text-ink-2">See how the daily P&amp;L check works, and the case study behind it.</p>
         <NextLink href="/pnl-explain">Open Daily P&amp;L Explain</NextLink>
       </div>
 

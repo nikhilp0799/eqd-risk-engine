@@ -15,6 +15,12 @@ number), and `daily_ingest.sh` greps for that marker after each run, logging a d
 `RESIDUAL ALERT` line if found — without changing the script's exit code, since a breach is a real
 finding to review, not a crash.
 
+**Re-running a past day is safe for the option chains (since 2026-10-14).** `eqdrisk ingest` keeps
+an existing chain snapshot for a date and fetches only the underlyings that are missing; pass
+`--force` to replace one on purpose. Before this, an after-hours re-run of the pipeline overwrote
+the real 16:30 SPX snapshots of 2026-09-09 and 2026-09-14 with stale after-hours quotes, and the
+originals could not be recovered (both days now mark only the non-SPX positions).
+
 ## What's set up
 
 - **`scripts/daily_ingest.sh`** — runs the full daily pipeline for "today," skipping outright (not

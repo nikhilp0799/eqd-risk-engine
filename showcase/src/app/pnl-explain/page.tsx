@@ -21,7 +21,6 @@ const drivers = pnlExplain.waterfall.map((s) => ({
   expected: s.explained_pnl,
   actual: s.actual_pnl,
 }));
-const vol = pnlExplain.waterfall.find((s) => s.step === "vol");
 
 const ranked = pnlExplain.by_position.map((p) => ({
   label: pnlExplain.positions[p.position_id] ?? p.position_id,
@@ -41,6 +40,11 @@ const history = pnlExplain.residual_series.map((p) => ({
   pct: p.residual_bp / 100,
 }));
 
+// The driver with the largest gap on the featured day, stated from the data.
+const biggestGapDriver = [...pnlExplain.waterfall].sort(
+  (a, b) => Math.abs(b.residual) - Math.abs(a.residual),
+)[0];
+
 export default function PnlExplainPage() {
   return (
     <div className="flex flex-col gap-8">
@@ -48,41 +52,61 @@ export default function PnlExplainPage() {
         section="Daily P&L Explain"
         title="Where the day's P&L came from"
         lede="Each evening the engine splits the book's profit and loss into its drivers and checks the total against what the risk model predicted. Anything it can't account for is flagged and traced to the position behind it."
-        meta={`Featured day: ${fmtDate(pnlExplain.day0)} to ${fmtDate(pnlExplain.asof_date)}`}
+        meta={`Case study: ${fmtDate(pnlExplain.day0)} to ${fmtDate(pnlExplain.asof_date)}`}
       />
 
       <Takeaway>
-        The book made <strong>{signedUsdCompact(pnl.actual)}</strong>, but the risk model expected{" "}
-        <strong>{signedUsdCompact(pnl.expected)}</strong>. That <strong>{usdCompact(pnl.unexplained)}</strong>{" "}
-        gap is {pct(pnl.unexplainedPctOfBook, 1)} of book value, far above the{" "}
-        {pct(pnl.alertPctOfBook, 2)} alert level, and <strong>{pct(pnl.topPositionShare)}</strong> of
-        it came from one position: the {pnl.topPositionLabel}. The engine flagged it the same evening
-        and handed it to the AI Risk Analyst.
+        On {fmtDate(pnlExplain.asof_date)} the engine flagged{" "}
+        <strong>{usdCompact(pnl.thenUnexplained)}</strong> of P&amp;L it could not explain,{" "}
+        {pct(pnl.thenUnexplainedPctOfBook, 1)} of book value, {pct(pnl.thenTopPositionShare)} of it
+        from one position: the {pnl.topPositionLabel}. The investigation traced the gap to the
+        engine&apos;s own inputs and model, not the market. After four fixes and a rebuild of the
+        full history, the same day shows a gap of <strong>{usdCompact(Math.abs(pnl.unexplained))}</strong>{" "}
+        ({pct(Math.abs(pnl.unexplainedPctOfBook), 2)} of book), and the average daily gap is{" "}
+        {pct(pnl.meanGapReduction)} smaller.
       </Takeaway>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="Actual P&L" value={signedUsdCompact(pnl.actual)} />
-        <StatTile label="Expected by risk model" value={signedUsdCompact(pnl.expected)} />
         <StatTile
-          label="Unexplained"
-          value={usdCompact(pnl.unexplained)}
-          detail={`${pct(pnl.unexplainedPctOfBook, 1)} of book value`}
+          label="Unexplained, as first flagged"
+          value={usdCompact(pnl.thenUnexplained)}
+          detail={`${pct(pnl.thenUnexplainedPctOfBook, 1)} of book value`}
           tone="critical"
         />
         <StatTile
-          label="Traced to one position"
-          value={pct(pnl.topPositionShare)}
-          detail={pnl.topPositionLabel}
+          label="Same day, after the fixes"
+          value={usdCompact(Math.abs(pnl.unexplained))}
+          detail={`${pct(Math.abs(pnl.unexplainedPctOfBook), 2)} of book value`}
+        />
+        <StatTile
+          label="Average daily gap"
+          value={`${pct(pnl.meanGapBeforePct, 2)} to ${pct(pnl.meanGapAfterPct, 2)}`}
+          detail="Of book value, on the same 16 trading days before and after"
+        />
+        <StatTile
+          label="Days still alerting"
+          value={`${pnl.daysBreached} of ${pnl.daysRecorded}`}
+          detail={`${pnl.daysInconclusive} within simulation noise, ${pnl.daysWithinThreshold} clear`}
         />
       </div>
 
       <Card
-        title="Expected vs. actual, by driver"
-        subtitle={
-          vol
-            ? `Almost all of the gap sits in volatility: the model expected the volatility move to cost ${usdCompact(-vol.explained_pnl)}, while the book actually gained ${usdCompact(vol.actual_pnl)} from it.`
-            : undefined
-        }
+        title="What the investigation found"
+        subtitle="The first explanation, missing risk sensitivities, did not hold up when tested on six weeks of history. These four causes did, and each was fixed and measured on every stored day."
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
+          {pnl.findings.map((f) => (
+            <div key={f.title} className="rounded-xl bg-subtle px-4 py-3">
+              <p className="font-medium text-ink">{f.title}</p>
+              <p className="mt-1 text-sm text-ink-2">{f.body}</p>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card
+        title="Expected vs. actual, by driver, after the fixes"
+        subtitle={`On the case-study day the model expected ${signedUsdCompact(pnl.expected)} and the book made ${signedUsdCompact(pnl.actual)}. The largest remaining difference is in ${DRIVER_LABELS[biggestGapDriver.step].toLowerCase()} (${signedUsdCompact(biggestGapDriver.residual)}).`}
       >
         <GroupedBars
           data={drivers}
@@ -97,27 +121,25 @@ export default function PnlExplainPage() {
       </Card>
 
       <Card
-        title="Unexplained P&L by position"
-        subtitle={`One position accounts for nearly all of it. The other ${ranked.length - 1} positions together make up ${pct(100 - pnl.topPositionShare)}.`}
+        title="Unexplained P&L by position, after the fixes"
+        subtitle={`The ${pnl.topPositionLabel} is still the largest contributor; the other ${ranked.length - 1} positions together make up ${pct(Math.max(0, 100 - pnl.topPositionShare))}.`}
       >
         <RankedBars data={positionBars} highlight={pnl.topPositionLabel} format="usdCompact" />
       </Card>
 
       <Card
         title="Alert history"
-        subtitle={`Unexplained P&L as a share of book value, one bar per trading day. The alert level is ±${pct(pnl.alertPctOfBook, 2)}, too small to see at this scale, and every bar is well past it: the alert fired on ${pnl.daysBreached} of ${pnl.daysRecorded} recorded days, and on every day with a position breakdown (${pnl.daysWithBreakdown} of them) the same note was the biggest contributor. That points to a known modelling limit for this product type, not random noise, and it stays flagged until it is fixed.`}
+        subtitle={`Unexplained P&L as a share of book value, one bar per trading day, after the fixes. A day alerts only when the gap is wider than the ±${pct(pnl.alertPctOfBook, 2)} alert level even after allowing for simulation noise: ${pnl.daysBreached} of ${pnl.daysRecorded} days alert, ${pnl.daysInconclusive} are within noise and ${pnl.daysWithinThreshold} are clear. The largest remaining gaps come from the structured note on days with big NVIDIA moves or changes in the shape of its volatility curve, a known limit of sensitivity-based explanations for this product.`}
       >
         <AlertHistory data={history} highlightDate={pnlExplain.asof_date} />
         <p className="mt-3 text-xs text-muted">
-          Days where either day&apos;s valuation is missing (market holidays, missed runs) are left out
-          rather than shown as zero.
+          Days where either day&apos;s valuation is missing (market holidays, missed runs, lost data)
+          are left out rather than shown as zero.
         </p>
       </Card>
 
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border bg-surface px-6 py-5">
-        <p className="text-ink-2">
-          What did the AI Risk Analyst make of this gap?
-        </p>
+        <p className="text-ink-2">What did the AI Risk Analyst make of this day?</p>
         <NextLink href="/ai-agent">Read its investigation</NextLink>
       </div>
 
@@ -125,26 +147,30 @@ export default function PnlExplainPage() {
         <p>
           <strong className="text-ink">Attribution.</strong> Explained P&amp;L is a Greeks-based
           Taylor expansion applied sequentially: time (theta), rates and dividends (rho, dividend
-          rho), spot (delta, gamma) and volatility (vega, plus vanna and volga for Monte Carlo-priced
-          exotics). Actual P&amp;L is full revaluation on each day&apos;s calibrated market. The
-          residual is actual minus explained.
+          rho), spot (delta, gamma) and volatility (vega, measured where the position&apos;s
+          exposure sits). Actual P&amp;L is full revaluation on each day&apos;s calibrated market.
+          The residual is actual minus explained.
         </p>
         <p>
-          <strong className="text-ink">Alert level.</strong> {pnlExplain.residual_alert_threshold_bp}bp
-          of NAV per day, applied to the book total.
+          <strong className="text-ink">Alert level and noise.</strong>{" "}
+          {pnlExplain.residual_alert_threshold_bp}bp of NAV per day. Monte Carlo-priced positions
+          carry a standard error from 16 independently scrambled sub-runs; a day alerts only if the
+          residual exceeds the threshold by more than two standard errors, and is inconclusive when
+          the noise band alone is wider than the threshold.
         </p>
         <p>
-          <strong className="text-ink">Why the autocallable note dominates.</strong> The note is
-          priced by local-volatility Monte Carlo and its Greeks come from bump-and-revalue. Its value
-          is path-dependent and strongly non-linear in spot and vol near its barriers, so a
-          second-order Greek expansion misses a large part of a big daily move. Adding vanna and volga
-          cut the residual by about 13% but did not close it; a full-revaluation step for this
-          position is the fix.
+          <strong className="text-ink">What changed.</strong> Better-conditioned Greeks for the
+          Monte Carlo exotics; single-name forwards fitted with the rates curve&apos;s discount
+          factor and one reliability rule for surface and pricing; flat implied vol and continued
+          carry past the last expiry; short gaps in long-dated quotes filled from the previous day;
+          a fixed local-vol smoothing strength; and observation dates simulated exactly. The full
+          write-up, including the original diagnosis that turned out to be wrong, is in the
+          incident report in the code repository.
         </p>
         <p>
-          <strong className="text-ink">Data handling.</strong> Early days predate the stored NAV
-          column; for those, NAV is the day&apos;s stored book value from the portfolio marks. Day
-          pairs without marks on both sides are excluded.
+          <strong className="text-ink">The figures as first flagged</strong> come from the original
+          run on that day; the stored history has since been recomputed with the fixes, so they are
+          kept as fixed values.
         </p>
       </Methodology>
 

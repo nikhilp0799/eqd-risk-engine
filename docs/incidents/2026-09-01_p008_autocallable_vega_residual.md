@@ -1,5 +1,13 @@
 # Incident: P&L Explain Residual Breach — P008 (NVDA autocallable), 2026-08-31 -> 2026-09-01
 
+> **Correction (2026-10-14).** The root cause below (missing vanna and volga) was wrong. A
+> follow-up investigation found the residual came from Monte Carlo noise in the note's Greeks,
+> unstable long-dated market inputs, local-vol smoothing noise, and mistimed observation dates;
+> adding vanna and volga added noise rather than information. On the same day pair the residual
+> is now -$35,611 (-84bp of NAV), down from +$178,461. The original report is kept below
+> unchanged as the record of what was believed at the time; see
+> [Follow-up investigation](#follow-up-investigation-2026-10-05-to-2026-10-14) at the end.
+
 ## Summary
 
 The first real consecutive-trading-day run of Step 12's daily P&L explain (day-over-day residual
@@ -124,3 +132,82 @@ should be reported (and thresholded) separately.
    days, is not automatically apples-to-apples if the target period's own data was still being
    ingested at the time of the first run — worth remembering for any future day-pair replay done
    same-day rather than the day after.
+
+## Follow-up investigation (2026-10-05 to 2026-10-14)
+
+Six weeks of daily history made it possible to test the original diagnosis instead of reasoning
+about it. It did not hold up. Five separate causes were found; each was measured on the full
+stored history before being fixed, and the whole history was rebuilt from the stored raw option
+chains after each fix. Planning record: `planning/pnl_explain_noise_plan.md` and
+`planning/input_stability_plan.md` (local, not in the repo).
+
+### What was actually wrong
+
+1. **Monte Carlo noise in P008's Greeks.** Repeating the 2026-09-03 explain with 10 different
+   random seeds showed a single-run spread of about +-$116K on that day, almost all in the vol
+   step. The note's Greeks came from 1% spot and 1 vol-point bumps of a payoff with hard barriers:
+   day-0 gamma varied by ~105% across seeds, vanna by 250-5,000%, volga by 330-2,300%. Adding vanna
+   and volga (the original remediation) therefore added noise, and the "~13% reduction" measured
+   above was a single-seed result. Fixes: a Monte Carlo standard error on every residual (16
+   independently scrambled quasi-random sub-runs), an alert only when the residual exceeds the
+   threshold by more than its noise, and better-conditioned Greeks for Monte Carlo exotics (5%
+   spot / 3 vol-point bumps, theta from a one-day revaluation). Vanna is deliberately not used:
+   the vol step reprices after the spot move, so a vanna term would double-count.
+2. **Long-dated inputs flickering day to day.** NVDA's vol surface ended anywhere between 0.24y
+   and 1.29y depending on the day (P008 matures at 1.88y), so the note was priced on an
+   extrapolated long end that changed for no market reason. Causes: put-call-parity forwards for
+   American single-name options failed a discount-factor test at long maturities; the pricing
+   forward curve used forwards the surface had rejected; extrapolation past the last expiry
+   assumed zero future volatility and zero carry; and most long expiries had too few strikes
+   with both legs tradeable to fit a forward at all. Fixes: single-name forwards fitted with the
+   rates curve's discount factor, one reliability rule for surface and pricing, flat implied vol
+   and continued carry past the last expiry, yesterday's quotes carried for up to 3 trading days
+   when an expiry disappears, and forwards from the day's forward curve for single-name expiries
+   with clean quotes but no fit. NVDA's surface now reaches 2.2-2.3y on every stored day.
+3. **Local-vol smoothing noise.** The smoothing spline behind the Dupire local-vol surface chose
+   its smoothness automatically (GCV) at every grid point, every day: from 3.7e-6 to 19 across a
+   single day's grid. Pricing 1.88y vanillas through the local-vol Monte Carlo, the error against
+   Black-76 on the implied surface moved 1.7-2.4 vol points a day (2-3.5x the market's own moves)
+   and reversed the next day. A fixed smoothness cut that to 0.26-0.36 vol points.
+4. **Observation dates off by up to 5.5 days.** The autocallable was simulated on an evenly spaced
+   grid with each observation snapped to the nearest point, which is only exact when observations
+   are evenly spaced from today. For a seasoned note the error drifted daily and jumped by about
+   10 days on some nights (P008's theta read $14,658 instead of about $1,000 on 2026-10-09). The
+   simulation grid now contains every observation date exactly.
+5. **Lost data.** SPX chains for 2026-09-09 and 2026-09-14 had been overwritten by after-hours
+   re-runs of the pipeline. Ingest now keeps an existing snapshot unless forced.
+
+### Numbers
+
+This day pair (2026-08-31 -> 2026-09-01):
+
+| Stage | Total residual |
+|---|---|
+| Original report (single run, 1%/1pt Greeks) | +$178,461 (about 429bp of NAV) |
+| After the vanna/volga change | +$151,705 |
+| Noise-aware residual and better Greeks | -$43,927 (-104bp) |
+| All fixes above | **-$35,611 (-84bp, 2 SE +-9bp)** |
+
+On the 16 day pairs explained both before and after the input and model fixes (2-4 above), the
+mean absolute total residual fell from 104.9bp to 32.5bp and the worst day from 299bp to 84bp;
+P008's typical daily price move fell from $54.6K to $9.4K. Including the two newest day pairs the
+current mean is 37.4bp (worst 106bp, 2026-10-14, NVDA -3.2%).
+
+### What remains, honestly
+
+This day pair is still one of the larger ones: on full revaluation the day's vol-surface change
+cost P008 $45.6K, while vega times the ATM vol move explains $3.6K. Two kinds of residual remain
+across history: a few vol-step days where the note's response to the surface's shape (skew and
+term structure, not a single ATM move) matters, and big NVDA move days (about -3%) where a
+delta-gamma expansion of a path-dependent payoff falls short. The standard next step for both is
+a spot-and-vol revaluation ladder for the Monte Carlo exotics; it is documented, not built.
+
+### Corrected lessons
+
+1. Test a diagnosis against noise before acting on it: one run of a Monte Carlo explain is one
+   draw, and this one was a draw from a distribution about +-$100K wide.
+2. A residual can be produced by the inputs and the model as easily as by missing Greeks. Most of
+   this one came from our own calibration (forwards, extrapolation, smoothing) and simulation
+   (observation dates) changing day to day, not from the market.
+3. The Impact section above understates the size by a factor of ten ("~43bp"); $178K on a
+   $4.16M book is about 429bp.

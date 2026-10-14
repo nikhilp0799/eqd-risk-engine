@@ -48,20 +48,26 @@ not tuned-to-look-clean ones:
   that could zero out all quote coverage depending on time of day (Step 4), and a documented
   "exact" stress-shock math claim that turned out to be off by up to ~40% once actually tested
   (Step 11).
-- The project's first real day-over-day P&L explain run found a $178k unexplained residual, 99.6%
-  of it traced to one position (an NVDA autocallable) whose vega-only Greek set couldn't see its
-  true vol sensitivity near the note's barriers — exactly the gap the README had predicted for
-  this instrument type back in Step 6. Written up as a real incident report and partially fixed
-  (Step 12/13); see `docs/incidents/2026-09-01_p008_autocallable_vega_residual.md` for the honest
-  before/after (the fix helps but doesn't fully close the gap, and the report explains why).
+- The project's first real day-over-day P&L explain run found a $178k unexplained residual, almost
+  all in one position (P008, an NVDA autocallable). The first diagnosis, a vega-only Greek set
+  missing vanna and volga, turned out to be wrong once six weeks of history allowed testing it:
+  repeating the explain with 10 random seeds showed the residual was mostly Monte Carlo noise in
+  the note's Greeks, and the rest came from our own inputs and model changing day to day
+  (flickering long-dated forwards and vol surface, unstable local-vol smoothing, observation dates
+  simulated up to 5.5 days off). Each cause was measured and fixed and the whole history rebuilt
+  from stored option chains: once the noise was handled, the input and model fixes cut the mean
+  absolute residual on the 16 comparable day pairs from 105bp to 33bp of NAV, and the incident day
+  itself went from +$178k to -$36k. The incident report keeps
+  the original diagnosis as the record and adds the correction:
+  `docs/incidents/2026-09-01_p008_autocallable_vega_residual.md`.
 - Building the dashboard (Step 14) surfaced a real gap: two stress-testing modules (Step 11) and
   P&L explain's per-position breakdown had never persisted their results to disk, only rendered
   them in-memory via the CLI — which would have meant either violating the dashboard's own "no
   live computation" rule or building it half-honestly. Fixed by adding real persistence to all
   three before the dashboard was built, the same pattern every other step already uses.
 - Writing the model documentation (Step 15) required no new findings of its own — its job was to
-  state, in one place, the ones already found: the vega-only Greek gap (Step 13) leads its
-  limitations section, per the step's own stated grading bar that a model doc's limitations
+  state, in one place, the ones already found: the P&L-explain residual on Monte Carlo exotics
+  (Step 13, with its corrected root causes) leads its limitations section, per the step's own stated grading bar that a model doc's limitations
   section matters more than its "it works" claims.
 - Real, measured (not estimated) performance numbers (Step 16): SPX surface calibration in 0.22s
   and a single autocallable MC price in 0.86s both comfortably beat their targets, but full book
@@ -75,8 +81,12 @@ not tuned-to-look-clean ones:
   single-shot LLM call, no decision loop) when asked directly — rebuilt with real tool-calling
   (Ollama's native function-calling API, confirmed live) so the model can request a real pricing
   reprice or read a specific documentation section before answering, with the full tool-call trace
-  persisted and shown rather than hidden. On real data, a 7B local model independently re-derived
-  the same root cause as Step 12/13's human-written incident report — see "Beyond the 16 steps".
+  persisted and shown rather than hidden. On real data a 7B local model consistently singles out the
+  right position (the NVDA autocallable) and runs its own what-if reprice on it, but its stated
+  causes are generic and sometimes wrong (on one day it read its own hypothetical -10% stress as a
+  real market move), and it echoed the incident report's original diagnosis, which was itself later
+  disproved. That is why every output is labelled an unverified hypothesis for a person to check —
+  see "Beyond the 16 steps".
 - Deep hedging (PyTorch, also beyond the 16 steps) delivered two different, both-honest findings
   across its three real instruments (vanilla, the P008 autocallable, the P007 down-and-in put) —
   not a uniform "AI wins" sweep. On the autocallable, variance/cost-trained policies cut P&L
@@ -936,8 +946,12 @@ Report:
 **Status: done, verified live.** `pricing/pnl_explain.py` builds the time -> rates/divs -> spot ->
 vol waterfall from two real `MarketState`s; verified on the first real consecutive trading-day pair
 the automated pipeline produced (2026-08-31 -> 2026-09-01), where it found a genuine $178k
-residual, 99.6% traced to one position — see Step 13. The 60+ day acceptance bar (median residual
-< 2bp) is still pending real history; every automated day adds one more real point toward it.
+residual, almost all in one position — see Step 13. Since 2026-10 every residual carries a Monte
+Carlo standard error (16 independently scrambled sub-runs) and alerts only when it exceeds the 5bp
+threshold by more than its noise (otherwise INCONCLUSIVE). Current state over 18 real day pairs:
+mean absolute residual 37bp of NAV, almost all from the NVDA autocallable on a few vol-surface-shape
+days and big NVDA move days (see Step 13). The 60+ day acceptance bar (median residual < 2bp) is
+still pending real history and is not met for the Monte Carlo exotics.
 
 **This is the module that makes the project read as risk rather than pricing.**
 
@@ -977,12 +991,15 @@ If your residual is small and stable, your risk representation is adequate. If i
 
 ## Step 13 — The incident report
 
-**Status: done, verified live.** Step 12's first real day pair handed this a genuine incident (see
-`docs/incidents/2026-09-01_p008_autocallable_vega_residual.md`): 99.6% of a $178k residual traced
-to the NVDA autocallable's vega-only Greek set. Fixed by adding vanna/volga to the autocallable and
-barrier Monte Carlo pricers (same architectural gap in both) and re-verified live — the fix is
-real and directionally correct (vol-step residual fell ~13%) but honestly does not fully close the
-gap, which the report itself explains.
+**Status: done, verified live, and corrected.** Step 12's first real day pair handed this a genuine
+incident (see `docs/incidents/2026-09-01_p008_autocallable_vega_residual.md`): a $178k residual,
+almost all in the NVDA autocallable. The original diagnosis (missing vanna/volga) and its "~13%
+improvement" were single-run results and did not survive testing. The follow-up investigation in
+the same report found five real causes: Monte Carlo noise in the note's Greeks, flickering
+long-dated forwards and vol surface, extrapolation past the last expiry that assumed zero future
+vol and carry, local-vol smoothing re-chosen at every grid point every day, and observation dates
+simulated up to 5.5 days off. All fixed and measured on the rebuilt history; the incident day's
+residual went from +$178k to -$36k (-84bp). The report keeps the original text as the record.
 
 Take the worst residual day from Step 12 and write it up as a production incident, in the format a bank actually uses.
 
@@ -1064,8 +1081,9 @@ Design constraint: **every number on the dashboard must be traceable to a stored
 
 **Status: done.** `docs/model_documentation.md` — 12-15 pages, all 9 required sections, written
 from real numbers pulled from the codebase and decision log rather than generic claims. The
-limitations section leads with the Step 13 incident (the vega-only Greek gap) as the clearest
-real evidence of where local vol structurally falls short, per this step's own stated grading bar.
+limitations section leads with the Step 13 incident (the P&L-explain residual on Monte Carlo
+exotics, with its corrected root causes and what remains) as the clearest real evidence of the
+model's limits, per this step's own stated grading bar.
 
 12–15 pages, written in the style of an SR 11-7 model development document. Structure:
 
@@ -1238,6 +1256,14 @@ with an honest `parse_error` flag rather than silently dropping it.
   shocked gamma -2068.48), and used them in its final answer — flagging **P008 (the NVDA
   autocallable)** with a "non-linear gamma risk" hypothesis that referenced the real numbers its
   own tool call returned, not just the original P&L-explain data.
+- **Rerun 2026-10-14** on all 18 recomputed day pairs (after the incident's real causes were found
+  and fixed, Step 13): the model flagged P008 on the alerting days and called the reprice tool each
+  time, but its hypotheses stayed generic ("possible mispricing in the model"), and on 2026-09-03 it
+  presented its own hypothetical -10% stress as an observed move, at high confidence. One run
+  pointed at a vol-surface coverage change it was given as a note (the kind of input cause the
+  investigation actually found); the other 17 stayed at "check the model's sensitivities". Useful
+  as a first-pass triage that runs the right test on the right position; not a substitute for the
+  investigation.
 
 **A real debugging finding along the way, not a cosmetic one.** The first three live runs against
 this exact breach pair all skipped tool use entirely — even with a "you MUST call the tool"
