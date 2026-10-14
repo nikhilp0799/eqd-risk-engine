@@ -32,7 +32,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from eqdrisk.pricing.monte_carlo import simulate_local_vol_paths
+from eqdrisk.pricing.monte_carlo import next_power_of_two, simulate_local_vol_paths
 from eqdrisk.vol.local_vol import LocalVolGrid
 
 
@@ -91,6 +91,37 @@ def autocallable_payoff(
     return pv
 
 
+def observation_time_grid(
+    obs_times: np.ndarray, n_steps_per_period: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """A simulation time grid with every observation date exactly on a grid
+    point, and the grid index of each observation.
+
+    `next_power_of_two(n_steps_per_period * len(obs_times))` steps in total (the
+    Brownian bridge needs a power of two), split across the periods in
+    proportion to their length (largest remainder, at least one each), evenly
+    spaced within a period. Replaced (2026-10-14) an evenly spaced grid from 0
+    to maturity with each observation snapped to its nearest point: exact only
+    when observations are evenly spaced from today, which a seasoned note's are
+    not (its first period is a stub). For P008 that put observations up to 5.5
+    days off their real dates, and the error jumped by ~10 days on some nights
+    (planning/input_stability_plan.md). For evenly spaced observations the two
+    grids coincide."""
+    obs = np.asarray(obs_times, dtype=float)
+    edges = np.concatenate([[0.0], obs])
+    lengths = np.diff(edges)
+    total = next_power_of_two(n_steps_per_period * len(obs))
+    raw = total * lengths / edges[-1]
+    counts = np.maximum(np.floor(raw).astype(int), 1)
+    while counts.sum() < total:
+        counts[int(np.argmax(raw - counts))] += 1
+    while counts.sum() > total:
+        counts[int(np.argmax(np.where(counts > 1, counts - raw, -np.inf)))] -= 1
+    pieces = [np.linspace(edges[i], edges[i + 1], c + 1)[:-1] for i, c in enumerate(counts)]
+    grid = np.concatenate([*pieces, [edges[-1]]])
+    return grid, np.cumsum(counts)
+
+
 def price_autocallable(
     spec: AutocallableSpec,
     s0: float,
@@ -102,14 +133,13 @@ def price_autocallable(
     seed: int | None = None,
 ) -> tuple[float, float]:
     """Simulates to the note's maturity (the last `obs_times` entry) and applies
-    `autocallable_payoff` to the levels at each observation date (nearest
-    simulated grid point — exact when `n_steps_per_period` is a power of two and
-    `len(obs_times)` is too, as in the README's own quarterly/2yr example)."""
+    `autocallable_payoff` to the levels at each observation date, each of which
+    is exactly a simulated grid point (`observation_time_grid`)."""
     T = float(spec.obs_times[-1])
-    n_steps_total = n_steps_per_period * len(spec.obs_times)
-    result = simulate_local_vol_paths(s0, T, grid, r, q, n_paths, n_steps_total, seed=seed)
-
-    obs_indices = [int(np.argmin(np.abs(result.t_grid - t))) for t in spec.obs_times]
+    t_grid, obs_indices = observation_time_grid(spec.obs_times, n_steps_per_period)
+    result = simulate_local_vol_paths(
+        s0, T, grid, r, q, n_paths, len(t_grid) - 1, seed=seed, t_grid=t_grid
+    )
     obs_levels = result.paths[:, obs_indices]
 
     discounted_payoff = autocallable_payoff(obs_levels, spec, s0, r)

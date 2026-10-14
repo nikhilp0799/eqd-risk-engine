@@ -145,3 +145,49 @@ def test_crn_greeks_reuse_the_same_paths_across_bumps():
         spec, 105.0, grid, r=0.03, q=0.01, n_paths=20_000, n_steps_per_period=8, seed=42
     )
     assert g1 == g2
+
+
+def test_observation_time_grid_puts_every_observation_exactly_on_the_grid():
+    from eqdrisk.pricing.autocallable import observation_time_grid
+
+    obs = 37 / 365 + 0.25 * np.arange(8)  # seasoned note: a stub, then quarterly
+    grid, idx = observation_time_grid(obs, 8)
+
+    assert len(grid) - 1 == 64  # power of two for the Brownian bridge
+    assert grid[0] == 0.0 and np.all(np.diff(grid) > 0)
+    np.testing.assert_array_equal(grid[idx], obs)
+
+
+def test_observation_time_grid_matches_the_even_grid_for_evenly_spaced_observations():
+    from eqdrisk.pricing.autocallable import observation_time_grid
+
+    grid, idx = observation_time_grid(OBS_TIMES, 8)
+    np.testing.assert_allclose(grid, np.linspace(0.0, 2.0, 65), atol=1e-15)
+    assert idx.tolist() == [8 * (i + 1) for i in range(8)]
+
+
+def test_brownian_bridge_on_uneven_times_has_variance_t():
+    from eqdrisk.pricing.monte_carlo import brownian_bridge_paths, sobol_normals
+
+    times = np.concatenate(
+        [[0.0], np.cumsum(np.array([0.01, 0.02, 0.05, 0.1, 0.3, 0.5, 0.7, 1.3]))]
+    )
+    W = brownian_bridge_paths(sobol_normals(1 << 15, 8, seed=3), float(times[-1]), times)
+    np.testing.assert_allclose(W.var(axis=0)[1:], times[1:], rtol=0.03)
+    # Increments over disjoint intervals are uncorrelated.
+    dW = np.diff(W, axis=1)
+    assert abs(np.corrcoef(dW[:, 0], dW[:, 5])[0, 1]) < 0.02
+
+
+def test_price_moves_smoothly_as_a_seasoned_note_rolls_day_by_day():
+    """Rolling the valuation date by one day must not make the price jump. With
+    observations snapped to an evenly spaced grid it did: on this fixture the
+    largest one-day change was 27.7x the typical one (P008's theta spiked to
+    $14.7K vs ~$1K on 2026-10-09); with exact observation dates it is 4.6x."""
+    grid = _flat_vol_grid(0.4)
+    prices = []
+    for stub_days in range(30, 61):
+        spec = _spec(obs_times=stub_days / 365 + 0.25 * np.arange(8))
+        prices.append(price_autocallable(spec, 100.0, grid, 0.04, 0.0, 16384, 8, seed=7)[0])
+    d = np.abs(np.diff(prices))
+    assert d.max() < 8 * np.median(d)

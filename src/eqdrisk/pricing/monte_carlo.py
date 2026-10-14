@@ -43,19 +43,27 @@ def sobol_normals(n_paths: int, n_steps: int, seed: int | None) -> np.ndarray:
     return norm.ppf(uniforms)
 
 
-def brownian_bridge_paths(z: np.ndarray, T: float) -> np.ndarray:
+def brownian_bridge_paths(z: np.ndarray, T: float, times: np.ndarray | None = None) -> np.ndarray:
     """z: (n_paths, n_steps) iid N(0,1) in bridge-construction order, n_steps a
     power of two. Returns W: (n_paths, n_steps+1) standard Brownian motion paths
     over [0, T], W[:, 0] = 0, vectorised across paths (the bridge index pattern is
     identical for every path, only the driving normals differ).
+
+    `times` (n_steps+1 increasing values from 0 to T) puts the grid points at
+    uneven times; the bridge formula is the same, only the times differ. Default:
+    evenly spaced.
     """
     n_paths, n = z.shape
     m = n.bit_length() - 1
     if (1 << m) != n:
         raise ValueError(f"n_steps must be a power of two, got {n}")
+    if times is None:
+        times = np.linspace(0.0, T, n + 1)
+    elif len(times) != n + 1 or times[0] != 0.0 or np.any(np.diff(times) <= 0):
+        raise ValueError("times must be n_steps+1 strictly increasing values starting at 0")
 
     W = np.zeros((n_paths, n + 1))
-    W[:, n] = np.sqrt(T) * z[:, 0]
+    W[:, n] = np.sqrt(times[-1]) * z[:, 0]
     idx = 1
     for k in range(1, m + 1):
         step = n // (1 << k)
@@ -63,9 +71,9 @@ def brownian_bridge_paths(z: np.ndarray, T: float) -> np.ndarray:
         lefts = np.arange(n_mid) * 2 * step
         mids = lefts + step
         rights = lefts + 2 * step
-        t_left = lefts / n * T
-        t_mid = mids / n * T
-        t_right = rights / n * T
+        t_left = times[lefts]
+        t_mid = times[mids]
+        t_right = times[rights]
         w_left = W[:, lefts]
         w_right = W[:, rights]
         frac_right = (t_right - t_mid) / (t_right - t_left)
@@ -159,13 +167,25 @@ def simulate_local_vol_paths(
     n_steps: int,
     seed: int | None = None,
     antithetic: bool = True,
+    t_grid: np.ndarray | None = None,
 ) -> SimulationResult:
     """`n_steps` is rounded up to the next power of two for the Brownian bridge.
     If `antithetic`, half of `n_paths` (also rounded to a power of two — Sobol's
     own balance property requires it, `scipy` warns otherwise) is drawn and negated
-    to form mirrored pairs."""
-    n_steps_pow2 = next_power_of_two(n_steps)
-    t_grid_sim = np.linspace(0.0, T, n_steps_pow2 + 1)
+    to form mirrored pairs.
+
+    `t_grid` (optional) gives the simulation times explicitly, 0 to T with a
+    power-of-two number of steps, for payoffs that must observe the path on exact
+    dates (`pricing.autocallable.observation_time_grid`); `n_steps` is then
+    ignored."""
+    if t_grid is None:
+        n_steps_pow2 = next_power_of_two(n_steps)
+        t_grid_sim = np.linspace(0.0, T, n_steps_pow2 + 1)
+    else:
+        t_grid_sim = np.asarray(t_grid, dtype=float)
+        n_steps_pow2 = len(t_grid_sim) - 1
+        if next_power_of_two(n_steps_pow2) != n_steps_pow2:
+            raise ValueError(f"t_grid must have a power-of-two step count, got {n_steps_pow2}")
 
     if antithetic:
         n_half = next_power_of_two((n_paths + 1) // 2)
@@ -175,7 +195,7 @@ def simulate_local_vol_paths(
         n_paths_pow2 = next_power_of_two(n_paths)
         z = sobol_normals(n_paths_pow2, n_steps_pow2, seed)
 
-    W = brownian_bridge_paths(z, T)
+    W = brownian_bridge_paths(z, float(t_grid_sim[-1]), t_grid_sim)
     dW = np.diff(W, axis=1)
 
     paths = _euler_step_paths(s0, dW, t_grid_sim, r, q, grid.s_grid, grid.t_grid, grid.sigma_loc)
