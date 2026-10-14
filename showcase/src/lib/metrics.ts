@@ -43,9 +43,8 @@ export const DRIVER_SHORT_LABELS: Record<string, string> = {
 
 const topPosition = pnlExplain.by_position[0];
 const residualTotal = sum(pnlExplain.waterfall.map((s) => s.residual));
-const breaches = pnlExplain.residual_series.filter(
-  (p) => Math.abs(p.residual_bp) > pnlExplain.residual_alert_threshold_bp,
-);
+const breaches = pnlExplain.residual_series.filter((p) => p.status === "alert");
+const caseStudy = pnlExplain.case_study;
 
 export const pnl = {
   actual: sum(pnlExplain.waterfall.map((s) => s.actual_pnl)),
@@ -62,6 +61,17 @@ export const pnl = {
     (p) => p.top_position_id === topPosition.position_id,
   ).length,
   daysWithBreakdown: pnlExplain.residual_series.filter((p) => p.top_position_id !== null).length,
+  daysInconclusive: pnlExplain.residual_series.filter((p) => p.status === "inconclusive").length,
+  daysWithinThreshold: pnlExplain.residual_series.filter((p) => p.status === "ok").length,
+  // The incident as first recorded, before the follow-up investigation.
+  thenUnexplained: caseStudy.then_unexplained,
+  thenUnexplainedPctOfBook: caseStudy.then_unexplained_bp / 100,
+  thenTopPositionShare: caseStudy.then_top_position_share_pct,
+  gapReduction: 100 * (1 - Math.abs(residualTotal) / caseStudy.then_unexplained),
+  meanGapBeforePct: caseStudy.mean_abs_bp_before / 100,
+  meanGapAfterPct: caseStudy.mean_abs_bp_after / 100,
+  meanGapReduction: 100 * (1 - caseStudy.mean_abs_bp_after / caseStudy.mean_abs_bp_before),
+  findings: caseStudy.findings,
 };
 
 // ---- Hedging ---------------------------------------------------------------
@@ -177,6 +187,12 @@ const firstCall = aiAgent.trace[0];
 const reprice = firstCall ? (JSON.parse(firstCall.result_summary) as RepriceResult) : null;
 
 export const ai = {
+  // The featured investigation's own day (the most recent alerting day pair),
+  // not the P&L page's case-study day.
+  unexplained: aiAgent.unexplained,
+  unexplainedPctOfBook: aiAgent.unexplained_bp / 100,
+  topPositionLabel: pnlExplain.positions[aiAgent.top_position_id] ?? aiAgent.top_position_id,
+  topPositionShare: aiAgent.top_position_share_pct,
   toolCalls: aiAgent.trace.length,
   reprice: reprice && {
     positionLabel: pnlExplain.positions[reprice.position_id] ?? reprice.position_id,

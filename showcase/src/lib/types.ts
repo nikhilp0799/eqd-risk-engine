@@ -80,6 +80,8 @@ export interface PnlResidualPoint {
   day0: string;
   asof_date: string;
   residual_bp: number;
+  noise_band_bp: number;
+  status: "alert" | "inconclusive" | "ok";
   top_position_id: string | null;
   top_position_share: number | null;
 }
@@ -94,6 +96,18 @@ export interface PnlExplainData {
   waterfall: PnlWaterfallStep[];
   by_position: PnlByPosition[];
   residual_series: PnlResidualPoint[];
+  case_study: PnlCaseStudy;
+}
+
+export interface PnlCaseStudy {
+  then_unexplained: number;
+  then_unexplained_bp: number;
+  then_top_position_share_pct: number;
+  mean_abs_bp_before: number;
+  mean_abs_bp_after: number;
+  worst_bp_before: number;
+  worst_bp_after: number;
+  findings: { title: string; body: string }[];
 }
 
 export interface AiFlaggedPosition {
@@ -118,6 +132,10 @@ export interface AiTraceEntry {
 export interface AiAgentData {
   day0: string;
   asof_date: string;
+  unexplained: number;
+  unexplained_bp: number;
+  top_position_id: string;
+  top_position_share_pct: number;
   model: string;
   confidence: string;
   summary: string;

@@ -38,6 +38,45 @@ VOL_SURFACE_UNDERLYING = "SPX"
 INCIDENT_DAY0 = dt.date(2026, 9, 2)
 INCIDENT_DAY1 = dt.date(2026, 9, 3)
 
+# The incident as first recorded by the daily run on 2026-09-03, before the
+# follow-up investigation (docs/incidents/2026-09-01_p008_autocallable_vega_residual.md).
+# Fixed values: the stored tables now hold the recomputed day, so the original
+# run can't be re-derived from them. Averages are over the 16 day pairs explained
+# both before and after the input and model fixes (same report).
+CASE_STUDY = {
+    "then_unexplained": 284_069.0,
+    "then_unexplained_bp": 670.2,
+    "then_top_position_share_pct": 93.9,
+    "mean_abs_bp_before": 104.9,
+    "mean_abs_bp_after": 32.5,
+    "worst_bp_before": 299.4,
+    "worst_bp_after": 83.6,
+    "findings": [
+        {
+            "title": "Noisy risk numbers",
+            "body": "One simulation run is one draw: the structured note's sensitivities swung "
+            "from run to run. Every gap now comes with an error band, and alerts fire only "
+            "beyond it.",
+        },
+        {
+            "title": "Unstable long-dated market data",
+            "body": "Long-dated NVIDIA prices dropped in and out of the data day to day, so the "
+            "two-year note was often valued on data that stopped short of a year. The engine "
+            "now keeps a stable curve past two years every day.",
+        },
+        {
+            "title": "A model setting that drifted daily",
+            "body": "An automatic smoothing choice inside the pricing model changed every day and "
+            "moved the note's value with it. It is now fixed, measured on every stored day.",
+        },
+        {
+            "title": "Observation dates simulated days off",
+            "body": "The note's quarterly test dates were simulated up to 5.5 days from the real "
+            "dates. The simulation now hits every date exactly.",
+        },
+    ],
+}
+
 K_GRID = np.linspace(-1.0, 1.0, 61)
 
 
@@ -278,6 +317,7 @@ def export_pnl_explain() -> dict[str, Any]:
         ],
         "by_position": by_pos[["position_id", "residual"]].to_dict(orient="records"),
         "residual_series": _valid_residual_series(steps_all, by_pos_all),
+        "case_study": CASE_STUDY,
     }
     _write("pnl_explain", payload)
     return payload
@@ -299,6 +339,7 @@ def _valid_residual_series(steps_all: pd.DataFrame, by_pos_all: pd.DataFrame) ->
         residual=("residual", "sum"),
         nav=("nav", "max"),
         gross=("actual_pnl", lambda s: s.abs().sum()),
+        se=("total_residual_se", "max"),
     )
     series = []
     for row in daily.sort_values("asof_date").itertuples():
@@ -309,11 +350,21 @@ def _valid_residual_series(steps_all: pd.DataFrame, by_pos_all: pd.DataFrame) ->
             (by_pos_all["day0"] == row.day0) & (by_pos_all["asof_date"] == row.asof_date)
         ]
         top = pos.loc[pos["residual"].abs().idxmax()] if not pos.empty else None
+        residual_bp = 10_000.0 * row.residual / nav
+        band_bp = 2 * 10_000.0 * row.se / nav if pd.notna(row.se) else 0.0
+        if abs(residual_bp) - band_bp > RESIDUAL_ALERT_THRESHOLD_BP:
+            status = "alert"
+        elif band_bp > RESIDUAL_ALERT_THRESHOLD_BP:
+            status = "inconclusive"
+        else:
+            status = "ok"
         series.append(
             {
                 "day0": row.day0,
                 "asof_date": row.asof_date,
-                "residual_bp": 10_000.0 * row.residual / nav,
+                "residual_bp": residual_bp,
+                "noise_band_bp": band_bp,
+                "status": status,
                 "top_position_id": None if top is None else top["position_id"],
                 "top_position_share": None if top is None else top["residual"] / row.residual,
             }
@@ -342,29 +393,39 @@ def _position_labels() -> dict[str, str]:
     return labels
 
 
-def export_ai_agent() -> dict[str, Any]:
-    ai_all = _read("ai_investigations")
-    row = ai_all[(ai_all["day0"] == INCIDENT_DAY0) & (ai_all["asof_date"] == INCIDENT_DAY1)]
-    if row.empty:
-        raise ValueError(f"no ai_investigations for {INCIDENT_DAY0} -> {INCIDENT_DAY1}")
-    row = row.iloc[0]
+def _ai_feature_pair(pnl_payload: dict[str, Any]) -> tuple[dt.date, dt.date]:
+    """The AI page features the most recent day pair that still alerts and has an
+    investigation: a fixed rule, so the page never shows a hand-picked answer."""
+    ai_pairs = set(_read("ai_investigations")[["day0", "asof_date"]].itertuples(index=False))
+    for p in reversed(pnl_payload["residual_series"]):
+        pair = (p["day0"], p["asof_date"])
+        if p["status"] == "alert" and pair in ai_pairs:
+            return pair
+    raise ValueError("no alerting day pair with an AI investigation")
 
-    flagged_all = _read("ai_flagged_positions")
-    flagged = flagged_all[
-        (flagged_all["day0"] == INCIDENT_DAY0) & (flagged_all["asof_date"] == INCIDENT_DAY1)
-    ]
-    changes_all = _read("ai_proposed_changes")
-    changes = changes_all[
-        (changes_all["day0"] == INCIDENT_DAY0) & (changes_all["asof_date"] == INCIDENT_DAY1)
-    ]
-    trace_all = _read("ai_investigation_trace")
-    trace = trace_all[
-        (trace_all["day0"] == INCIDENT_DAY0) & (trace_all["asof_date"] == INCIDENT_DAY1)
-    ].sort_values("round")
+
+def export_ai_agent(pnl_payload: dict[str, Any]) -> dict[str, Any]:
+    day0, day1 = _ai_feature_pair(pnl_payload)
+
+    def _for_pair(df: pd.DataFrame) -> pd.DataFrame:
+        return df[(df["day0"] == day0) & (df["asof_date"] == day1)]
+
+    row = _for_pair(_read("ai_investigations")).iloc[0]
+    flagged = _for_pair(_read("ai_flagged_positions"))
+    changes = _for_pair(_read("ai_proposed_changes"))
+    trace = _for_pair(_read("ai_investigation_trace")).sort_values("round")
+    steps = _for_pair(_read("pnl_explain"))
+    by_pos = _for_pair(_read("pnl_explain_by_position"))
+    unexplained = float(steps["residual"].sum())
+    top = by_pos.loc[by_pos["residual"].abs().idxmax()]
 
     payload = {
-        "day0": INCIDENT_DAY0,
-        "asof_date": INCIDENT_DAY1,
+        "day0": day0,
+        "asof_date": day1,
+        "unexplained": unexplained,
+        "unexplained_bp": 10_000.0 * unexplained / float(steps["nav"].max()),
+        "top_position_id": top["position_id"],
+        "top_position_share_pct": 100.0 * float(top["residual"]) / unexplained,
         "model": row["model"],
         "confidence": row["confidence"],
         "summary": row["summary"],
@@ -385,8 +446,8 @@ def main() -> None:
     export_deep_hedging()
     export_deep_hedging_robustness()
     export_vol_surface()
-    export_pnl_explain()
-    export_ai_agent()
+    pnl_payload = export_pnl_explain()
+    export_ai_agent(pnl_payload)
 
 
 if __name__ == "__main__":

@@ -69,6 +69,16 @@ permissive than the acceptance bar used to flag a forward as suspicious in the f
 two questions ("is this fit good" and "is this fit good *enough to use*") are answered separately
 and documented as such, not conflated.
 
+Single names (NVDA, AAPL, JPM, XLE) list American options, whose put-call parity drifts from the
+European relation with maturity, so their forwards are fitted with the discount factor fixed at the
+rates curve's and judged by how tightly the strikes agree (dispersion at most 100bp of the forward)
+rather than by the parity-implied discount factor; SPX keeps the two-parameter fit. The same
+reliability rule decides both which expiries the vol surface uses and which forwards the pricing
+forward curve is built from. A single-name expiry with clean out-of-the-money quotes but too few
+strikes with both legs clean for a fit takes its forward from that day's forward curve (flagged
+`implied_vols.forward_source = "curve"`). Beyond the last reliable expiry the forward curve
+continues at the carry measured over its last 0.25y, not flat.
+
 **Consequence for downstream steps:** because the forward is a jointly-fitted regression output,
 not a closed-form function of $(S_0, r, q)$, it cannot be decomposed *after the fact* into a rate
 piece, a dividend piece, and a spot piece. This directly shapes the P&L explain waterfall (3.5) and
@@ -110,13 +120,17 @@ mismatch was found and fixed.
 | Vanilla option | Closed-form Black-76 | Exact, fast, matches the exchange-quoted convention this book is calibrated against; validated to $10^{-8}$ against QuantLib (Section 7). |
 | Variance swap | Carr-Madan static replication off the calibrated smile (log-contract decomposition into an OTM put/call strip) | Model-independent within the no-arbitrage assumptions of the replication itself; avoids needing a separate stochastic-vol model just to price a variance product. |
 | Barrier option | Reiner-Rubinstein closed form (flat-vol assumption) for validation, but the position is actually marked off a **local-vol Monte Carlo** engine with a Brownian-bridge continuity correction | The closed form assumes constant vol, which this project's own calibrated surface contradicts; MC under the *calibrated* local-vol surface is the position's actual mark, with the closed form used only as an independent correctness check under its own (flat-vol) assumptions. |
-| Autocallable note | Local-vol Monte Carlo, common-random-number (CRN) bump-and-reval Greeks | No useful closed form exists for this path-dependent, multi-barrier payoff; CRN is not optional here — independently reseeded bump-and-reval Greeks on a path-dependent payoff are pure noise, not an approximation with a known error, because the discrete autocall/coupon/put decisions themselves change under different random draws. |
+| Autocallable note | Local-vol Monte Carlo on a time grid containing every observation date exactly; common-random-number (CRN) bump-and-reval Greeks with 5% spot / 3 vol-point bumps and a one-day-revaluation theta; a standard error from 16 independently scrambled sub-runs | No useful closed form exists for this path-dependent, multi-barrier payoff; CRN is not optional here — independently reseeded bump-and-reval Greeks on a path-dependent payoff are pure noise, not an approximation with a known error, because the discrete autocall/coupon/put decisions themselves change under different random draws. |
 
 **Local volatility** (Dupire) is stripped from the *calibrated* SVI/SSVI surface, not the raw noisy
 market points, using a smoothing-spline (with PCHIP fallback) $T$-derivative to avoid amplifying
 calibration noise into the local-vol surface (a documented, tested fix — the naive finite-difference
-$\partial_T w$ was measurably noisy on real data before this was in place). Wing extrapolation is
-capped at Step 3's own extreme-log-moneyness quality threshold, not extrapolated indefinitely.
+$\partial_T w$ was measurably noisy on real data before this was in place). The spline's smoothness
+is fixed (`T_SMOOTHING_LAM`) rather than chosen by cross-validation per point, which was found to
+create day-to-day local-vol noise of 1.7-2.4 vol points at 2 years (Section 4). Beyond the last
+calibrated expiry each strike keeps its last implied vol (total variance keeps growing at the last
+expiry's average rate). Wing extrapolation is capped at Step 3's own extreme-log-moneyness quality
+threshold, not extrapolated indefinitely.
 
 Monte Carlo paths use Sobol quasi-random sequences with a classic power-of-two Brownian bridge path
 construction (Glasserman), numba-JIT-compiled for the inner Euler step. Barrier positions use a
@@ -163,21 +177,37 @@ This section is written to be read first, per the model's own operating principl
 section that says "the model works well" is worth less than one that says exactly where and why it
 does not.
 
-**Local volatility structurally misprices forward-skew-dependent payoffs, and this has been
-measured, not just asserted.** The clearest evidence in this entire project is the incident
-documented in `docs/incidents/2026-09-01_p008_autocallable_vega_residual.md`: on the first real
-day-over-day P&L explain run, 99.6% of a $178k residual (on a ~$4.16M book) traced to the NVDA
-autocallable, whose vega-only Greek set could not see how much its effective vol sensitivity
-changes near the autocall/coupon/put barriers. Adding vanna and volga (via bump-and-reval Monte
-Carlo under CRN) reduced that step's residual by only about 13% — the vega+volga explained P&L
-moved from -$220,644 to -$195,329 against an actual of -$28,751, still off by roughly 7x. **The
-honest conclusion, stated plainly in that report, is that a smooth second-order Taylor expansion
-around one ATM vol scalar cannot capture a barrier-laden payoff's true vol sensitivity, no matter
-which named Greeks are included** — the barriers create genuine kinks in price-vs-vol space. A
-proper fix needs either a full-reprice ("what-if this step's actual vol surface change") term for
-MC-priced positions in the waterfall, or accepting that these positions' vol-step residual is a
-structurally different quantity from vanilla positions' and should be thresholded separately. This
-is not fixed in the current build.
+**The daily P&L explain still leaves a material residual on the Monte Carlo exotics, and its
+history shows how easily a residual is misdiagnosed.** The clearest evidence in this project is the
+incident documented in `docs/incidents/2026-09-01_p008_autocallable_vega_residual.md`: on the first
+real day-over-day explain run, a $178k residual (on a ~$4.16M book) was almost all in P008, the
+NVDA autocallable. It was first blamed on the note's vega-only Greek set; adding vanna and volga
+appeared to help by about 13%. Both conclusions came from single Monte Carlo runs and did not
+survive testing on six weeks of history. The residual actually came from (1) Monte Carlo noise in
+the note's bump-and-reval Greeks (a single-run spread of about +-$116k on a big-move day; gamma,
+vanna and volga essentially noise), (2) long-dated forwards and vol-surface coverage changing day
+to day, (3) extrapolation past the last expiry that assumed zero future vol and carry,
+(4) local-vol smoothing re-chosen at every grid point every day, and (5) observation dates
+simulated up to 5.5 days off. Each was measured and fixed (follow-up section of the incident report). On the 16 comparable
+day pairs the mean absolute residual fell from 105bp to 33bp of NAV; over all 18 stored pairs it is
+37bp, almost all from P008.
+
+What remains is structural and documented, not fixed: on a few days the note responds to the vol
+surface's shape (skew and term structure) in a way one vega number times the ATM move cannot
+capture, and on big NVDA moves (about -3%) a delta-gamma expansion of a path-dependent payoff falls
+short. The standard remedy is a spot-and-vol revaluation ladder for Monte Carlo exotics in the
+waterfall; it is not built. Residuals carry a Monte Carlo standard error, so a day is flagged only
+when the gap exceeds the 5bp threshold by more than its noise.
+
+**Several input-stability choices are judgment calls, tuned on this five-name universe.** The
+local-vol term-structure smoothing strength is fixed (`T_SMOOTHING_LAM = 0.01`), chosen by
+measuring local-vol Monte Carlo against Black-76 on all stored days. A long single-name expiry with
+clean quotes but no forward fit of its own takes its forward from that day's forward curve, so its
+implied vols inherit any error in the curve's long-end carry (roughly 1-2 vol points near the money
+per 2% forward error at 2 years). An expiry that loses its quotes keeps the previous day's quotes,
+at half weight, for up to 3 trading days. All three are flagged in the stored data
+(`implied_vols.forward_source`, `implied_vols.carried_from`, `vol_surface.n_carried`) and should be
+revisited if the universe changes.
 
 **The hypothetical-stress vol-shock model is a documented approximation, not an exact
 recalibration.** Applying a parallel vol shock to an already-built local-vol grid via $\sigma_{loc}
@@ -201,11 +231,10 @@ stress-testing parts instead (a documented order deviation from the original ste
 same root cause blocks 8.2 (PCA risk factors), 8.3 (proxy modelling for sparse names), and 11.3/11.4
 (conditional and reverse stress, which need a real historical beta/covariance estimate).
 
-**No automated residual monitor exists.** The P&L-explain residual — this model's own primary
-self-diagnostic — is currently reviewed manually (via the CLI or the Streamlit dashboard), not via
-an automated threshold alert. This is flagged explicitly as an open item in the incident report
-above; the daily automated pipeline (Section 6) computes the residual every trading day but does
-not yet page anyone when it spikes.
+**The residual monitor is automated but simple.** Every daily run checks the total and
+per-position residual against 5bp of NAV and logs ALERT lines (or INCONCLUSIVE when Monte Carlo
+noise is wider than the threshold); a local AI agent then drafts an investigation. Nobody is paged:
+alerts are read in the daily log and the dashboard.
 
 **Two persistent, real data gaps, not bugs:** JPM and XLE have shown zero calibrated vol-surface
 coverage on every real trading day tested so far (confirmed again via direct query as of
@@ -387,9 +416,9 @@ than loosened to hide the platform difference.
 
 | Risk | Materiality | Mitigant / current state |
 |---|---|---|
-| MC-priced positions' vol Greeks understate true sensitivity near barriers | **High** — directly measured: 99.5% of a real day's P&L residual on this specific book | Vanna/volga added (Step 13), reduces but does not close the gap; not further mitigated in this build |
+| P&L-explain residual on Monte Carlo exotics | **High** — 37bp of NAV mean absolute residual over 18 real day pairs, almost all P008 | Five input and model causes found and fixed (Section 4); remaining vol-shape and big-move residual needs a revaluation ladder, not built |
 | Vol-shock stress approximation error | **Medium**, grows with shock size (~7-40% measured) | Documented and bounded; not eliminated; matters most for the largest stress-ladder shocks |
-| No automated residual monitoring | **Medium** — a real spike could go unnoticed between manual reviews | Manual review currently in place; a real threshold check is a named, not-yet-built follow-up |
+| Residual monitoring alerts are logged, not paged | **Low** — daily alerts are visible in the log and dashboard but nobody is notified | Automated 5bp check with a noise band since 2026-09-10 / 2026-10; paging not built |
 | Two single names (JPM, XLE) have no real coverage | **Low** for this book (no positions assigned there), but blocks any future position in those names | Not currently mitigated; Step 8.3 (proxy modelling) would address this if built |
 | No VaR/backtesting | **High** for any real risk-limit use case, **not applicable** to this project's actual scope | Explicitly out of scope pending real multi-year history; not approximated with a token version |
 | Single free-tier data vendor, no failover | **Medium** — a vendor outage or schema change could silently degrade quality-filtered coverage | Reason-code-based rejection makes degraded coverage auditable (not silent), but there is no secondary data source |

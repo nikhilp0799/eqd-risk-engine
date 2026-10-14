@@ -5,7 +5,7 @@ import { hedging, pnl, pnlExplain, pricing } from "@/lib/metrics";
 
 // Not derived from exported data: the repo's own test count at the time of the
 // last site update (`pytest --collect-only`).
-const TEST_COUNT = "1,813";
+const TEST_COUNT = "1,857";
 
 const CAPABILITIES = [
   {
@@ -72,32 +72,36 @@ function IncidentPreview() {
         <Badge tone="critical">Alert</Badge>
       </div>
       <dl className="mt-5 divide-y divide-border text-sm">
-        <div className="flex justify-between py-2.5">
-          <dt className="text-ink-2">Actual P&amp;L</dt>
-          <dd className="tabular font-medium text-ink">{signedUsdCompact(pnl.actual)}</dd>
-        </div>
-        <div className="flex justify-between py-2.5">
-          <dt className="text-ink-2">Expected by risk model</dt>
-          <dd className="tabular font-medium text-ink">{signedUsdCompact(pnl.expected)}</dd>
-        </div>
-        <div className="flex justify-between py-2.5">
-          <dt className="text-ink-2">Unexplained</dt>
+        <div className="flex justify-between gap-4 py-2.5">
+          <dt className="text-ink-2">Unexplained, as first flagged</dt>
           <dd className="tabular font-semibold text-critical">
-            {usdCompact(pnl.unexplained)} ({pct(pnl.unexplainedPctOfBook, 1)} of book)
+            {usdCompact(pnl.thenUnexplained)} ({pct(pnl.thenUnexplainedPctOfBook, 1)} of book)
+          </dd>
+        </div>
+        <div className="flex justify-between gap-4 py-2.5">
+          <dt className="text-ink-2">Traced to</dt>
+          <dd className="text-right font-medium text-ink">
+            {pnl.topPositionLabel}: {pct(pnl.thenTopPositionShare)}
+          </dd>
+        </div>
+        <div className="flex justify-between gap-4 py-2.5">
+          <dt className="text-ink-2">Same day, after the fixes</dt>
+          <dd className="tabular font-medium text-ink">
+            {usdCompact(Math.abs(pnl.unexplained))} ({pct(Math.abs(pnl.unexplainedPctOfBook), 2)} of book)
           </dd>
         </div>
       </dl>
       <div className="mt-4 rounded-xl bg-subtle px-4 py-3 text-sm">
-        <p className="text-ink-2">Traced to</p>
+        <p className="text-ink-2">Root cause</p>
         <p className="mt-0.5 font-medium text-ink">
-          {pnl.topPositionLabel}: {pct(pnl.topPositionShare)} of the gap
+          The engine&apos;s own inputs and model settings, found and fixed
         </p>
       </div>
       <Link
         href="/pnl-explain"
         className="mt-4 inline-flex text-sm font-medium text-brand hover:text-brand-strong"
       >
-        Open the full breakdown &rarr;
+        Read the case study &rarr;
       </Link>
     </div>
   );
@@ -142,9 +146,9 @@ export default function Home() {
         <h2 className="text-2xl font-semibold tracking-tight text-ink">Results from real runs</h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatTile
-            label="Unexplained P&L caught in one day"
-            value={usdCompact(pnl.unexplained)}
-            detail={`${pct(pnl.topPositionShare)} traced to a single structured note.`}
+            label="Smaller average daily P&L gap after a self-diagnosed fix"
+            value={pct(pnl.meanGapReduction)}
+            detail={`The engine flagged ${usdCompact(pnl.thenUnexplained)} it could not explain, traced it to its own inputs and model, and fixed them.`}
           />
           <StatTile
             label="Smaller P&L swings when hedging a barrier option"
