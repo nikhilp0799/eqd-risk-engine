@@ -529,7 +529,10 @@ def _mark_vanilla(
     discount_factor = curve.discount_factor(T)
     k = float(np.log(p.strike / forward))
     w = shocked_w(surface, k, T, shock)
-    sigma = float(np.sqrt(max(w, 1e-12) / T))
+    # Past expiry (T <= 0) there is no vol to imply; compute_greeks marks the
+    # option at zero there. Without this guard every daily run warned on the
+    # square root of a negative number once a position expired (P005, 2026-09-18).
+    sigma = float(np.sqrt(max(w, 1e-12) / T)) if T > 0 else 0.0
 
     g = compute_greeks(p.cp == "C", forward, p.strike, T, sigma, discount_factor, spot)
     return PositionMark(

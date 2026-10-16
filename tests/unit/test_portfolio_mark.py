@@ -337,3 +337,32 @@ def test_skips_positions_with_no_market_data_for_their_underlying(tmp_path):
     result = mark_portfolio(_cfg(tmp_path), ASOF, portfolio_path)
     assert "E1" in result.skipped
     assert not result.marks
+
+
+def test_expired_vanilla_marks_at_zero_without_warnings(tmp_path):
+    import warnings
+
+    _write_curve(tmp_path)
+    _write_underlying(tmp_path)
+    _write_forwards(tmp_path)
+    _write_surface(tmp_path)
+    portfolio_path = _write_portfolio_yaml(
+        tmp_path,
+        [
+            {
+                "id": "X1",
+                "type": "vanilla",
+                "underlying": UNDERLYING,
+                "cp": "P",
+                "strike": 90.0,
+                "expiry": (ASOF - dt.timedelta(days=5)).isoformat(),
+                "qty": 10,
+            }
+        ],
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        result = mark_portfolio(_cfg(tmp_path), ASOF, portfolio_path)
+    mark = next(m for m in result.marks if m.position_id == "X1")
+    assert mark.price == 0.0
+    assert mark.delta == 0.0
