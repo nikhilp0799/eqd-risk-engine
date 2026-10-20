@@ -287,6 +287,7 @@ PORTFOLIO_MARKS_SCHEMA = pa.schema(
         ("moneyness_bucket", pa.string()),
         ("stderr", pa.float64()),  # null for closed-form-priced positions (no MC noise)
         ("note", pa.string()),  # null for most positions; e.g. varswap's fair strike
+        ("status", pa.string()),  # "live" / "knocked_in" / "settled" (portfolio/lifecycle.py)
     ]
 )
 PORTFOLIO_MARKS_REQUIRED_NOT_NULL = [

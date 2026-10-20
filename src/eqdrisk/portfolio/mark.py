@@ -56,6 +56,7 @@ from eqdrisk.io.schemas import PORTFOLIO_MARKS_REQUIRED_NOT_NULL, PORTFOLIO_MARK
 from eqdrisk.marketdata.calendar import year_fraction
 from eqdrisk.marketdata.curve import Curve, bootstrap_curve
 from eqdrisk.marketdata.forward import ForwardCurve, build_forward_curve, reliable_forwards
+from eqdrisk.portfolio import lifecycle
 from eqdrisk.portfolio.schema import (
     AutocallPosition,
     BarrierPosition,
@@ -204,6 +205,8 @@ class PositionMark:
     k: float | None = None
     stderr: float | None = None
     note: str | None = None
+    # "live", "knocked_in" or "settled" (portfolio/lifecycle.py).
+    status: str = lifecycle.LIVE
     # RQMC sub-run values (MC exotics only, see `rqmc_greeks`); never persisted.
     batches: list[dict[str, float]] | None = None
     # Times (years) at which the position's vol exposure sits: an autocallable's
@@ -225,6 +228,8 @@ class PortfolioMarkResult:
     asof: dt.date
     marks: list[PositionMark] = field(default_factory=list)
     skipped: dict[str, str] = field(default_factory=dict)
+    # Expiries and autocall observations within a week (portfolio/lifecycle.py).
+    upcoming: list[str] = field(default_factory=list)
 
     def total_value(self) -> float:
         return sum(m.price for m in self.marks)
@@ -275,6 +280,8 @@ class PortfolioMarkResult:
                 lines.append(f"  {m.position_id}: {m.note}")
         for pos_id, reason in self.skipped.items():
             lines.append(f"  SKIPPED {pos_id}: {reason}")
+        for event in self.upcoming:
+            lines.append(f"  UPCOMING: {event}")
         return "\n".join(lines)
 
 
@@ -420,7 +427,30 @@ def mark_with_state(
     result = PortfolioMarkResult(asof=asof)
 
     for p in portfolio.positions:
+        if not lifecycle.is_active(p, asof):
+            continue  # a roll not yet traded on this date
         u = p.underlying
+        try:
+            status = lifecycle.position_status(cfg, asof, p)
+        except lifecycle.LifecycleError as exc:
+            result.skipped[p.id] = str(exc)
+            continue
+        if status.status == lifecycle.SETTLED:
+            # Settled: a fixed cash value, no market risk; shocks don't move it.
+            assert status.settled_value is not None
+            result.marks.append(
+                PositionMark(
+                    position_id=p.id,
+                    type=p.type,
+                    underlying=u,
+                    expiry=getattr(p, "expiry", asof),
+                    T=0.0,
+                    price=status.settled_value,
+                    note=status.note,
+                    status=lifecycle.SETTLED,
+                )
+            )
+            continue
         if u not in state.spot or u not in state.surface or u not in state.forward_curve:
             result.skipped[p.id] = f"no spot/surface/forward data for {u} on {asof}"
             continue
@@ -458,6 +488,23 @@ def mark_with_state(
                     state.curve,
                     position_shock,
                 )
+            elif isinstance(p, BarrierPosition) and status.status == lifecycle.KNOCKED_IN:
+                # Knocked in: the down-and-in put is now the vanilla put.
+                mark = _mark_vanilla(
+                    VanillaPosition(
+                        id=p.id, cp="P", strike=p.strike, expiry=p.expiry, underlying=u, qty=p.qty
+                    ),
+                    asof,
+                    cfg,
+                    state.spot[u],
+                    state.surface[u],
+                    state.forward_curve[u],
+                    state.curve,
+                    position_shock,
+                )
+                mark.type = "barrier"
+                mark.status = lifecycle.KNOCKED_IN
+                mark.note = status.note
             elif isinstance(p, BarrierPosition):
                 if u not in state.grids:
                     result.skipped[p.id] = f"no local-vol grid available for {u}"
@@ -487,6 +534,7 @@ def mark_with_state(
                     state.forward_curve[u],
                     position_shock,
                     mc,
+                    status,
                 )
             else:  # pragma: no cover - exhaustive over the discriminated union
                 raise TypeError(f"unknown position type: {p!r}")
@@ -508,6 +556,13 @@ def mark_portfolio(cfg: BaseConfig, asof: dt.date, portfolio_path: str) -> Portf
         return result
 
     result = mark_with_state(cfg, asof, portfolio, state)
+    settled = {m.position_id for m in result.marks if m.status == lifecycle.SETTLED}
+    result.upcoming = [
+        event
+        for p in portfolio.positions
+        if lifecycle.is_active(p, asof) and p.id not in settled
+        for event in lifecycle.upcoming_events(p, asof)
+    ]
     if result.marks:
         _persist(result, Path(cfg.paths.curated))
     return result
@@ -670,7 +725,13 @@ def _mark_autocall(
     fwd_curve: ForwardCurve,
     shock: MarketShock,
     mc_settings: MCSettings,
+    status: lifecycle.PositionStatus | None = None,
 ) -> PositionMark:
+    """`status` carries the note's past observations (coupons paid in cash, the
+    coupon memory still owed). The barriers are fractions of the note's own
+    initial fixing, not of today's spot: before 2026-10-20 this used today's
+    spot, re-issuing the note at the money every day."""
+    status = status or lifecycle.PositionStatus()
     T = year_fraction(asof, p.expiry, cfg.daycount)
     spot = shocked_spot(spot, shock)
     forward = fwd_curve.forward(T) * (1 + shock.spot_shock_pct)
@@ -686,6 +747,8 @@ def _mark_autocall(
         put_barrier=p.put_barrier,
         coupon_rate=p.coupon,
         obs_times=obs_times,
+        initial_level=p.initial_level,
+        initial_memory=status.memory,
     )
     next_day = asof + dt.timedelta(days=1)
     spec_next = dataclasses.replace(
@@ -716,13 +779,17 @@ def _mark_autocall(
         )
 
     mean, batches, stderr = rqmc_greeks(greeks_fn, mc_settings)
+    if status.coupons_paid and batches:
+        for b in batches:
+            b["price"] += status.coupons_paid
     return PositionMark(
         position_id=p.id,
         type="autocall",
         underlying=p.underlying,
         expiry=p.expiry,
         T=T,
-        price=mean["price"],
+        # Coupons already paid are cash held, part of the position's value.
+        price=mean["price"] + status.coupons_paid,
         delta=mean["delta"],
         gamma=mean["gamma"],
         vega=mean["vega"],
@@ -773,6 +840,7 @@ def _persist(result: PortfolioMarkResult, curated_root: Path) -> None:
             "moneyness_bucket": m.moneyness_bucket,
             "stderr": m.stderr,
             "note": m.note,
+            "status": m.status,
         }
         for m in result.marks
     ]

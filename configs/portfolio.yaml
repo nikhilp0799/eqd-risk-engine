@@ -2,12 +2,25 @@ positions:
   - {id: P001, type: vanilla, underlying: SPX, cp: P, strike: 5200, expiry: 2026-12-18, qty: -150}
   - {id: P002, type: vanilla, underlying: SPX, cp: C, strike: 6000, expiry: 2026-12-18, qty: 100}
   - {id: P003, type: vanilla, underlying: SPX, cp: P, strike: 4800, expiry: 2027-06-17, qty: 200}
+  # P004 settled in cash at the 2026-10-16 close; rolled into P011.
   - {id: P004, type: vanilla, underlying: AAPL, cp: C, strike: 240, expiry: 2026-10-16, qty: -500}
+  # P005 settled (expired worthless) at the 2026-09-18 close; rolled into P010.
   - {id: P005, type: vanilla, underlying: NVDA, cp: P, strike: 150, expiry: 2026-09-18, qty: 300}
   - {id: P006, type: varswap, underlying: SPX, expiry: 2026-12-18, vega_notional: 250000}
+  # Trade date unknown: knock-in monitored on daily closes from the first stored day.
   - {id: P007, type: barrier, underlying: SPX, sub: down_and_in_put,
-     strike: 5500, barrier: 4500, expiry: 2027-06-17, qty: -50}
+     strike: 5500, barrier: 4500, expiry: 2027-06-17, qty: -50, monitoring_start: 2026-08-21}
+  # 2-year note: issued 2026-08-15 (a Saturday), initial fixing = NVDA close 2026-08-14.
   - {id: P008, type: autocall, underlying: NVDA, notional: 5000000,
      autocall_barrier: 1.00, coupon_barrier: 0.75, put_barrier: 0.65,
-     coupon: 0.0225, obs: quarterly, expiry: 2028-08-15}
+     coupon: 0.0225, obs: quarterly, expiry: 2028-08-15,
+     issue_date: 2026-08-15, initial_level: 225.160004}
   - {id: P009, type: equity, underlying: SPX, qty: -80}
+  # Rolls (planning/position_lifecycle_plan.md): same trade, next quarterly monthly expiry,
+  # strike at the old option's moneyness on 2026-08-21 (the first stored day), nearest listed.
+  # P005 roll: 150/214.72 = 0.6986 x NVDA 222.27 (2026-09-18) = 155.27 -> 155.
+  - {id: P010, type: vanilla, underlying: NVDA, cp: P, strike: 155, expiry: 2026-12-18, qty: 300,
+     active_from: 2026-09-18}
+  # P004 roll: 240/309.35 = 0.7758 x AAPL 343.46 (2026-10-16) = 266.46 -> 265.
+  - {id: P011, type: vanilla, underlying: AAPL, cp: C, strike: 265, expiry: 2027-01-15, qty: -500,
+     active_from: 2026-10-16}

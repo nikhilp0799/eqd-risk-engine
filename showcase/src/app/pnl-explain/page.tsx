@@ -60,7 +60,7 @@ export default function PnlExplainPage() {
         <strong>{usdCompact(pnl.thenUnexplained)}</strong> of P&amp;L it could not explain,{" "}
         {pct(pnl.thenUnexplainedPctOfBook, 1)} of book value, {pct(pnl.thenTopPositionShare)} of it
         from one position: the {pnl.topPositionLabel}. The investigation traced the gap to the
-        engine&apos;s own inputs and model, not the market. After four fixes and a rebuild of the
+        engine&apos;s own inputs and model, not the market. After {pnl.findings.length} fixes and a rebuild of the
         full history, the same day shows a gap of <strong>{usdCompact(Math.abs(pnl.unexplained))}</strong>{" "}
         ({pct(Math.abs(pnl.unexplainedPctOfBook), 2)} of book), and the average daily gap is{" "}
         {pct(pnl.meanGapReduction)} smaller.
@@ -92,7 +92,7 @@ export default function PnlExplainPage() {
 
       <Card
         title="What the investigation found"
-        subtitle="The first explanation, missing risk sensitivities, did not hold up when tested on six weeks of history. These four causes did, and each was fixed and measured on every stored day."
+        subtitle={`The first explanation, missing risk sensitivities, did not hold up when tested on six weeks of history. These ${pnl.findings.length} causes did, and each was fixed and measured on every stored day.`}
       >
         <div className="grid gap-4 sm:grid-cols-2">
           {pnl.findings.map((f) => (
@@ -163,7 +163,9 @@ export default function PnlExplainPage() {
           Monte Carlo exotics; single-name forwards fitted with the rates curve&apos;s discount
           factor and one reliability rule for surface and pricing; flat implied vol and continued
           carry past the last expiry; short gaps in long-dated quotes filled from the previous day;
-          a fixed local-vol smoothing strength; and observation dates simulated exactly. The full
+          a fixed local-vol smoothing strength; observation dates simulated exactly; and the structured note
+          priced against its issue-date fixing, with expiries settled at the expiry close and expired
+          options rolled to the next quarter. The full
           write-up, including the original diagnosis that turned out to be wrong, is in the
           incident report in the code repository.
         </p>

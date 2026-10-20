@@ -13,7 +13,15 @@ import yaml
 from pydantic import BaseModel, Field
 
 
-class VanillaPosition(BaseModel):
+class _Lifecycle(BaseModel):
+    """Fields shared by every position (planning/position_lifecycle_plan.md).
+    `active_from`: first date the position is in the book (a roll's trade date);
+    None = in the book from the start of history."""
+
+    active_from: dt.date | None = None
+
+
+class VanillaPosition(_Lifecycle):
     id: str
     type: Literal["vanilla"] = "vanilla"
     underlying: str
@@ -23,7 +31,7 @@ class VanillaPosition(BaseModel):
     qty: float
 
 
-class VarSwapPosition(BaseModel):
+class VarSwapPosition(_Lifecycle):
     id: str
     type: Literal["varswap"] = "varswap"
     underlying: str
@@ -31,7 +39,7 @@ class VarSwapPosition(BaseModel):
     vega_notional: float
 
 
-class BarrierPosition(BaseModel):
+class BarrierPosition(_Lifecycle):
     id: str
     type: Literal["barrier"] = "barrier"
     underlying: str
@@ -40,9 +48,12 @@ class BarrierPosition(BaseModel):
     barrier: float
     expiry: dt.date
     qty: float
+    # Knock-in is monitored on daily closes from this date (the trade date when
+    # known); None = from the first stored day.
+    monitoring_start: dt.date | None = None
 
 
-class AutocallPosition(BaseModel):
+class AutocallPosition(_Lifecycle):
     id: str
     type: Literal["autocall"] = "autocall"
     underlying: str
@@ -53,9 +64,13 @@ class AutocallPosition(BaseModel):
     coupon: float
     obs: Literal["quarterly"] = "quarterly"
     expiry: dt.date
+    # The issue date and initial fixing the barriers are fractions of. None for
+    # initial_level = a note issued today (struck at today's spot).
+    issue_date: dt.date | None = None
+    initial_level: float | None = None
 
 
-class EquityPosition(BaseModel):
+class EquityPosition(_Lifecycle):
     id: str
     type: Literal["equity"] = "equity"
     underlying: str

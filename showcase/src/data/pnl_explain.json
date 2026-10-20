@@ -1,8 +1,8 @@
 {
   "day0": "2026-09-02",
   "asof_date": "2026-09-03",
-  "nav": 4261934.726459121,
-  "residual_bp": -11.018275286751807,
+  "nav": 4288392.685363949,
+  "residual_bp": -12.473938273255976,
   "residual_alert_threshold_bp": 5.0,
   "positions": {
     "P001": "S&P 500 put option (short)",
@@ -13,38 +13,40 @@
     "P006": "S&P 500 variance swap",
     "P007": "S&P 500 barrier put (short)",
     "P008": "NVIDIA autocallable note",
-    "P009": "S&P 500 index hedge (short)"
+    "P009": "S&P 500 index hedge (short)",
+    "P010": "NVIDIA put option",
+    "P011": "Apple call option (short)"
   },
   "waterfall": [
     {
       "step": "time",
-      "actual_pnl": 1754.6608416968477,
-      "explained_pnl": 1684.983337064892,
-      "residual": 69.67750463195557
+      "actual_pnl": 1703.598987614688,
+      "explained_pnl": 1758.9922980728809,
+      "residual": -55.3933104581929
     },
     {
       "step": "rates_divs",
-      "actual_pnl": 1426.635308093046,
+      "actual_pnl": 1444.288977214721,
       "explained_pnl": 19.86831356552451,
-      "residual": 1406.7669945275215
+      "residual": 1424.4206636491965
     },
     {
       "step": "spot",
-      "actual_pnl": -1116.1469479389582,
-      "explained_pnl": 5338.392373401212,
-      "residual": -6454.53932134017
+      "actual_pnl": 31240.762163108207,
+      "explained_pnl": 38566.42091517507,
+      "residual": -7325.658752066862
     },
     {
       "step": "vol",
-      "actual_pnl": -2119.051621011457,
-      "explained_pnl": -2401.229436162764,
-      "residual": 282.1778151513072
+      "actual_pnl": -1710.8131743120016,
+      "explained_pnl": -2318.130008316625,
+      "residual": 607.3168340046236
     }
   ],
   "by_position": [
     {
       "position_id": "P008",
-      "residual": -4517.016236581435
+      "residual": -5170.413794423288
     },
     {
       "position_id": "P007",
@@ -83,191 +85,200 @@
     {
       "day0": "2026-08-31",
       "asof_date": "2026-09-01",
-      "residual_bp": -83.5870014066409,
-      "noise_band_bp": 9.239786593978215,
+      "residual_bp": -79.95238753575761,
+      "noise_band_bp": 6.916819333309339,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.0158335456740188
+      "top_position_share": 1.0168282640448463
     },
     {
       "day0": "2026-09-01",
       "asof_date": "2026-09-02",
-      "residual_bp": -11.76190297756556,
-      "noise_band_bp": 3.116431476527549,
+      "residual_bp": -10.479060886850517,
+      "noise_band_bp": 5.272443607726959,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.8779783627314738
+      "top_position_share": 0.8628386209610224
     },
     {
       "day0": "2026-09-02",
       "asof_date": "2026-09-03",
-      "residual_bp": -11.018275286751807,
-      "noise_band_bp": 3.9454498620583376,
+      "residual_bp": -12.473938273255976,
+      "noise_band_bp": 6.309258834978354,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.9619029105113758
+      "top_position_share": 0.9665563188931192
     },
     {
       "day0": "2026-09-03",
       "asof_date": "2026-09-04",
-      "residual_bp": 72.84259060454126,
-      "noise_band_bp": 6.852101330184524,
+      "residual_bp": 79.99980971953167,
+      "noise_band_bp": 12.09205367012405,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.030001175418853
+      "top_position_share": 1.0270305934863873
     },
     {
       "day0": "2026-09-04",
       "asof_date": "2026-09-08",
-      "residual_bp": -79.84652091869731,
-      "noise_band_bp": 7.901471964648848,
+      "residual_bp": -88.45194357464436,
+      "noise_band_bp": 9.454148449742446,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.906414351995218
+      "top_position_share": 0.915615685197618
     },
     {
       "day0": "2026-09-08",
       "asof_date": "2026-09-10",
-      "residual_bp": 57.87436035092996,
-      "noise_band_bp": 6.182399034542693,
+      "residual_bp": 56.45440849009215,
+      "noise_band_bp": 6.114990581543292,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.8327966328031736
+      "top_position_share": 0.8260666894704313
     },
     {
       "day0": "2026-09-16",
       "asof_date": "2026-09-17",
-      "residual_bp": -14.450627416153335,
-      "noise_band_bp": 7.75637207850166,
-      "status": "alert",
+      "residual_bp": -10.172504585306614,
+      "noise_band_bp": 7.117770831430849,
+      "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 0.8569852673091596
+      "top_position_share": 0.7943393638494135
     },
     {
       "day0": "2026-09-25",
       "asof_date": "2026-09-28",
-      "residual_bp": -6.101871250592907,
-      "noise_band_bp": 7.6097035761256615,
+      "residual_bp": -9.527211377940436,
+      "noise_band_bp": 8.101757355496332,
       "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 3.544111595835024
+      "top_position_share": 2.604731570687293
     },
     {
       "day0": "2026-09-28",
       "asof_date": "2026-09-29",
-      "residual_bp": 3.652648695702998,
-      "noise_band_bp": 3.132711529147838,
+      "residual_bp": 6.996509172300178,
+      "noise_band_bp": 3.769488299595806,
       "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 0.8052750335291221
+      "top_position_share": 0.9064219675124671
     },
     {
       "day0": "2026-10-01",
       "asof_date": "2026-10-02",
-      "residual_bp": -13.370221225614731,
-      "noise_band_bp": 4.022015997711042,
+      "residual_bp": -13.90473397230534,
+      "noise_band_bp": 4.481147450455276,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.9941336970724504
+      "top_position_share": 1.0098504094103826
     },
     {
       "day0": "2026-10-02",
       "asof_date": "2026-10-05",
-      "residual_bp": -12.77912631072595,
-      "noise_band_bp": 4.453337337756629,
+      "residual_bp": -15.649049836596982,
+      "noise_band_bp": 6.899299158239112,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.9775937329749913
+      "top_position_share": 0.9745045793106435
     },
     {
       "day0": "2026-10-05",
       "asof_date": "2026-10-06",
-      "residual_bp": -8.750124821467486,
-      "noise_band_bp": 3.9666885910020193,
+      "residual_bp": -7.784241344395815,
+      "noise_band_bp": 3.7118585381665157,
       "status": "ok",
       "top_position_id": "P003",
-      "top_position_share": 0.7127396237098852
+      "top_position_share": 0.782051723434684
     },
     {
       "day0": "2026-10-06",
       "asof_date": "2026-10-07",
-      "residual_bp": 10.517103692225339,
-      "noise_band_bp": 6.951227462562578,
+      "residual_bp": 9.729466733989398,
+      "noise_band_bp": 7.3977389255899,
       "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 1.1205330181484827
+      "top_position_share": 1.1311479280894745
     },
     {
       "day0": "2026-10-07",
       "asof_date": "2026-10-08",
-      "residual_bp": 56.0205442561425,
-      "noise_band_bp": 3.5181320148698707,
+      "residual_bp": 48.85375021137268,
+      "noise_band_bp": 5.323174581838428,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.978222669449971
+      "top_position_share": 0.9765196710414693
     },
     {
       "day0": "2026-10-08",
       "asof_date": "2026-10-09",
-      "residual_bp": -59.91848110238292,
-      "noise_band_bp": 1.9542594116677126,
+      "residual_bp": -53.60533249584479,
+      "noise_band_bp": 4.274001445277505,
       "status": "alert",
       "top_position_id": "P004",
-      "top_position_share": 0.5517963762784618
+      "top_position_share": 0.6114414717197431
     },
     {
       "day0": "2026-10-09",
       "asof_date": "2026-10-12",
-      "residual_bp": 16.848753585673744,
-      "noise_band_bp": 3.3099679867138283,
+      "residual_bp": 16.667464193799457,
+      "noise_band_bp": 4.655462890561637,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.7671673652729792
+      "top_position_share": 0.7638397967289573
     },
     {
       "day0": "2026-10-12",
       "asof_date": "2026-10-13",
-      "residual_bp": -46.776607075802936,
-      "noise_band_bp": 4.290864485487871,
+      "residual_bp": -44.795643223449794,
+      "noise_band_bp": 5.2921263328987465,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.2054695820909656
+      "top_position_share": 1.2130901617338798
     },
     {
       "day0": "2026-10-13",
       "asof_date": "2026-10-14",
-      "residual_bp": 104.78708004266603,
-      "noise_band_bp": 5.1751888769531265,
+      "residual_bp": 95.30754644193142,
+      "noise_band_bp": 4.720026173349705,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.001845263879564
+      "top_position_share": 1.0019193093303291
     },
     {
       "day0": "2026-10-14",
       "asof_date": "2026-10-15",
-      "residual_bp": 48.055497722003516,
-      "noise_band_bp": 3.077447119768542,
+      "residual_bp": 40.87029915094624,
+      "noise_band_bp": 6.414399430169275,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.989170071367592
+      "top_position_share": 0.9843665358479545
     },
     {
       "day0": "2026-10-15",
       "asof_date": "2026-10-16",
-      "residual_bp": 20.09702392643544,
-      "noise_band_bp": 3.0329181530783185,
+      "residual_bp": 19.60862896026011,
+      "noise_band_bp": 6.529816577107452,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.9579279892604015
+      "top_position_share": 0.9499245901572948
     },
     {
       "day0": "2026-10-16",
       "asof_date": "2026-10-19",
-      "residual_bp": -11.472724736494465,
-      "noise_band_bp": 7.736135487564622,
-      "status": "inconclusive",
+      "residual_bp": -22.990264664063933,
+      "noise_band_bp": 7.172723461866846,
+      "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.00459159318477
+      "top_position_share": 0.9814295061875671
+    },
+    {
+      "day0": "2026-10-19",
+      "asof_date": "2026-10-20",
+      "residual_bp": 50.43083591199486,
+      "noise_band_bp": 8.00897041437364,
+      "status": "alert",
+      "top_position_id": "P008",
+      "top_position_share": 1.019278457504239
     }
   ],
   "case_study": {
@@ -277,7 +288,7 @@
     "mean_abs_bp_before": 104.9,
     "mean_abs_bp_after": 32.5,
     "worst_bp_before": 299.4,
-    "worst_bp_after": 83.6,
+    "worst_bp_after": 88.5,
     "findings": [
       {
         "title": "Noisy risk numbers",
@@ -290,6 +301,10 @@
       {
         "title": "A model setting that drifted daily",
         "body": "An automatic smoothing choice inside the pricing model changed every day and moved the note's value with it. It is now fixed, measured on every stored day."
+      },
+      {
+        "title": "A note valued as if newly issued every day",
+        "body": "The structured note's trigger levels were set from each day's price instead of the price on its issue date, hiding most of its real exposure to NVIDIA. It is now valued against its own issue-date levels."
       },
       {
         "title": "Observation dates simulated days off",

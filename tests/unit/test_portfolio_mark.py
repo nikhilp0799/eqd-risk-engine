@@ -73,20 +73,23 @@ def _write_curve(tmp_path):
     store.write_partitioned(table, tmp_path / "curves", ["asof_date"])
 
 
-def _write_underlying(tmp_path):
-    df = pd.DataFrame(
-        {
-            "asof_date": [ASOF],
-            "underlying": [UNDERLYING],
-            "open": [SPOT],
-            "high": [SPOT],
-            "low": [SPOT],
-            "close": [SPOT],
-            "volume": [0],
-        }
-    )
-    table = validate(df, UNDERLYING_SCHEMA, UNDERLYING_REQUIRED_NOT_NULL)
-    store.write_partitioned(table, tmp_path / "underlyings", ["asof_date"])
+def _write_underlying(tmp_path, history: dict[dt.date, float] | None = None):
+    """Today's close at SPOT, plus optional earlier closes (lifecycle fixings)."""
+    closes = {**(history or {}), ASOF: SPOT}
+    for day, close in closes.items():
+        df = pd.DataFrame(
+            {
+                "asof_date": [day],
+                "underlying": [UNDERLYING],
+                "open": [close],
+                "high": [close],
+                "low": [close],
+                "close": [close],
+                "volume": [0],
+            }
+        )
+        table = validate(df, UNDERLYING_SCHEMA, UNDERLYING_REQUIRED_NOT_NULL)
+        store.write_partitioned(table, tmp_path / "underlyings", ["asof_date"])
 
 
 def _write_forwards(
@@ -339,14 +342,13 @@ def test_skips_positions_with_no_market_data_for_their_underlying(tmp_path):
     assert not result.marks
 
 
-def test_expired_vanilla_marks_at_zero_without_warnings(tmp_path):
-    import warnings
-
+def _expired_put_book(tmp_path, expiry_close: float | None):
     _write_curve(tmp_path)
-    _write_underlying(tmp_path)
+    expiry = ASOF - dt.timedelta(days=5)
+    _write_underlying(tmp_path, None if expiry_close is None else {expiry: expiry_close})
     _write_forwards(tmp_path)
     _write_surface(tmp_path)
-    portfolio_path = _write_portfolio_yaml(
+    return _write_portfolio_yaml(
         tmp_path,
         [
             {
@@ -355,14 +357,30 @@ def test_expired_vanilla_marks_at_zero_without_warnings(tmp_path):
                 "underlying": UNDERLYING,
                 "cp": "P",
                 "strike": 90.0,
-                "expiry": (ASOF - dt.timedelta(days=5)).isoformat(),
+                "expiry": expiry.isoformat(),
                 "qty": 10,
             }
         ],
     )
+
+
+def test_expired_vanilla_settles_at_its_expiry_close_without_warnings(tmp_path):
+    """Settled in cash at the EXPIRY close (85 -> 10 x 5 = 50), not re-priced on
+    today's spot (100, which would make it worthless), with no risk left."""
+    import warnings
+
+    portfolio_path = _expired_put_book(tmp_path, expiry_close=85.0)
     with warnings.catch_warnings():
         warnings.simplefilter("error", RuntimeWarning)
         result = mark_portfolio(_cfg(tmp_path), ASOF, portfolio_path)
     mark = next(m for m in result.marks if m.position_id == "X1")
-    assert mark.price == 0.0
-    assert mark.delta == 0.0
+    assert mark.status == "settled"
+    assert mark.price == pytest.approx(50.0)
+    assert (mark.delta, mark.gamma, mark.vega, mark.theta) == (0.0, 0.0, 0.0, 0.0)
+
+
+def test_expired_vanilla_without_an_expiry_fixing_is_skipped_not_guessed(tmp_path):
+    portfolio_path = _expired_put_book(tmp_path, expiry_close=None)
+    result = mark_portfolio(_cfg(tmp_path), ASOF, portfolio_path)
+    assert "X1" in result.skipped
+    assert "no close on or before" in result.skipped["X1"]

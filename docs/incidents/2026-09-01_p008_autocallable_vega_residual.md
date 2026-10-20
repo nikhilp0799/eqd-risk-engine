@@ -4,7 +4,7 @@
 > follow-up investigation found the residual came from Monte Carlo noise in the note's Greeks,
 > unstable long-dated market inputs, local-vol smoothing noise, and mistimed observation dates;
 > adding vanna and volga added noise rather than information. On the same day pair the residual
-> is now -$35,611 (-84bp of NAV), down from +$178,461. The original report is kept below
+> is now -$33,506 (-80bp of NAV), down from +$178,461. The original report is kept below
 > unchanged as the record of what was believed at the time; see
 > [Follow-up investigation](#follow-up-investigation-2026-10-05-to-2026-10-14) at the end.
 
@@ -136,7 +136,7 @@ should be reported (and thresholded) separately.
 ## Follow-up investigation (2026-10-05 to 2026-10-14)
 
 Six weeks of daily history made it possible to test the original diagnosis instead of reasoning
-about it. It did not hold up. Five separate causes were found; each was measured on the full
+about it. It did not hold up. Six separate causes were found; each was measured on the full
 stored history before being fixed, and the whole history was rebuilt from the stored raw option
 chains after each fix. Planning record: `planning/pnl_explain_noise_plan.md` and
 `planning/input_stability_plan.md` (local, not in the repo).
@@ -176,6 +176,12 @@ chains after each fix. Planning record: `planning/pnl_explain_noise_plan.md` and
    simulation grid now contains every observation date exactly.
 5. **Lost data.** SPX chains for 2026-09-09 and 2026-09-14 had been overwritten by after-hours
    re-runs of the pipeline. Ingest now keeps an existing snapshot unless forced.
+6. **The note was re-issued every day (found 2026-10-20).** The autocallable's barriers were
+   measured against each day's spot instead of the note's own initial fixing, so the model priced
+   a fresh at-the-money note every day, hiding most of its real NVDA exposure (delta about 2,700
+   shares instead of about 13,400 on 2026-10-19). Now priced against its 2026-08-14 fixing
+   (NVDA $225.16), together with a position lifecycle (expiry settlement, barrier knock-in,
+   autocall observations). This changed P008's value and risk far more than this day's residual.
 
 ### Numbers
 
@@ -186,17 +192,20 @@ This day pair (2026-08-31 -> 2026-09-01):
 | Original report (single run, 1%/1pt Greeks) | +$178,461 (about 429bp of NAV) |
 | After the vanna/volga change | +$151,705 |
 | Noise-aware residual and better Greeks | -$43,927 (-104bp) |
-| All fixes above | **-$35,611 (-84bp, 2 SE +-9bp)** |
+| All fixes above | **-$33,506 (-80bp, 2 SE +-7bp)** |
 
 On the 16 day pairs explained both before and after the input and model fixes (2-4 above), the
-mean absolute total residual fell from 104.9bp to 32.5bp and the worst day from 299bp to 84bp;
-P008's typical daily price move fell from $54.6K to $9.4K. Including the two newest day pairs the
-current mean is 37.4bp (worst 106bp, 2026-10-14, NVDA -3.2%).
+mean absolute total residual fell from 104.9bp to 32.5bp and the worst day from 299bp to 89bp.
+Across all 22 stored day pairs it is 36.1bp (median 21bp; worst 95bp, 2026-10-14, NVDA -3.2%). An
+earlier version of this report also said P008's typical daily price move fell from $54.6K to $9.4K;
+that figure was an artefact of cause 6 (a note re-struck at the money every day has little delta)
+and is withdrawn: priced correctly, the note's value moves about $38K on a typical day, as a $5M
+note with about 13,400 shares of NVDA delta should.
 
 ### What remains, honestly
 
 This day pair is still one of the larger ones: on full revaluation the day's vol-surface change
-cost P008 $45.6K, while vega times the ATM vol move explains $3.6K. Two kinds of residual remain
+cost the book $44.8K, while vega times the ATM vol move explains $3.9K. Two kinds of residual remain
 across history: a few vol-step days where the note's response to the surface's shape (skew and
 term structure, not a single ATM move) matters, and big NVDA move days (about -3%) where a
 delta-gamma expansion of a path-dependent payoff falls short. The standard next step for both is
