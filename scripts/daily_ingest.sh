@@ -97,6 +97,9 @@ print(day0.isoformat() if day0 else '')
             if echo "$AIINVESTIGATE_OUTPUT" | grep -q "AI unavailable"; then
                 echo "*** AI unavailable today (Ollama not reachable) — not treated as a pipeline failure ***"
             fi
+            if echo "$AIINVESTIGATE_OUTPUT" | grep -q "FACT-CHECK:"; then
+                echo "*** AI FACT-CHECK: the investigation cites numbers not in its data — see FACT-CHECK line above; do not rely on its figures ***"
+            fi
         fi
     fi
 

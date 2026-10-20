@@ -36,6 +36,7 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
 }
 
 const r = ai.reprice;
+const fc = aiAgent.factcheck;
 const confidenceTone = aiAgent.confidence === "high" ? "good" : "neutral";
 
 export default function AiAgentPage() {
@@ -121,8 +122,23 @@ export default function AiAgentPage() {
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Badge tone={confidenceTone}>AI confidence: {aiAgent.confidence}</Badge>
+              {fc && (
+                <Badge tone={fc.status === "verified" ? "good" : "critical"}>
+                  {fc.status === "verified" ? "Figures checked" : "Figures not supported"}
+                </Badge>
+              )}
               <span className="text-xs text-muted">Written by the AI analyst, not independently verified.</span>
             </div>
+            {fc && (
+              <p className="mt-2 text-xs text-muted">
+                Every figure the analyst writes is checked against the data it was given, units
+                included; the check confirms each number exists there, not that it is described
+                correctly.{" "}
+                {fc.status === "verified"
+                  ? `All ${fc.n_numbers} figures here were found in that data${fc.retried ? ", after the analyst was asked once to correct a figure that was not" : ""}.`
+                  : `${fc.unsupported.length} of ${fc.n_numbers} figures were not found in that data even after one correction request: ${fc.unsupported.join(", ")}.`}
+              </p>
+            )}
           </Step>
           <Step n={4} title="Recommended a change, for a person to decide">
             {aiAgent.proposed_changes.map((c) => (

@@ -404,6 +404,20 @@ def _ai_feature_pair(pnl_payload: dict[str, Any]) -> tuple[dt.date, dt.date]:
     raise ValueError("no alerting day pair with an AI investigation")
 
 
+def _factcheck_fields(row: pd.Series) -> dict[str, Any] | None:
+    """The investigation's fact-check (planning/ai_factcheck_plan.md); None for
+    investigations stored before it existed."""
+    status = row.get("factcheck_status")
+    if status is None or pd.isna(status):
+        return None
+    return {
+        "status": status,
+        "n_numbers": int(row["factcheck_n_numbers"]),
+        "unsupported": json.loads(row["factcheck_unsupported"] or "[]"),
+        "retried": bool(row["factcheck_retried"]),
+    }
+
+
 def export_ai_agent(pnl_payload: dict[str, Any]) -> dict[str, Any]:
     day0, day1 = _ai_feature_pair(pnl_payload)
 
@@ -430,6 +444,7 @@ def export_ai_agent(pnl_payload: dict[str, Any]) -> dict[str, Any]:
         "confidence": row["confidence"],
         "summary": row["summary"],
         "root_cause_hypothesis": row["root_cause_hypothesis"],
+        "factcheck": _factcheck_fields(row),
         "flagged_positions": flagged[["position_id", "reason"]].to_dict(orient="records"),
         "proposed_changes": changes[
             ["parameter", "current_value", "suggested_value", "rationale"]
