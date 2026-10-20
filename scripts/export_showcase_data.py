@@ -50,7 +50,7 @@ CASE_STUDY = {
     "mean_abs_bp_before": 104.9,
     "mean_abs_bp_after": 32.5,
     "worst_bp_before": 299.4,
-    "worst_bp_after": 83.6,
+    "worst_bp_after": 88.5,
     "findings": [
         {
             "title": "Noisy risk numbers",
@@ -68,6 +68,12 @@ CASE_STUDY = {
             "title": "A model setting that drifted daily",
             "body": "An automatic smoothing choice inside the pricing model changed every day and "
             "moved the note's value with it. It is now fixed, measured on every stored day.",
+        },
+        {
+            "title": "A note valued as if newly issued every day",
+            "body": "The structured note's trigger levels were set from each day's price instead "
+            "of the price on its issue date, hiding most of its real exposure to NVIDIA. It is "
+            "now valued against its own issue-date levels.",
         },
         {
             "title": "Observation dates simulated days off",

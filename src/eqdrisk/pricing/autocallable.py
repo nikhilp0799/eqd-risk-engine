@@ -44,6 +44,14 @@ class AutocallableSpec:
     put_barrier: float  # fraction of initial level, e.g. 0.65
     coupon_rate: float  # per-observation-period coupon, e.g. 0.0225
     obs_times: np.ndarray  # (n_obs,) year-fractions from today, increasing; last = maturity
+    # The note's initial fixing, which the barriers are fractions of. None: a note
+    # issued today, struck at today's spot (deep hedging simulates notes from
+    # issue). A seasoned note must pass its fixing: before 2026-10-20 the daily mark
+    # used today's spot, i.e. re-issued P008 at the money every day
+    # (planning/position_lifecycle_plan.md).
+    initial_level: float | None = None
+    # Coupons missed at past observations that the memory feature still owes.
+    initial_memory: int = 0
 
 
 def autocallable_payoff(
@@ -60,7 +68,7 @@ def autocallable_payoff(
 
     pv = np.zeros(n_paths)
     alive = np.ones(n_paths, dtype=bool)
-    memory = np.zeros(n_paths)
+    memory = np.full(n_paths, float(spec.initial_memory))
 
     for i in range(n_obs):
         level = obs_levels[:, i]
@@ -142,7 +150,8 @@ def price_autocallable(
     )
     obs_levels = result.paths[:, obs_indices]
 
-    discounted_payoff = autocallable_payoff(obs_levels, spec, s0, r)
+    initial_level = spec.initial_level if spec.initial_level is not None else s0
+    discounted_payoff = autocallable_payoff(obs_levels, spec, initial_level, r)
     price = float(np.mean(discounted_payoff))
     stderr = float(np.std(discounted_payoff, ddof=1) / np.sqrt(len(discounted_payoff)))
     return price, stderr

@@ -15,6 +15,13 @@ number), and `daily_ingest.sh` greps for that marker after each run, logging a d
 `RESIDUAL ALERT` line if found — without changing the script's exit code, since a breach is a real
 finding to review, not a crash.
 
+**Expiries and observations are applied automatically (since 2026-10-20).** `eqdrisk portfolio`
+settles expired options at their expiry close, applies barrier knock-ins and autocall observations
+from stored closes (`portfolio/lifecycle.py`), and prints `UPCOMING:` lines for any expiry or
+autocall observation in the next 7 days. If a due fixing is missing from the stored closes, the
+position is skipped with a reason rather than settled on a guess. Rolls are added by hand to
+`configs/portfolio.yaml` with an `active_from` date.
+
 **Re-running a past day is safe for the option chains (since 2026-10-14).** `eqdrisk ingest` keeps
 an existing chain snapshot for a date and fetches only the underlyings that are missing; pass
 `--force` to replace one on purpose. Before this, an after-hours re-run of the pipeline overwrote

@@ -57,9 +57,16 @@ not tuned-to-look-clean ones:
   simulated up to 5.5 days off). Each cause was measured and fixed and the whole history rebuilt
   from stored option chains: once the noise was handled, the input and model fixes cut the mean
   absolute residual on the 16 comparable day pairs from 105bp to 33bp of NAV, and the incident day
-  itself went from +$178k to -$36k. The incident report keeps
+  itself went from +$178k to -$34k. The incident report keeps
   the original diagnosis as the record and adds the correction:
   `docs/incidents/2026-09-01_p008_autocallable_vega_residual.md`.
+- The book now has a real position lifecycle (2026-10-20): an AAPL call that expired on 2026-10-16
+  had kept being re-priced on each day's spot with a 500-share delta that no longer existed. Options
+  now settle in cash at the expiry close, the barrier knocks in from daily closes, the autocallable
+  applies its observation fixings, and expired positions roll into the next quarterly expiry.
+  Building it exposed a bigger bug: the autocallable's barriers were measured against each day's
+  spot, re-issuing the note at the money every day; against its real initial fixing its NVDA delta
+  is about 13,400 shares, not about 2,700. See `portfolio/lifecycle.py`.
 - Building the dashboard (Step 14) surfaced a real gap: two stress-testing modules (Step 11) and
   P&L explain's per-position breakdown had never persisted their results to disk, only rendered
   them in-memory via the CLI — which would have meant either violating the dashboard's own "no
@@ -948,8 +955,8 @@ vol waterfall from two real `MarketState`s; verified on the first real consecuti
 the automated pipeline produced (2026-08-31 -> 2026-09-01), where it found a genuine $178k
 residual, almost all in one position — see Step 13. Since 2026-10 every residual carries a Monte
 Carlo standard error (16 independently scrambled sub-runs) and alerts only when it exceeds the 5bp
-threshold by more than its noise (otherwise INCONCLUSIVE). Current state over 18 real day pairs:
-mean absolute residual 37bp of NAV, almost all from the NVDA autocallable on a few vol-surface-shape
+threshold by more than its noise (otherwise INCONCLUSIVE). Current state over 22 real day pairs:
+mean absolute residual 36bp of NAV, almost all from the NVDA autocallable on a few vol-surface-shape
 days and big NVDA move days (see Step 13). The 60+ day acceptance bar (median residual < 2bp) is
 still pending real history and is not met for the Monte Carlo exotics.
 
@@ -995,11 +1002,12 @@ If your residual is small and stable, your risk representation is adequate. If i
 incident (see `docs/incidents/2026-09-01_p008_autocallable_vega_residual.md`): a $178k residual,
 almost all in the NVDA autocallable. The original diagnosis (missing vanna/volga) and its "~13%
 improvement" were single-run results and did not survive testing. The follow-up investigation in
-the same report found five real causes: Monte Carlo noise in the note's Greeks, flickering
+the same report found six real causes: Monte Carlo noise in the note's Greeks, flickering
 long-dated forwards and vol surface, extrapolation past the last expiry that assumed zero future
-vol and carry, local-vol smoothing re-chosen at every grid point every day, and observation dates
-simulated up to 5.5 days off. All fixed and measured on the rebuilt history; the incident day's
-residual went from +$178k to -$36k (-84bp). The report keeps the original text as the record.
+vol and carry, local-vol smoothing re-chosen at every grid point every day, observation dates
+simulated up to 5.5 days off, and barriers measured against each day's spot instead of the note's
+initial fixing. All fixed and measured on the rebuilt history; the incident day's
+residual went from +$178k to -$34k (-80bp). The report keeps the original text as the record.
 
 Take the worst residual day from Step 12 and write it up as a production incident, in the format a bank actually uses.
 
@@ -1278,6 +1286,8 @@ warning. The result (status, numbers checked, unsupported list, whether a retry 
 6 (29%), the retry fixed 5, and 1 (5%) stayed flagged, a true positive ("the model explained only
 -9,635.24", a number not in its data). Known limit: it checks numbers and units, not which
 quantity a number is attached to (the same answer calls a residual the "actual P&L" and passes).
+A second full rerun on 2026-10-20 (after the position-lifecycle rebuild, 22 days): 1 retry, 0
+flagged; the error rate varies from run to run, which is why the check runs on every answer.
 
 **A real debugging finding along the way, not a cosmetic one.** The first three live runs against
 this exact breach pair all skipped tool use entirely — even with a "you MUST call the tool"

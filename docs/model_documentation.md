@@ -47,9 +47,26 @@ trading connectivity, uses free-tier market data (Section 5), and its "book" is 
 | Autocallable note | P008 | Quarterly-observation reverse convertible: early redemption at par-plus-coupon if the underlying is at/above an autocall barrier on an observation date; a "memory" coupon if between a lower coupon barrier and the autocall barrier; otherwise no payment and the memory counter increments. At maturity, if never autocalled, the investor is short a European (maturity-only) down-and-in put struck at inception. |
 | Equity (delta-one) | P009 | Underlying stock/index position, no optionality. |
 
-The book (`configs/portfolio.yaml`) has 9 positions across SPX, AAPL, and NVDA. JPM and XLE are
-configured in the universe but currently have zero real single-name option coverage (Section 5) and
-so cannot be assigned positions yet.
+The book (`configs/portfolio.yaml`) holds 9 live positions across SPX, AAPL, and NVDA. Two of the
+original options have expired and settled (P005 on 2026-09-18, P004 on 2026-10-16) and were rolled
+into the same trade at the next quarterly expiry (P010, P011; same side and size, strike at the old
+option's moneyness on the first stored day, nearest listed strike). JPM and XLE are configured in
+the universe but currently have zero real single-name option coverage (Section 5) and so cannot be
+assigned positions yet.
+
+**Position lifecycle (`portfolio/lifecycle.py`, since 2026-10-20).** Each position's status on a
+date is recomputed from stored daily closes, so it is reproducible from data: vanilla options settle
+in cash at the expiry close; the down-and-in barrier knocks in once a daily close since monitoring
+start is at or below the barrier (daily closes approximate continuous monitoring) and is then priced
+as the vanilla put it has become; the autocallable's past observations (fixed on the first close on
+or after each date) decide redemption, coupons paid in cash, or coupon memory carried forward. A
+settled position keeps its settled value with zero Greeks, so it adds no risk and no stress P&L, and
+the P&L explain books its last move as settlement, not residual. Positions within a week of expiry
+or an autocall observation are listed in the daily output. The autocallable is priced against its
+own initial fixing (issued 2026-08-15, NVDA $225.16). Before this fix it was priced against each
+day's spot, which re-issued the note at the money every day: its delta read about 2,700 NVDA shares
+on 2026-10-19 instead of about 13,400. Variance swaps are not settled, because P006 is marked as a
+fresh swap at its own fair strike each day and has no traded strike to settle against.
 
 ---
 
@@ -187,10 +204,11 @@ survive testing on six weeks of history. The residual actually came from (1) Mon
 the note's bump-and-reval Greeks (a single-run spread of about +-$116k on a big-move day; gamma,
 vanna and volga essentially noise), (2) long-dated forwards and vol-surface coverage changing day
 to day, (3) extrapolation past the last expiry that assumed zero future vol and carry,
-(4) local-vol smoothing re-chosen at every grid point every day, and (5) observation dates
-simulated up to 5.5 days off. Each was measured and fixed (follow-up section of the incident report). On the 16 comparable
-day pairs the mean absolute residual fell from 105bp to 33bp of NAV; over all 18 stored pairs it is
-37bp, almost all from P008.
+(4) local-vol smoothing re-chosen at every grid point every day, (5) observation dates
+simulated up to 5.5 days off, and (6) barriers measured against each day's spot instead of the
+note's initial fixing (Section 2, position lifecycle). Each was measured and fixed (follow-up section of the incident report). On the 16 comparable
+day pairs the mean absolute residual fell from 105bp to 33bp of NAV; over all 22 stored pairs it is
+36bp, almost all from P008.
 
 What remains is structural and documented, not fixed: on a few days the note responds to the vol
 surface's shape (skew and term structure) in a way one vega number times the ATM move cannot
@@ -279,7 +297,8 @@ fix (`marketdata.quality.staleness_reference_ts`, a three-regime function) is te
 change to when the automated pipeline runs (currently 16:30 ET) should re-verify this logic rather
 than assume it is timing-invariant.
 
-**This is a single, static, 9-position book**, not a live position feed, and the model has no
+**This is a single 9-live-position book, maintained by hand in a config file** (expiries settled
+and rolled by the lifecycle rules above), not a live position feed, and the model has no
 connectivity to any trading or booking system. Its purpose is to demonstrate the analytics, not to
 operate as a production risk system.
 
@@ -416,7 +435,7 @@ than loosened to hide the platform difference.
 
 | Risk | Materiality | Mitigant / current state |
 |---|---|---|
-| P&L-explain residual on Monte Carlo exotics | **High** — 37bp of NAV mean absolute residual over 18 real day pairs, almost all P008 | Five input and model causes found and fixed (Section 4); remaining vol-shape and big-move residual needs a revaluation ladder, not built |
+| P&L-explain residual on Monte Carlo exotics | **High** — 36bp of NAV mean absolute residual over 22 real day pairs, almost all P008 | Six input and model causes found and fixed (Section 4); remaining vol-shape and big-move residual needs a revaluation ladder, not built |
 | Vol-shock stress approximation error | **Medium**, grows with shock size (~7-40% measured) | Documented and bounded; not eliminated; matters most for the largest stress-ladder shocks |
 | Residual monitoring alerts are logged, not paged | **Low** — daily alerts are visible in the log and dashboard but nobody is notified | Automated 5bp check with a noise band since 2026-09-10 / 2026-10; paging not built |
 | Two single names (JPM, XLE) have no real coverage | **Low** for this book (no positions assigned there), but blocks any future position in those names | Not currently mitigated; Step 8.3 (proxy modelling) would address this if built |

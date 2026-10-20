@@ -654,3 +654,43 @@ def test_daily_marking_uses_the_better_conditioned_bumps_but_the_stress_grid_doe
         grid.exotic_theta,
         grid.n_batches,
     ) == (0.01, 0.01, False, 1)
+
+
+def test_a_position_expiring_between_the_two_days_is_settlement_not_residual(tmp_path):
+    """An option expiring on day1 moves from its day0 mark to its settled value;
+    that move is settlement P&L (explained), not a residual, and is noted. A roll
+    that starts on day1 is a new trade with no day0 mark: it is not required and
+    not explained."""
+    _write_both_days(tmp_path)
+    portfolio_path = _write_portfolio_yaml(
+        tmp_path,
+        [
+            {
+                "id": "EXP",
+                "type": "vanilla",
+                "underlying": UNDERLYING,
+                "cp": "C",
+                "strike": 90.0,
+                "expiry": DAY1.isoformat(),
+                "qty": 10,
+            },
+            {
+                "id": "ROLL",
+                "type": "vanilla",
+                "underlying": UNDERLYING,
+                "cp": "C",
+                "strike": 100.0,
+                "expiry": PILLAR_EXPIRIES[0].isoformat(),
+                "qty": 10,
+                "active_from": DAY1.isoformat(),
+            },
+        ],
+    )
+
+    result = run_pnl_explain(_cfg(tmp_path), DAY0, DAY1, portfolio_path)
+
+    assert not result.skipped
+    assert set(result.by_position_residual) == {"EXP"}
+    assert result.by_position_residual["EXP"] == pytest.approx(0.0, abs=1e-9)
+    assert result.total_actual() != 0.0
+    assert "settled" in result.notes["EXP"]

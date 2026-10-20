@@ -14,7 +14,8 @@ REPO_PORTFOLIO = Path(__file__).parents[2] / "configs" / "portfolio.yaml"
 
 def test_readme_portfolio_yaml_parses_into_the_expected_discriminated_types():
     portfolio = Portfolio.from_yaml(REPO_PORTFOLIO)
-    assert len(portfolio.positions) == 9
+    # The README's 9 positions plus two rolls of expired options (P010, P011).
+    assert len(portfolio.positions) == 11
 
     by_id = {p.id: p for p in portfolio.positions}
     assert isinstance(by_id["P001"], VanillaPosition)
@@ -26,6 +27,10 @@ def test_readme_portfolio_yaml_parses_into_the_expected_discriminated_types():
     assert by_id["P007"].sub == "down_and_in_put"
     assert isinstance(by_id["P008"], AutocallPosition)
     assert by_id["P008"].autocall_barrier == 1.00
+    assert by_id["P008"].initial_level == 225.160004
+    assert by_id["P008"].issue_date.isoformat() == "2026-08-15"
+    assert by_id["P010"].active_from.isoformat() == "2026-09-18"
+    assert by_id["P011"].active_from.isoformat() == "2026-10-16"
     assert isinstance(by_id["P009"], EquityPosition)
     assert by_id["P009"].qty == -80
 

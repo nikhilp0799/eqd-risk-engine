@@ -62,6 +62,7 @@ from eqdrisk.io.schemas import (
     validate,
 )
 from eqdrisk.marketdata.calendar import last_n_trading_days
+from eqdrisk.portfolio import lifecycle
 from eqdrisk.portfolio.mark import (
     MarketState,
     PortfolioMarkResult,
@@ -414,8 +415,10 @@ def run_pnl_explain(
     # Every step must cover the SAME positions, or the step totals (and the
     # NAV-relative residual) mix different books. A position that fails to
     # price in any of the five states is left out of every step and reported.
+    # The book is what was held on day0: a roll that starts by day1 is a new
+    # trade with no day0 mark, so it is neither required nor explained.
     priced_all = set.intersection(*(set(m) for m in marks))
-    unpriced = {p.id for p in portfolio.positions} - priced_all
+    unpriced = {p.id for p in portfolio.positions if lifecycle.is_active(p, day0)} - priced_all
     if unpriced:
         result.skipped["_all_"] = (
             f"positions not priced in every state: {', '.join(sorted(unpriced))}"
@@ -441,15 +444,27 @@ def run_pnl_explain(
         for pid in priced_all:
             m_prev, m_cur = marks_prev[pid], marks_cur[pid]
             actual = m_cur.price - m_prev.price
-            explained = _explained_for_step(
-                step, m_prev, days_elapsed, states[step_idx], states[step_idx + 1]
-            )
+            settling = m_cur.status == lifecycle.SETTLED and m_prev.status != lifecycle.SETTLED
+            if settling:
+                # Expiry, autocall or maturity between the two days: the move to
+                # the settled value is settlement P&L, not something the Greeks
+                # should have predicted (planning/position_lifecycle_plan.md).
+                explained = actual
+                result.notes[pid] = f"settled: {m_cur.note}; {actual:+,.2f} booked as settlement"
+            else:
+                explained = _explained_for_step(
+                    step, m_prev, days_elapsed, states[step_idx], states[step_idx + 1]
+                )
             actual_total += actual
             explained_total += explained
             position_residuals[pid] = position_residuals.get(pid, 0.0) + (actual - explained)
 
-            batches = _batch_residuals(
-                step, m_prev, m_cur, days_elapsed, states[step_idx], states[step_idx + 1]
+            batches = (
+                np.zeros(n_batches)
+                if settling
+                else _batch_residuals(
+                    step, m_prev, m_cur, days_elapsed, states[step_idx], states[step_idx + 1]
+                )
             )
             per_batch = batches if batches is not None else np.full(n_batches, actual - explained)
             step_batches += per_batch
@@ -469,6 +484,7 @@ def run_pnl_explain(
         u = m.underlying
         if (
             m.type in ("vanilla", "barrier", "autocall")
+            and m.status != lifecycle.SETTLED
             and u in states[3].surface
             and u in states[4].surface
         ):
