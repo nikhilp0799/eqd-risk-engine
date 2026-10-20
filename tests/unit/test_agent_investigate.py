@@ -167,7 +167,7 @@ def test_agentic_loop_returns_immediately_when_no_tool_call(tmp_path):
         "eqdrisk.agent.investigate.ollama_client.chat",
         return_value=_final_message('{"summary": "clean day"}'),
     ) as mock_chat:
-        raw, trace = _run_agentic_loop(cfg, result, "no history", PORTFOLIO_PATH, tmp_path)
+        raw, trace, _ = _run_agentic_loop(cfg, result, "no history", PORTFOLIO_PATH, tmp_path)
 
     assert raw == '{"summary": "clean day"}'
     assert trace == []
@@ -186,7 +186,7 @@ def test_agentic_loop_executes_a_real_tool_call_then_answers(tmp_path):
         _final_message('{"summary": "checked limitations"}'),
     ]
     with patch("eqdrisk.agent.investigate.ollama_client.chat", side_effect=responses) as mock_chat:
-        raw, trace = _run_agentic_loop(cfg, result, "no history", PORTFOLIO_PATH, tmp_path)
+        raw, trace, _ = _run_agentic_loop(cfg, result, "no history", PORTFOLIO_PATH, tmp_path)
 
     assert raw == '{"summary": "checked limitations"}'
     assert mock_chat.call_count == 2
@@ -203,7 +203,7 @@ def test_agentic_loop_handles_unknown_tool_gracefully(tmp_path):
         _final_message('{"summary": "recovered"}'),
     ]
     with patch("eqdrisk.agent.investigate.ollama_client.chat", side_effect=responses):
-        raw, trace = _run_agentic_loop(cfg, result, "no history", PORTFOLIO_PATH, tmp_path)
+        raw, trace, _ = _run_agentic_loop(cfg, result, "no history", PORTFOLIO_PATH, tmp_path)
 
     assert raw == '{"summary": "recovered"}'
     assert "unknown tool" in trace[0].result_summary
@@ -219,7 +219,7 @@ def test_agentic_loop_forces_final_answer_after_max_rounds(tmp_path):
         _final_message('{"summary": "forced final answer"}'),
     ]
     with patch("eqdrisk.agent.investigate.ollama_client.chat", side_effect=responses) as mock_chat:
-        raw, trace = _run_agentic_loop(cfg, result, "no history", PORTFOLIO_PATH, tmp_path)
+        raw, trace, _ = _run_agentic_loop(cfg, result, "no history", PORTFOLIO_PATH, tmp_path)
 
     assert raw == '{"summary": "forced final answer"}'
     assert len(trace) == 3
@@ -233,7 +233,7 @@ def test_agentic_loop_returns_none_when_chat_unreachable(tmp_path):
     cfg = _cfg(tmp_path)
     result = _pnl_result()
     with patch("eqdrisk.agent.investigate.ollama_client.chat", return_value=None):
-        raw, trace = _run_agentic_loop(cfg, result, "no history", PORTFOLIO_PATH, tmp_path)
+        raw, trace, _ = _run_agentic_loop(cfg, result, "no history", PORTFOLIO_PATH, tmp_path)
 
     assert raw is None
     assert trace == []

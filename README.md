@@ -1265,6 +1265,20 @@ with an honest `parse_error` flag rather than silently dropping it.
   as a first-pass triage that runs the right test on the right position; not a substitute for the
   investigation.
 
+**Fact-check on every answer (2026-10-19).** On 2026-10-19 the explain reported "residual
+-4,997.42 ... (-11.5bp of NAV)" and the model wrote "-4,997.42bp of NAV": a real dollar figure with
+the wrong unit, 430x too large, and nothing caught it. `agent/factcheck.py` now checks every number
+the model writes, with its unit, against the exact text it was given (the prompt, now stored with
+each investigation for provenance, plus the full tool results): a bp figure must match a bp figure
+in the data, a % figure a % or a tool's shock fraction, a dollar figure any dollar figure, within
+the printed precision. If any figure fails, the model gets one corrective retry naming the bad
+numbers; if it still fails, the answer is kept but marked, and the daily log prints a FACT-CHECK
+warning. The result (status, numbers checked, unsupported list, whether a retry ran) is stored on
+`ai_investigations` and shown on the site. Rerun on all 21 stored days: the first answer failed on
+6 (29%), the retry fixed 5, and 1 (5%) stayed flagged, a true positive ("the model explained only
+-9,635.24", a number not in its data). Known limit: it checks numbers and units, not which
+quantity a number is attached to (the same answer calls a residual the "actual P&L" and passes).
+
 **A real debugging finding along the way, not a cosmetic one.** The first three live runs against
 this exact breach pair all skipped tool use entirely — even with a "you MUST call the tool"
 instruction in the system prompt, which worked reliably in an isolated short-prompt test. Diagnosed

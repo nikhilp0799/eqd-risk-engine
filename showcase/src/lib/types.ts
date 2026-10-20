@@ -129,6 +129,13 @@ export interface AiTraceEntry {
   result_summary: string;
 }
 
+export interface AiFactCheck {
+  status: "verified" | "unsupported_numbers";
+  n_numbers: number;
+  unsupported: string[];
+  retried: boolean;
+}
+
 export interface AiAgentData {
   day0: string;
   asof_date: string;
@@ -140,6 +147,7 @@ export interface AiAgentData {
   confidence: string;
   summary: string;
   root_cause_hypothesis: string;
+  factcheck: AiFactCheck | null;
   flagged_positions: AiFlaggedPosition[];
   proposed_changes: AiProposedChange[];
   trace: AiTraceEntry[];

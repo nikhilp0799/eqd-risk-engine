@@ -24,6 +24,12 @@ exempting the one part of the system an LLM produces. The full tool-call trace
 shown alongside the final answer, not hidden — the actual evidence of autonomy
 for an outside reviewer, not a claim about it.
 
+**Fact-checked, not trusted (2026-10-19, `agent/factcheck.py`):** every number in
+the answer is checked, with its unit, against the exact prompt and tool results the
+model saw. One corrective retry names any unsupported numbers; if they survive it,
+the answer is kept and marked. The prompt is stored with the investigation, so any
+figure can be traced to what the model was given.
+
 **What this deliberately does not do:** never auto-applies a proposed config
 change (always a written suggestion for a human to review), never recalibrates
 or touches model parameters, never sends any project data anywhere except
@@ -42,7 +48,7 @@ from typing import Any
 
 import pandas as pd
 
-from eqdrisk.agent import ollama_client, tools
+from eqdrisk.agent import factcheck, ollama_client, tools
 from eqdrisk.config import BaseConfig
 from eqdrisk.io import store
 from eqdrisk.io.schemas import (
@@ -92,6 +98,11 @@ class AIInvestigationResult:
     trace: list[ToolCallTrace] = field(default_factory=list)
     raw_response: str = ""
     parse_error: str | None = None
+    # Provenance and fact-check (planning/ai_factcheck_plan.md): the exact text
+    # the model was given, and whether every number it wrote is in that text.
+    prompt: str = ""
+    factcheck: factcheck.FactCheckResult | None = None
+    factcheck_retried: bool = False
 
     def _trace_lines(self) -> list[str]:
         return [
@@ -117,6 +128,9 @@ class AIInvestigationResult:
                 lines.append("  investigation trace:")
                 lines.extend(self._trace_lines())
             return "\n".join(lines)
+        if self.factcheck is not None:
+            retried = " (after one corrective retry)" if self.factcheck_retried else ""
+            lines.append(f"  {self.factcheck.render()}{retried}")
         lines.append(f"  confidence: {self.confidence}")
         lines.append(f"  summary: {self.summary}")
         lines.append(f"  root cause hypothesis: {self.root_cause_hypothesis}")
@@ -219,22 +233,23 @@ def _run_agentic_loop(
     history: str,
     portfolio_path: str,
     project_root: Path,
-) -> tuple[str | None, list[ToolCallTrace]]:
+) -> tuple[str | None, list[ToolCallTrace], list[dict[str, Any]]]:
     """Up to `MAX_TOOL_ROUNDS` real tool-call round-trips, then a forced
     tools-off final answer if the model still wants to call something.
     Returns `(final_raw_content, trace)` — `final_raw_content` is `None` if
     the Ollama chat call itself failed (treated as AI-unavailable by the
-    caller), distinct from a malformed-but-present final answer."""
+    caller), distinct from a malformed-but-present final answer. Also returns
+    the conversation so far, for the fact-check and its corrective retry."""
     messages = _build_messages(result, history)
     trace: list[ToolCallTrace] = []
 
     for round_num in range(1, MAX_TOOL_ROUNDS + 1):
         message = ollama_client.chat(messages, tools=tools.TOOL_SPECS)
         if message is None:
-            return None, trace
+            return None, trace, messages
         tool_calls = message.get("tool_calls") or []
         if not tool_calls:
-            return (message.get("content") or None), trace
+            return (message.get("content") or None), trace, messages
 
         messages.append(
             {"role": "assistant", "content": message.get("content", ""), "tool_calls": tool_calls}
@@ -266,8 +281,8 @@ def _run_agentic_loop(
     )
     message = ollama_client.chat(messages, tools=None)
     if message is None:
-        return None, trace
-    return (message.get("content") or None), trace
+        return None, trace, messages
+    return (message.get("content") or None), trace, messages
 
 
 def run_daily_investigation(
@@ -287,7 +302,8 @@ def run_daily_investigation(
         return investigation
 
     history = _historical_trend(curated_root, result.day1, HISTORY_LOOKBACK_DAYS)
-    raw, trace = _run_agentic_loop(cfg, result, history, portfolio_path, project_root)
+    raw, trace, messages = _run_agentic_loop(cfg, result, history, portfolio_path, project_root)
+    prompt = "\n\n".join(m["content"] for m in messages[:2])
 
     if raw is None:
         investigation = AIInvestigationResult(
@@ -296,48 +312,121 @@ def run_daily_investigation(
             model=ollama_client.OLLAMA_MODEL,
             ai_available=False,
             trace=trace,
+            prompt=prompt,
         )
         _persist(investigation, curated_root)
         return investigation
 
-    parsed, parse_error = _parse_response(raw)
     investigation = AIInvestigationResult(
         day0=result.day0,
         day1=result.day1,
         model=ollama_client.OLLAMA_MODEL,
         ai_available=True,
-        raw_response=raw,
-        parse_error=parse_error,
         trace=trace,
+        prompt=prompt,
     )
-    if parse_error:
-        investigation.summary = raw[:2000]
-    else:
-        investigation.summary = str(parsed.get("summary", ""))
-        investigation.root_cause_hypothesis = str(parsed.get("root_cause_hypothesis", ""))
-        investigation.confidence = str(parsed.get("confidence", ""))
-        investigation.flagged_positions = [
-            (str(p.get("position_id", "")), str(p.get("reason", "")))
-            for p in parsed.get("flagged_positions", [])
-            if isinstance(p, dict)
-        ]
-        investigation.proposed_changes = [
-            ProposedChange(
-                parameter=str(c.get("parameter", "")),
-                current_value=str(c.get("current_value", "")),
-                suggested_value=str(c.get("suggested_value", "")),
-                rationale=str(c.get("rationale", "")),
-            )
-            for c in parsed.get("proposed_changes", [])
-            if isinstance(c, dict)
-        ]
+    _fill_from_raw(investigation, raw)
+    if not investigation.parse_error:
+        context = _factcheck_context(messages)
+        shares = _residual_shares(result)
+        checked = factcheck.check(_answer_texts(investigation), context, shares)
+        if checked.unsupported:
+            retry_raw = _corrective_retry(messages, raw, checked.unsupported)
+            if retry_raw is not None:
+                retry = AIInvestigationResult(
+                    day0=result.day0, day1=result.day1, model=investigation.model, ai_available=True
+                )
+                _fill_from_raw(retry, retry_raw)
+                if not retry.parse_error:
+                    _fill_from_raw(investigation, retry_raw)
+                    investigation.factcheck_retried = True
+                    checked = factcheck.check(_answer_texts(investigation), context, shares)
+        investigation.factcheck = checked
 
     _persist(investigation, curated_root)
     _write_markdown(investigation, project_root)
     return investigation
 
 
+def _fill_from_raw(investigation: AIInvestigationResult, raw: str) -> None:
+    parsed, parse_error = _parse_response(raw)
+    investigation.raw_response = raw
+    investigation.parse_error = parse_error
+    if parse_error:
+        investigation.summary = raw[:2000]
+        return
+    investigation.summary = str(parsed.get("summary", ""))
+    investigation.root_cause_hypothesis = str(parsed.get("root_cause_hypothesis", ""))
+    investigation.confidence = str(parsed.get("confidence", ""))
+    investigation.flagged_positions = [
+        (str(p.get("position_id", "")), str(p.get("reason", "")))
+        for p in parsed.get("flagged_positions", [])
+        if isinstance(p, dict)
+    ]
+    investigation.proposed_changes = [
+        ProposedChange(
+            parameter=str(c.get("parameter", "")),
+            current_value=str(c.get("current_value", "")),
+            suggested_value=str(c.get("suggested_value", "")),
+            rationale=str(c.get("rationale", "")),
+        )
+        for c in parsed.get("proposed_changes", [])
+        if isinstance(c, dict)
+    ]
+
+
+def _answer_texts(investigation: AIInvestigationResult) -> list[str]:
+    texts = [investigation.summary, investigation.root_cause_hypothesis]
+    texts += [reason for _, reason in investigation.flagged_positions]
+    for c in investigation.proposed_changes:
+        texts += [c.current_value, c.suggested_value, c.rationale]
+    return texts
+
+
+def _factcheck_context(messages: list[dict[str, Any]]) -> str:
+    """Everything the model saw: the prompt and every full tool result (the
+    stored trace keeps only a truncated summary)."""
+    return "\n".join(
+        str(m.get("content", "")) for m in messages if m.get("role") in ("system", "user", "tool")
+    )
+
+
+def _residual_shares(result: PnLExplainResult) -> list[float]:
+    """Each position's share of the total residual, in %: a figure the model may
+    legitimately compute from its data."""
+    total = sum(result.by_position_residual.values())
+    if not total:
+        return []
+    return [100.0 * v / total for v in result.by_position_residual.values()]
+
+
+def _corrective_retry(
+    messages: list[dict[str, Any]], raw: str, unsupported: list[str]
+) -> str | None:
+    """One more turn: name the numbers that are not in the model's data and ask
+    for the same JSON with them corrected (planning/ai_factcheck_plan.md)."""
+    retry_messages = [
+        *messages,
+        {"role": "assistant", "content": raw},
+        {
+            "role": "user",
+            "content": (
+                "These numbers in your answer do not appear in the data you were given, or "
+                f"carry the wrong unit: {', '.join(unsupported)}. Dollar residuals and "
+                "residuals in bp of NAV are different numbers in the data; use each with the "
+                "unit it has there, and do not present a what-if scenario as something that "
+                f"happened. {_FINAL_JSON_INSTRUCTIONS}"
+            ),
+        },
+    ]
+    message = ollama_client.chat(retry_messages, tools=None)
+    if message is None:
+        return None
+    return message.get("content") or None
+
+
 def _persist(investigation: AIInvestigationResult, curated_root: Path) -> None:
+    fc = investigation.factcheck
     row = {
         "asof_date": investigation.day1,
         "day0": investigation.day0,
@@ -347,6 +436,11 @@ def _persist(investigation: AIInvestigationResult, curated_root: Path) -> None:
         "root_cause_hypothesis": investigation.root_cause_hypothesis,
         "confidence": investigation.confidence,
         "raw_response": investigation.raw_response,
+        "prompt": investigation.prompt,
+        "factcheck_status": None if fc is None else fc.status,
+        "factcheck_n_numbers": None if fc is None else fc.n_numbers,
+        "factcheck_unsupported": None if fc is None else json.dumps(fc.unsupported),
+        "factcheck_retried": investigation.factcheck_retried,
     }
     table = validate(
         pd.DataFrame([row]), AI_INVESTIGATION_SCHEMA, AI_INVESTIGATION_REQUIRED_NOT_NULL

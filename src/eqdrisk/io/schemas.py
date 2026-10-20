@@ -401,6 +401,14 @@ AI_INVESTIGATION_SCHEMA = pa.schema(
         ("root_cause_hypothesis", pa.string()),
         ("confidence", pa.string()),  # "low" | "medium" | "high" | "" (unavailable/unparsed)
         ("raw_response", pa.string()),
+        # Provenance and fact-check (planning/ai_factcheck_plan.md): the exact
+        # prompt the model was given; "verified" / "unsupported_numbers"; numbers
+        # checked; the unsupported ones as a JSON list; whether a corrective retry ran.
+        ("prompt", pa.string()),
+        ("factcheck_status", pa.string()),
+        ("factcheck_n_numbers", pa.int64()),
+        ("factcheck_unsupported", pa.string()),
+        ("factcheck_retried", pa.bool_()),
     ]
 )
 AI_INVESTIGATION_REQUIRED_NOT_NULL = ["asof_date", "day0", "model", "ai_available"]
