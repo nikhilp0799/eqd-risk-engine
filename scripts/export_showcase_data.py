@@ -35,18 +35,13 @@ OUT_DIR = PROJECT_ROOT / "showcase" / "src" / "data"
 DEEP_HEDGE_DATE = dt.date(2026, 9, 22)
 VOL_SURFACE_DATE = dt.date(2026, 9, 22)
 VOL_SURFACE_UNDERLYING = "SPX"
-INCIDENT_DAY0 = dt.date(2026, 9, 2)
-INCIDENT_DAY1 = dt.date(2026, 9, 3)
-
-# The incident as first recorded by the daily run on 2026-09-03, before the
-# follow-up investigation (docs/incidents/2026-09-01_p008_autocallable_vega_residual.md).
-# Fixed values: the stored tables now hold the recomputed day, so the original
-# run can't be re-derived from them. Averages are over the 16 day pairs explained
-# both before and after the input and model fixes (same report).
-CASE_STUDY = {
-    "then_unexplained": 284_069.0,
-    "then_unexplained_bp": 670.2,
-    "then_top_position_share_pct": 93.9,
+# How the engine's explain was improved (follow-up section of
+# docs/incidents/2026-09-01_p008_autocallable_vega_residual.md). Fixed values: the
+# "before" figures come from the stored history before the input and model fixes,
+# which the recomputed tables no longer hold. Averages are over the 16 day pairs
+# explained both before and after. The page features the latest day, not the old
+# incident.
+IMPROVEMENT = {
     "mean_abs_bp_before": 104.9,
     "mean_abs_bp_after": 27.0,
     "worst_bp_before": 299.4,
@@ -296,26 +291,34 @@ def export_vol_surface() -> dict[str, Any]:
 
 def export_pnl_explain() -> dict[str, Any]:
     steps_all = _read("pnl_explain")
+    by_pos_all = _read("pnl_explain_by_position")
+    series = _valid_residual_series(steps_all, by_pos_all)
+    latest = series[-1]  # the page features the most recent daily check
+    day0, day1 = latest["day0"], latest["asof_date"]
     day_steps = (
-        steps_all[(steps_all["day0"] == INCIDENT_DAY0) & (steps_all["asof_date"] == INCIDENT_DAY1)]
+        steps_all[(steps_all["day0"] == day0) & (steps_all["asof_date"] == day1)]
         .set_index("step")
         .reindex(["time", "rates_divs", "spot", "vol"])
     )
-    if day_steps["actual_pnl"].isna().all():
-        raise ValueError(f"no pnl_explain for {INCIDENT_DAY0} -> {INCIDENT_DAY1}")
     nav = float(day_steps["nav"].iloc[0])
-    residual_bp = 10_000.0 * float(day_steps["residual"].sum()) / nav
-
-    by_pos_all = _read("pnl_explain_by_position")
     by_pos = by_pos_all[
-        (by_pos_all["day0"] == INCIDENT_DAY0) & (by_pos_all["asof_date"] == INCIDENT_DAY1)
+        (by_pos_all["day0"] == day0) & (by_pos_all["asof_date"] == day1)
     ].sort_values("residual", key=lambda s: s.abs(), ascending=False)
+    # Positions already settled on day0 carry no risk and a zero residual: they are
+    # no longer part of the live book, so they are not listed.
+    marks = _read("portfolio_marks")
+    if "status" in marks.columns:
+        day0_marks = marks[marks["asof_date"] == day0]
+        settled = set(day0_marks.loc[day0_marks["status"] == "settled", "position_id"])
+        by_pos = by_pos[~by_pos["position_id"].isin(settled)]
 
     payload = {
-        "day0": INCIDENT_DAY0,
-        "asof_date": INCIDENT_DAY1,
+        "day0": day0,
+        "asof_date": day1,
         "nav": nav,
-        "residual_bp": residual_bp,
+        "residual_bp": latest["residual_bp"],
+        "noise_band_bp": latest["noise_band_bp"],
+        "status": latest["status"],
         "residual_alert_threshold_bp": RESIDUAL_ALERT_THRESHOLD_BP,
         "positions": _position_labels(),
         "waterfall": [
@@ -328,8 +331,8 @@ def export_pnl_explain() -> dict[str, Any]:
             for step, row in day_steps.iterrows()
         ],
         "by_position": by_pos[["position_id", "residual"]].to_dict(orient="records"),
-        "residual_series": _valid_residual_series(steps_all, by_pos_all),
-        "case_study": CASE_STUDY,
+        "residual_series": series,
+        "improvement": IMPROVEMENT,
     }
     _write("pnl_explain", payload)
     return payload

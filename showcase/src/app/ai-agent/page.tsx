@@ -118,7 +118,7 @@ export default function AiAgentPage() {
             <p className="mt-2 text-xs text-muted">
               An AI hypothesis for a person to check, not a conclusion. On an earlier day the team&apos;s own
               investigation of this note&apos;s gaps found the causes in the engine&apos;s inputs and
-              model; see the Daily P&amp;L Explain case study.
+              model; see How the engine was improved on the Daily P&amp;L Explain page.
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Badge tone={confidenceTone}>AI confidence: {aiAgent.confidence}</Badge>
@@ -158,7 +158,7 @@ export default function AiAgentPage() {
       </Card>
 
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border bg-surface px-6 py-5">
-        <p className="text-ink-2">See how the daily P&amp;L check works, and the case study behind it.</p>
+        <p className="text-ink-2">See how the daily P&amp;L check works, and how the engine was improved.</p>
         <NextLink href="/pnl-explain">Open Daily P&amp;L Explain</NextLink>
       </div>
 
