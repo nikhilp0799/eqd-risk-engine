@@ -464,6 +464,18 @@ def build_local_vol_grid(
     return LocalVolGrid(s_grid=s_grid, t_grid=t_grid, sigma_loc=sigma_loc, n_floored=n_floored)
 
 
+def moved_grid(grid: LocalVolGrid, new_spot: float, spot: float) -> LocalVolGrid:
+    """`grid` re-anchored at `new_spot` with local vol unchanged as a function of
+    moneyness (S / spot): sticky moneyness, the convention a surface rebuilt
+    around a moved spot from the same log-moneyness smile follows."""
+    return LocalVolGrid(
+        s_grid=grid.s_grid * (new_spot / spot),
+        t_grid=grid.t_grid,
+        sigma_loc=grid.sigma_loc,
+        n_floored=grid.n_floored,
+    )
+
+
 def bilinear_lookup(grid: LocalVolGrid, s: float, t: float) -> float:
     """sigma_loc(s, t) via bilinear interpolation on the precomputed grid, clamped
     to the grid's own range (flat extrapolation) — a pure-numpy reference

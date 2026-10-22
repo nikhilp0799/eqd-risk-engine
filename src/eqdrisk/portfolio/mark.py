@@ -135,7 +135,20 @@ class MCSettings:
     exotic_theta: bool = True
 
 
-GREEK_FIELDS = ("price", "delta", "gamma", "vega", "vanna", "volga", "theta")
+# Spot bump for vanillas' closed-form sticky-moneyness delta/gamma.
+VANILLA_SM_BUMP_FRAC = 0.01
+
+GREEK_FIELDS = (
+    "price",
+    "delta",
+    "gamma",
+    "vega",
+    "vanna",
+    "volga",
+    "theta",
+    "delta_sm",
+    "gamma_sm",
+)
 
 
 def batch_seeds(seed: int, n_batches: int) -> list[int]:
@@ -202,6 +215,11 @@ class PositionMark:
     rho: float = 0.0
     vanna: float = 0.0
     volga: float = 0.0
+    # Sticky-moneyness delta/gamma (spot bumped with the vol surface moving with
+    # it); `delta`/`gamma` above are sticky strike. The P&L explain's spot step
+    # uses these (planning/revaluation_ladder_plan.md). None = not computed.
+    delta_sm: float | None = None
+    gamma_sm: float | None = None
     k: float | None = None
     stderr: float | None = None
     note: str | None = None
@@ -477,6 +495,8 @@ def mark_with_state(
                     T=0.0,
                     price=p.qty * shocked_spot(state.spot[u], position_shock),
                     delta=p.qty,
+                    delta_sm=p.qty,
+                    gamma_sm=0.0,
                 )
             elif isinstance(p, VarSwapPosition):
                 mark = _mark_varswap(
@@ -590,6 +610,23 @@ def _mark_vanilla(
     sigma = float(np.sqrt(max(w, 1e-12) / T)) if T > 0 else 0.0
 
     g = compute_greeks(p.cp == "C", forward, p.strike, T, sigma, discount_factor, spot)
+
+    def price_at(spot_rel: float) -> float:
+        """Sticky moneyness: spot and forward move together, so the strike's
+        log-moneyness (and with it its implied vol on the same smile) moves too."""
+        f = forward * (1 + spot_rel)
+        w_b = shocked_w(surface, float(np.log(p.strike / f)), T, shock)
+        s_b = float(np.sqrt(max(w_b, 1e-12) / T))
+        return compute_greeks(
+            p.cp == "C", f, p.strike, T, s_b, discount_factor, spot * (1 + spot_rel)
+        ).price
+
+    delta_sm = gamma_sm = 0.0
+    if T > 0:
+        h = VANILLA_SM_BUMP_FRAC * spot
+        up, dn = price_at(VANILLA_SM_BUMP_FRAC), price_at(-VANILLA_SM_BUMP_FRAC)
+        delta_sm = (up - dn) / (2 * h)
+        gamma_sm = (up - 2 * g.price + dn) / h**2
     return PositionMark(
         position_id=p.id,
         type="vanilla",
@@ -604,6 +641,8 @@ def _mark_vanilla(
         rho=p.qty * g.rho,
         vanna=p.qty * g.vanna_spot,
         volga=p.qty * g.volga,
+        delta_sm=p.qty * delta_sm,
+        gamma_sm=p.qty * gamma_sm,
         k=k,
     )
 
@@ -705,6 +744,8 @@ def _mark_barrier(
         price=mean["price"],
         delta=mean["delta"],
         gamma=mean["gamma"],
+        delta_sm=mean["delta_sm"],
+        gamma_sm=mean["gamma_sm"],
         vega=mean["vega"],
         vanna=mean["vanna"],
         volga=mean["volga"],
@@ -792,6 +833,8 @@ def _mark_autocall(
         price=mean["price"] + status.coupons_paid,
         delta=mean["delta"],
         gamma=mean["gamma"],
+        delta_sm=mean["delta_sm"],
+        gamma_sm=mean["gamma_sm"],
         vega=mean["vega"],
         vanna=mean["vanna"],
         volga=mean["volga"],
@@ -830,6 +873,8 @@ def _persist(result: PortfolioMarkResult, curated_root: Path) -> None:
             "price": m.price,
             "delta": m.delta,
             "gamma": m.gamma,
+            "delta_sm": m.delta_sm,
+            "gamma_sm": m.gamma_sm,
             "vega": m.vega,
             "theta": m.theta,
             "rho": m.rho,

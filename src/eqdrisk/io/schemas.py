@@ -277,6 +277,8 @@ PORTFOLIO_MARKS_SCHEMA = pa.schema(
         ("price", pa.float64()),
         ("delta", pa.float64()),
         ("gamma", pa.float64()),
+        ("delta_sm", pa.float64()),  # sticky moneyness (portfolio/mark.py)
+        ("gamma_sm", pa.float64()),
         ("vega", pa.float64()),
         ("theta", pa.float64()),
         ("rho", pa.float64()),

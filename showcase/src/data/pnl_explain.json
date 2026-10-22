@@ -2,7 +2,7 @@
   "day0": "2026-09-02",
   "asof_date": "2026-09-03",
   "nav": 4288392.685363949,
-  "residual_bp": -12.473938273255976,
+  "residual_bp": 0.8031474501063599,
   "residual_alert_threshold_bp": 5.0,
   "positions": {
     "P001": "S&P 500 put option (short)",
@@ -27,14 +27,14 @@
     {
       "step": "rates_divs",
       "actual_pnl": 1444.288977214721,
-      "explained_pnl": 19.86831356552451,
+      "explained_pnl": 19.868313565524513,
       "residual": 1424.4206636491965
     },
     {
       "step": "spot",
       "actual_pnl": 31240.762163108207,
-      "explained_pnl": 38566.42091517507,
-      "residual": -7325.658752066862
+      "explained_pnl": 32872.68518527335,
+      "residual": -1631.923022165145
     },
     {
       "step": "vol",
@@ -46,31 +46,31 @@
   "by_position": [
     {
       "position_id": "P008",
-      "residual": -5170.413794423288
+      "residual": 426.4312627638701
     },
     {
       "position_id": "P007",
-      "residual": -289.2602140173185
-    },
-    {
-      "position_id": "P003",
-      "residual": 158.5762202226623
-    },
-    {
-      "position_id": "P001",
-      "residual": -48.61390693959734
-    },
-    {
-      "position_id": "P004",
-      "residual": -27.140689371165692
+      "residual": 143.19225880031152
     },
     {
       "position_id": "P002",
-      "residual": 23.09063488628601
+      "residual": -125.03571771653458
+    },
+    {
+      "position_id": "P003",
+      "residual": -114.96664853794975
+    },
+    {
+      "position_id": "P001",
+      "residual": 17.369688420692484
+    },
+    {
+      "position_id": "P004",
+      "residual": -3.6876085242326297
     },
     {
       "position_id": "P005",
-      "residual": 4.447184771182062
+      "residual": 1.117929824321957
     },
     {
       "position_id": "P006",
@@ -85,200 +85,209 @@
     {
       "day0": "2026-08-31",
       "asof_date": "2026-09-01",
-      "residual_bp": -79.95238753575761,
-      "noise_band_bp": 6.916819333309339,
+      "residual_bp": -93.54199363347561,
+      "noise_band_bp": 6.987397311988488,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.0168282640448463
+      "top_position_share": 1.0130721724861793
     },
     {
       "day0": "2026-09-01",
       "asof_date": "2026-09-02",
-      "residual_bp": -10.479060886850517,
-      "noise_band_bp": 5.272443607726959,
-      "status": "alert",
+      "residual_bp": 9.755694604091282,
+      "noise_band_bp": 5.534201891016232,
+      "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 0.8628386209610224
+      "top_position_share": 1.144254778637397
     },
     {
       "day0": "2026-09-02",
       "asof_date": "2026-09-03",
-      "residual_bp": -12.473938273255976,
-      "noise_band_bp": 6.309258834978354,
-      "status": "alert",
+      "residual_bp": 0.8031474501063599,
+      "noise_band_bp": 6.311514358996533,
+      "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 0.9665563188931192
+      "top_position_share": 1.2381099248826066
     },
     {
       "day0": "2026-09-03",
       "asof_date": "2026-09-04",
-      "residual_bp": 79.99980971953167,
-      "noise_band_bp": 12.09205367012405,
+      "residual_bp": 86.2363126570185,
+      "noise_band_bp": 12.039683610183324,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.0270305934863873
+      "top_position_share": 1.028353105397771
     },
     {
       "day0": "2026-09-04",
       "asof_date": "2026-09-08",
-      "residual_bp": -88.45194357464436,
-      "noise_band_bp": 9.454148449742446,
+      "residual_bp": -106.00576315684106,
+      "noise_band_bp": 9.738158582408992,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.915615685197618
+      "top_position_share": 0.9275270846545234
     },
     {
       "day0": "2026-09-08",
       "asof_date": "2026-09-10",
-      "residual_bp": 56.45440849009215,
-      "noise_band_bp": 6.114990581543292,
+      "residual_bp": 25.931721086630805,
+      "noise_band_bp": 6.202460189825731,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.8260666894704313
+      "top_position_share": 0.461720800726096
     },
     {
       "day0": "2026-09-16",
       "asof_date": "2026-09-17",
-      "residual_bp": -10.172504585306614,
-      "noise_band_bp": 7.117770831430849,
+      "residual_bp": 3.847591266397792,
+      "noise_band_bp": 8.235246852939849,
       "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 0.7943393638494135
+      "top_position_share": 1.4643505618030515
     },
     {
       "day0": "2026-09-25",
       "asof_date": "2026-09-28",
-      "residual_bp": -9.527211377940436,
-      "noise_band_bp": 8.101757355496332,
+      "residual_bp": -0.35094579660998454,
+      "noise_band_bp": 8.249425288822966,
       "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 2.604731570687293
+      "top_position_share": 40.806765922522096
     },
     {
       "day0": "2026-09-28",
       "asof_date": "2026-09-29",
-      "residual_bp": 6.996509172300178,
-      "noise_band_bp": 3.769488299595806,
+      "residual_bp": 1.4671743061534828,
+      "noise_band_bp": 3.795093760529103,
       "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 0.9064219675124671
+      "top_position_share": 0.5846825139074135
     },
     {
       "day0": "2026-10-01",
       "asof_date": "2026-10-02",
-      "residual_bp": -13.90473397230534,
-      "noise_band_bp": 4.481147450455276,
-      "status": "alert",
+      "residual_bp": -5.015505351293808,
+      "noise_band_bp": 4.348030707439279,
+      "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 1.0098504094103826
+      "top_position_share": 1.120959809014153
     },
     {
       "day0": "2026-10-02",
       "asof_date": "2026-10-05",
-      "residual_bp": -15.649049836596982,
-      "noise_band_bp": 6.899299158239112,
-      "status": "alert",
+      "residual_bp": 0.6459218055463762,
+      "noise_band_bp": 6.848744219518951,
+      "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 0.9745045793106435
+      "top_position_share": 1.4973460011084092
     },
     {
       "day0": "2026-10-05",
       "asof_date": "2026-10-06",
-      "residual_bp": -7.784241344395815,
-      "noise_band_bp": 3.7118585381665157,
+      "residual_bp": -6.662639676584539,
+      "noise_band_bp": 3.6854582554573345,
       "status": "ok",
       "top_position_id": "P003",
-      "top_position_share": 0.782051723434684
+      "top_position_share": 0.9735555697411696
     },
     {
       "day0": "2026-10-06",
       "asof_date": "2026-10-07",
-      "residual_bp": 9.729466733989398,
-      "noise_band_bp": 7.3977389255899,
+      "residual_bp": 2.0015801543069096,
+      "noise_band_bp": 7.405330545626554,
       "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 1.1311479280894745
+      "top_position_share": 1.6513875138375718
     },
     {
       "day0": "2026-10-07",
       "asof_date": "2026-10-08",
-      "residual_bp": 48.85375021137268,
-      "noise_band_bp": 5.323174581838428,
+      "residual_bp": 21.19091651332135,
+      "noise_band_bp": 5.973347293889722,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.9765196710414693
+      "top_position_share": 0.9474763821937743
     },
     {
       "day0": "2026-10-08",
       "asof_date": "2026-10-09",
-      "residual_bp": -53.60533249584479,
-      "noise_band_bp": 4.274001445277505,
+      "residual_bp": -57.71615463440586,
+      "noise_band_bp": 4.327916283329089,
       "status": "alert",
       "top_position_id": "P004",
-      "top_position_share": 0.6114414717197431
+      "top_position_share": 0.5681753619622965
     },
     {
       "day0": "2026-10-09",
       "asof_date": "2026-10-12",
-      "residual_bp": 16.667464193799457,
-      "noise_band_bp": 4.655462890561637,
+      "residual_bp": 11.103405555619833,
+      "noise_band_bp": 4.369191258606927,
       "status": "alert",
-      "top_position_id": "P008",
-      "top_position_share": 0.7638397967289573
+      "top_position_id": "P004",
+      "top_position_share": 0.6993111152530119
     },
     {
       "day0": "2026-10-12",
       "asof_date": "2026-10-13",
-      "residual_bp": -44.795643223449794,
-      "noise_band_bp": 5.2921263328987465,
+      "residual_bp": -37.44164562786149,
+      "noise_band_bp": 5.441776933188504,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.2130901617338798
+      "top_position_share": 1.2600290805226078
     },
     {
       "day0": "2026-10-13",
       "asof_date": "2026-10-14",
-      "residual_bp": 95.30754644193142,
-      "noise_band_bp": 4.720026173349705,
+      "residual_bp": 32.20090950622521,
+      "noise_band_bp": 5.1013200337556865,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.0019193093303291
+      "top_position_share": 1.0131938943491334
     },
     {
       "day0": "2026-10-14",
       "asof_date": "2026-10-15",
-      "residual_bp": 40.87029915094624,
-      "noise_band_bp": 6.414399430169275,
+      "residual_bp": 14.759296746684017,
+      "noise_band_bp": 6.0358334959900795,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.9843665358479545
+      "top_position_share": 0.950114104982788
     },
     {
       "day0": "2026-10-15",
       "asof_date": "2026-10-16",
-      "residual_bp": 19.60862896026011,
-      "noise_band_bp": 6.529816577107452,
-      "status": "alert",
-      "top_position_id": "P008",
-      "top_position_share": 0.9499245901572948
+      "residual_bp": 0.6743926138989308,
+      "noise_band_bp": 6.585549405952011,
+      "status": "inconclusive",
+      "top_position_id": "P003",
+      "top_position_share": 7.744526249035694
     },
     {
       "day0": "2026-10-16",
       "asof_date": "2026-10-19",
-      "residual_bp": -22.990264664063933,
-      "noise_band_bp": 7.172723461866846,
-      "status": "alert",
+      "residual_bp": -6.543076593231877,
+      "noise_band_bp": 6.891771895210517,
+      "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 0.9814295061875671
+      "top_position_share": 0.9532700257812288
     },
     {
       "day0": "2026-10-19",
       "asof_date": "2026-10-20",
-      "residual_bp": 50.43083591199486,
-      "noise_band_bp": 8.00897041437364,
+      "residual_bp": 47.432258658882354,
+      "noise_band_bp": 7.960550292202434,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.019278457504239
+      "top_position_share": 1.0197006445767374
+    },
+    {
+      "day0": "2026-10-20",
+      "asof_date": "2026-10-21",
+      "residual_bp": -47.92290129142345,
+      "noise_band_bp": 7.826668500666172,
+      "status": "alert",
+      "top_position_id": "P008",
+      "top_position_share": 1.02727839107248
     }
   ],
   "case_study": {
@@ -286,9 +295,9 @@
     "then_unexplained_bp": 670.2,
     "then_top_position_share_pct": 93.9,
     "mean_abs_bp_before": 104.9,
-    "mean_abs_bp_after": 32.5,
+    "mean_abs_bp_after": 27.0,
     "worst_bp_before": 299.4,
-    "worst_bp_after": 88.5,
+    "worst_bp_after": 106.0,
     "findings": [
       {
         "title": "Noisy risk numbers",
@@ -305,6 +314,10 @@
       {
         "title": "A note valued as if newly issued every day",
         "body": "The structured note's trigger levels were set from each day's price instead of the price on its issue date, hiding most of its real exposure to NVIDIA. It is now valued against its own issue-date levels."
+      },
+      {
+        "title": "Two different assumptions about the volatility smile",
+        "body": "The risk sensitivities assumed volatility stays fixed at each strike when the stock moves, while the daily revaluation moves it with the stock. The sensitivities now use the same assumption, which halved the gap on a typical day."
       },
       {
         "title": "Observation dates simulated days off",

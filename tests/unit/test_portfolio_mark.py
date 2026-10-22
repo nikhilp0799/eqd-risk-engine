@@ -384,3 +384,32 @@ def test_expired_vanilla_without_an_expiry_fixing_is_skipped_not_guessed(tmp_pat
     result = mark_portfolio(_cfg(tmp_path), ASOF, portfolio_path)
     assert "X1" in result.skipped
     assert "no close on or before" in result.skipped["X1"]
+
+
+def test_vanilla_sticky_moneyness_delta_includes_the_skew_term(tmp_path):
+    """With negative skew (rho -0.3), moving spot along the same log-moneyness
+    smile lowers a call's implied vol as spot rises, so its sticky-moneyness
+    delta sits below the Black-Scholes (sticky-strike) delta by roughly
+    vega x dsigma/dS."""
+    _write_curve(tmp_path)
+    _write_underlying(tmp_path)
+    _write_forwards(tmp_path)
+    _write_surface(tmp_path, rho=-0.3)
+    path = _write_portfolio_yaml(
+        tmp_path,
+        [
+            {
+                "id": "V1",
+                "type": "vanilla",
+                "underlying": UNDERLYING,
+                "cp": "C",
+                "strike": 95.0,
+                "expiry": PILLAR_EXPIRIES[1].isoformat(),
+                "qty": 1,
+            }
+        ],
+    )
+    m = mark_portfolio(_cfg(tmp_path), ASOF, path).marks[0]
+    assert m.delta_sm is not None and m.gamma_sm is not None
+    assert m.delta_sm != pytest.approx(m.delta, rel=1e-3)
+    assert m.gamma_sm > 0

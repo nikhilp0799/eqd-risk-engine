@@ -184,6 +184,20 @@ spot step has already moved the underlying, so it already reflects part of what 
 term would otherwise capture. This is a real, demonstrated consequence of the ordering convention,
 not an approximation error to be minimized (Section 4 discusses where it still falls short).
 
+**Smile dynamics: the spot step uses sticky-moneyness Greeks (since 2026-10-21).** The spot step's
+intermediate state rebuilds the vol surface around the new spot and forward from the same smile in
+log-moneyness, so vol moves with moneyness (sticky moneyness). The conventional Greeks bump spot
+with vol held fixed by strike (sticky strike). On a skewed underlying the two value a spot move
+differently, and that difference used to land in the residual. Every option mark now carries both
+pairs: `delta`/`gamma` (sticky strike, the conventional Black-Scholes figures for vanillas) and
+`delta_sm`/`gamma_sm` (sticky moneyness: for vanillas a closed-form reprice at +-1% spot with the
+forward and log-moneyness moving together; for the Monte Carlo exotics two extra repricings with the
+local-vol grid's spot axis scaled by the bump). The explain uses the sticky-moneyness pair. A
+revaluation ladder (repricing on a grid of spot and vol moves) was measured as the alternative and
+rejected: on P008 over 23 day pairs it gave 21.0bp mean spot-step residual with a sticky-strike grid
+and 7.3bp with a sticky-moneyness grid, against 7.1bp for sticky-moneyness Greeks, so the gain is
+the convention, not the ladder.
+
 There is no VaR methodology to document (Section 4).
 
 ---
@@ -206,15 +220,15 @@ vanna and volga essentially noise), (2) long-dated forwards and vol-surface cove
 to day, (3) extrapolation past the last expiry that assumed zero future vol and carry,
 (4) local-vol smoothing re-chosen at every grid point every day, (5) observation dates
 simulated up to 5.5 days off, and (6) barriers measured against each day's spot instead of the
-note's initial fixing (Section 2, position lifecycle). Each was measured and fixed (follow-up section of the incident report). On the 16 comparable
-day pairs the mean absolute residual fell from 105bp to 33bp of NAV; over all 22 stored pairs it is
-36bp, almost all from P008.
+note's initial fixing (Section 2, position lifecycle), and (7) Greeks that held vol fixed by strike
+while the explain moved it with moneyness (Section 3.5). Each was measured and fixed (follow-up section of the incident report). On the 16 comparable
+day pairs the mean absolute residual fell from 105bp to 27bp of NAV; over all 23 stored pairs it is
+27bp (median 11bp), almost all from P008.
 
-What remains is structural and documented, not fixed: on a few days the note responds to the vol
-surface's shape (skew and term structure) in a way one vega number times the ATM move cannot
-capture, and on big NVDA moves (about -3%) a delta-gamma expansion of a path-dependent payoff falls
-short. The standard remedy is a spot-and-vol revaluation ladder for Monte Carlo exotics in the
-waterfall; it is not built. Residuals carry a Monte Carlo standard error, so a day is flagged only
+What remains is structural and documented, not fixed: the vol step (24.7bp mean against 7.3bp
+for the spot step), where the note responds to the vol surface's shape (skew and term structure)
+in a way one vega number times the ATM move cannot capture. A parallel vol ladder was measured and
+does not help; vega by maturity bucket plus a skew sensitivity would be the next step. Residuals carry a Monte Carlo standard error, so a day is flagged only
 when the gap exceeds the 5bp threshold by more than its noise.
 
 **Several input-stability choices are judgment calls, tuned on this five-name universe.** The
@@ -435,7 +449,7 @@ than loosened to hide the platform difference.
 
 | Risk | Materiality | Mitigant / current state |
 |---|---|---|
-| P&L-explain residual on Monte Carlo exotics | **High** — 36bp of NAV mean absolute residual over 22 real day pairs, almost all P008 | Six input and model causes found and fixed (Section 4); remaining vol-shape and big-move residual needs a revaluation ladder, not built |
+| P&L-explain residual on Monte Carlo exotics | **High** — 27bp of NAV mean absolute residual over 23 real day pairs (median 11bp), almost all P008 | Seven input and model causes found and fixed (Section 4); remaining vol-shape residual needs maturity-bucketed vega and a skew sensitivity, not built |
 | Vol-shock stress approximation error | **Medium**, grows with shock size (~7-40% measured) | Documented and bounded; not eliminated; matters most for the largest stress-ladder shocks |
 | Residual monitoring alerts are logged, not paged | **Low** — daily alerts are visible in the log and dashboard but nobody is notified | Automated 5bp check with a noise band since 2026-09-10 / 2026-10; paging not built |
 | Two single names (JPM, XLE) have no real coverage | **Low** for this book (no positions assigned there), but blocks any future position in those names | Not currently mitigated; Step 8.3 (proxy modelling) would address this if built |

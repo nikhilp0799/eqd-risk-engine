@@ -34,7 +34,7 @@ from eqdrisk.pricing.monte_carlo import (
     next_power_of_two,
     sobol_normals,
 )
-from eqdrisk.vol.local_vol import LocalVolGrid
+from eqdrisk.vol.local_vol import LocalVolGrid, moved_grid
 
 
 @numba.njit(cache=True)
@@ -157,6 +157,11 @@ class BarrierGreeks:
     vega: float
     vanna: float
     volga: float
+    # Sticky-moneyness delta/gamma: the spot bump moves the local-vol grid with
+    # it (same sigma_loc on a spot axis scaled by the bump), the convention the
+    # P&L explain's own market states follow (planning/revaluation_ladder_plan.md).
+    delta_sm: float = 0.0
+    gamma_sm: float = 0.0
 
 
 def down_and_in_put_greeks(
@@ -207,13 +212,24 @@ def down_and_in_put_greeks(
     price_pm = _price(s0 + h, grid_vol_dn)
     price_mp = _price(s0 - h, grid_vol_up)
     price_mm = _price(s0 - h, grid_vol_dn)
+    price_up_sm = _price(s0 + h, moved_grid(grid, s0 + h, s0))
+    price_dn_sm = _price(s0 - h, moved_grid(grid, s0 - h, s0))
 
     delta = (price_up - price_dn) / (2 * h)
     gamma = (price_up - 2 * price0 + price_dn) / h**2
     vega = (price_vol_up - price_vol_dn) / (2 * vol_bump)
     volga = (price_vol_up - 2 * price0 + price_vol_dn) / vol_bump**2
     vanna = (price_pp - price_pm - price_mp + price_mm) / (4 * h * vol_bump)
+    delta_sm = (price_up_sm - price_dn_sm) / (2 * h)
+    gamma_sm = (price_up_sm - 2 * price0 + price_dn_sm) / h**2
 
     return BarrierGreeks(
-        price=price0, delta=delta, gamma=gamma, vega=vega, vanna=vanna, volga=volga
+        price=price0,
+        delta=delta,
+        gamma=gamma,
+        vega=vega,
+        vanna=vanna,
+        volga=volga,
+        delta_sm=delta_sm,
+        gamma_sm=gamma_sm,
     )

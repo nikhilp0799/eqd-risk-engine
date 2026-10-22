@@ -165,7 +165,15 @@ def _explained_for_step(
         if u not in state_prev.spot or u not in state_cur.spot:
             return 0.0
         d_spot = state_cur.spot[u] - state_prev.spot[u]
-        return m_prev.delta * d_spot + 0.5 * m_prev.gamma * d_spot**2
+        # Sticky-moneyness delta/gamma where available: this explain's spot step
+        # rebuilds the vol surface around the new spot from the same
+        # log-moneyness smile, so the Greeks must move vol the same way. With
+        # sticky-strike Greeks P008's spot-step residual averaged 19.3bp over 23
+        # day pairs; with sticky-moneyness Greeks, 7.1bp
+        # (planning/revaluation_ladder_plan.md).
+        delta = m_prev.delta_sm if m_prev.delta_sm is not None else m_prev.delta
+        gamma = m_prev.gamma_sm if m_prev.gamma_sm is not None else m_prev.gamma
+        return delta * d_spot + 0.5 * gamma * d_spot**2
 
     if step == "vol":
         if m_prev.vega == 0.0 and m_prev.volga == 0.0:
@@ -351,6 +359,8 @@ def _batch_residuals(
             price=b_prev["price"],
             delta=b_prev["delta"],
             gamma=b_prev["gamma"],
+            delta_sm=b_prev.get("delta_sm"),
+            gamma_sm=b_prev.get("gamma_sm"),
             vega=b_prev["vega"],
             vanna=b_prev["vanna"],
             volga=b_prev["volga"],
