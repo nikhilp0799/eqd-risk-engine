@@ -122,14 +122,18 @@ export default function PnlExplainPage() {
 
       <Card
         title="Unexplained P&L by position, after the fixes"
-        subtitle={`The ${pnl.topPositionLabel} is still the largest contributor; the other ${ranked.length - 1} positions together make up ${pct(Math.max(0, 100 - pnl.topPositionShare))}.`}
+        subtitle={
+          pnl.topPositionShare >= 100
+            ? `The ${pnl.topPositionLabel} is still the largest contributor; the other ${ranked.length - 1} positions together partly offset it.`
+            : `The ${pnl.topPositionLabel} is still the largest contributor; the other ${ranked.length - 1} positions together make up ${pct(100 - pnl.topPositionShare)}.`
+        }
       >
         <RankedBars data={positionBars} highlight={pnl.topPositionLabel} format="usdCompact" />
       </Card>
 
       <Card
         title="Alert history"
-        subtitle={`Unexplained P&L as a share of book value, one bar per trading day, after the fixes. A day alerts only when the gap is wider than the ±${pct(pnl.alertPctOfBook, 2)} alert level even after allowing for simulation noise: ${pnl.daysBreached} of ${pnl.daysRecorded} days alert, ${pnl.daysInconclusive} are within noise and ${pnl.daysWithinThreshold} are clear. The largest remaining gaps come from the structured note on days with big NVIDIA moves or changes in the shape of its volatility curve, a known limit of sensitivity-based explanations for this product.`}
+        subtitle={`Unexplained P&L as a share of book value, one bar per trading day, after the fixes. A day alerts only when the gap is wider than the ±${pct(pnl.alertPctOfBook, 2)} alert level even after allowing for simulation noise: ${pnl.daysBreached} of ${pnl.daysRecorded} days alert, ${pnl.daysInconclusive} are within noise and ${pnl.daysWithinThreshold} are clear. The largest remaining gaps come from the structured note on days when the shape of NVIDIA's volatility curve changes, which a single volatility sensitivity cannot capture; maturity-level sensitivities are the documented next step.`}
       >
         <AlertHistory data={history} highlightDate={pnlExplain.asof_date} />
         <p className="mt-3 text-xs text-muted">

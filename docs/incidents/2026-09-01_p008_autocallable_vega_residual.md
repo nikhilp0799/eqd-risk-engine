@@ -4,7 +4,7 @@
 > follow-up investigation found the residual came from Monte Carlo noise in the note's Greeks,
 > unstable long-dated market inputs, local-vol smoothing noise, and mistimed observation dates;
 > adding vanna and volga added noise rather than information. On the same day pair the residual
-> is now -$33,506 (-80bp of NAV), down from +$178,461. The original report is kept below
+> is now -$39,201 (-94bp of NAV), down from +$178,461, and almost all of it is now in the vol step (the surface's shape), which the remaining work is about. The original report is kept below
 > unchanged as the record of what was believed at the time; see
 > [Follow-up investigation](#follow-up-investigation-2026-10-05-to-2026-10-14) at the end.
 
@@ -136,7 +136,7 @@ should be reported (and thresholded) separately.
 ## Follow-up investigation (2026-10-05 to 2026-10-14)
 
 Six weeks of daily history made it possible to test the original diagnosis instead of reasoning
-about it. It did not hold up. Six separate causes were found; each was measured on the full
+about it. It did not hold up. Seven separate causes were found; each was measured on the full
 stored history before being fixed, and the whole history was rebuilt from the stored raw option
 chains after each fix. Planning record: `planning/pnl_explain_noise_plan.md` and
 `planning/input_stability_plan.md` (local, not in the repo).
@@ -182,6 +182,13 @@ chains after each fix. Planning record: `planning/pnl_explain_noise_plan.md` and
    shares instead of about 13,400 on 2026-10-19). Now priced against its 2026-08-14 fixing
    (NVDA $225.16), together with a position lifecycle (expiry settlement, barrier knock-in,
    autocall observations). This changed P008's value and risk far more than this day's residual.
+7. **Greeks and the explain assumed different smile dynamics (found 2026-10-21).** The explain's
+   spot step rebuilds the vol surface around the new spot from the same smile in log-moneyness
+   (vol moves with moneyness), but the Greeks bumped spot with vol fixed by strike. On NVDA's
+   skew the two value a 3% move differently. Measured on P008 over 23 day pairs: a revaluation
+   ladder did not help (spot-step residual 19.3bp with Greeks, 21.0bp with a ladder); Greeks
+   computed with the vol surface moving with spot cut it to 7.1bp. Every option now reports
+   both deltas, and the explain uses the sticky-moneyness pair.
 
 ### Numbers
 
@@ -192,11 +199,11 @@ This day pair (2026-08-31 -> 2026-09-01):
 | Original report (single run, 1%/1pt Greeks) | +$178,461 (about 429bp of NAV) |
 | After the vanna/volga change | +$151,705 |
 | Noise-aware residual and better Greeks | -$43,927 (-104bp) |
-| All fixes above | **-$33,506 (-80bp, 2 SE +-7bp)** |
+| All fixes above | **-$39,201 (-94bp, 2 SE +-7bp)**: spot step +$3.2K, vol step -$40.9K |
 
 On the 16 day pairs explained both before and after the input and model fixes (2-4 above), the
-mean absolute total residual fell from 104.9bp to 32.5bp and the worst day from 299bp to 89bp.
-Across all 22 stored day pairs it is 36.1bp (median 21bp; worst 95bp, 2026-10-14, NVDA -3.2%). An
+mean absolute total residual fell from 104.9bp to 27.0bp. Across all 23 stored day pairs it is
+26.9bp, with a median day of 11.1bp; the worst is 106bp (2026-09-08), a vol-shape day. An
 earlier version of this report also said P008's typical daily price move fell from $54.6K to $9.4K;
 that figure was an artefact of cause 6 (a note re-struck at the money every day has little delta)
 and is withdrawn: priced correctly, the note's value moves about $38K on a typical day, as a $5M
@@ -205,11 +212,13 @@ note with about 13,400 shares of NVDA delta should.
 ### What remains, honestly
 
 This day pair is still one of the larger ones: on full revaluation the day's vol-surface change
-cost the book $44.8K, while vega times the ATM vol move explains $3.9K. Two kinds of residual remain
-across history: a few vol-step days where the note's response to the surface's shape (skew and
-term structure, not a single ATM move) matters, and big NVDA move days (about -3%) where a
-delta-gamma expansion of a path-dependent payoff falls short. The standard next step for both is
-a spot-and-vol revaluation ladder for the Monte Carlo exotics; it is documented, not built.
+cost the book $44.8K, while vega times the ATM vol move explains $3.9K. That is now the one
+material residual left across history: the vol step (24.7bp mean over 23 day pairs, against 7.3bp
+for the spot step), where the note responds to changes in the surface's shape (skew and term
+structure) that a single vega times an ATM move cannot capture. A parallel vol ladder was measured
+and does not help (22.6bp vs 22.7bp); the next step would be vega by maturity and a skew
+sensitivity. Big NVDA moves were thought to be the other source; they turned out to be cause 7
+above, now fixed.
 
 ### Corrected lessons
 

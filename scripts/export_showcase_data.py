@@ -48,9 +48,9 @@ CASE_STUDY = {
     "then_unexplained_bp": 670.2,
     "then_top_position_share_pct": 93.9,
     "mean_abs_bp_before": 104.9,
-    "mean_abs_bp_after": 32.5,
+    "mean_abs_bp_after": 27.0,
     "worst_bp_before": 299.4,
-    "worst_bp_after": 88.5,
+    "worst_bp_after": 106.0,
     "findings": [
         {
             "title": "Noisy risk numbers",
@@ -74,6 +74,12 @@ CASE_STUDY = {
             "body": "The structured note's trigger levels were set from each day's price instead "
             "of the price on its issue date, hiding most of its real exposure to NVIDIA. It is "
             "now valued against its own issue-date levels.",
+        },
+        {
+            "title": "Two different assumptions about the volatility smile",
+            "body": "The risk sensitivities assumed volatility stays fixed at each strike when the "
+            "stock moves, while the daily revaluation moves it with the stock. The sensitivities "
+            "now use the same assumption, which halved the gap on a typical day.",
         },
         {
             "title": "Observation dates simulated days off",

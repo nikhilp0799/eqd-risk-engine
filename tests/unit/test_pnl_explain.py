@@ -474,8 +474,8 @@ def test_reported_residual_is_exactly_the_mean_of_sub_run_residuals():
             {
                 f: float(v)
                 for f, v in zip(
-                    ("price", "delta", "gamma", "vega", "vanna", "volga"),
-                    rng.normal([100 + price_shift, 0.5, 0.02, 3.0, 0.1, 1.0], 0.3),
+                    ("price", "delta", "gamma", "vega", "vanna", "volga", "delta_sm", "gamma_sm"),
+                    rng.normal([100 + price_shift, 0.5, 0.02, 3.0, 0.1, 1.0, 0.4, 0.03], 0.3),
                     strict=True,
                 )
             }
@@ -694,3 +694,19 @@ def test_a_position_expiring_between_the_two_days_is_settlement_not_residual(tmp
     assert result.by_position_residual["EXP"] == pytest.approx(0.0, abs=1e-9)
     assert result.total_actual() != 0.0
     assert "settled" in result.notes["EXP"]
+
+
+def test_spot_step_uses_sticky_moneyness_delta_when_available():
+    from types import SimpleNamespace
+
+    from eqdrisk.portfolio.mark import PositionMark
+    from eqdrisk.pricing.pnl_explain import _explained_for_step
+
+    states = SimpleNamespace(spot={"X": 100.0}), SimpleNamespace(spot={"X": 102.0})
+    base = dict(position_id="V", type="vanilla", underlying="X", expiry=DAY1, T=0.5, price=10.0)
+    ss_only = PositionMark(**base, delta=0.5, gamma=0.02)
+    both = PositionMark(**base, delta=0.5, gamma=0.02, delta_sm=0.4, gamma_sm=0.01)
+    assert _explained_for_step("spot", ss_only, 1, *states) == pytest.approx(
+        0.5 * 2 + 0.5 * 0.02 * 4
+    )
+    assert _explained_for_step("spot", both, 1, *states) == pytest.approx(0.4 * 2 + 0.5 * 0.01 * 4)

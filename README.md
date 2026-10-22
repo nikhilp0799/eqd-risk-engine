@@ -56,8 +56,8 @@ not tuned-to-look-clean ones:
   (flickering long-dated forwards and vol surface, unstable local-vol smoothing, observation dates
   simulated up to 5.5 days off). Each cause was measured and fixed and the whole history rebuilt
   from stored option chains: once the noise was handled, the input and model fixes cut the mean
-  absolute residual on the 16 comparable day pairs from 105bp to 33bp of NAV, and the incident day
-  itself went from +$178k to -$34k. The incident report keeps
+  absolute residual on the 16 comparable day pairs from 105bp to 27bp of NAV, and the incident day
+  itself went from +$178k to -$39k, now almost all a vol-surface-shape effect. The incident report keeps
   the original diagnosis as the record and adds the correction:
   `docs/incidents/2026-09-01_p008_autocallable_vega_residual.md`.
 - The book now has a real position lifecycle (2026-10-20): an AAPL call that expired on 2026-10-16
@@ -955,9 +955,10 @@ vol waterfall from two real `MarketState`s; verified on the first real consecuti
 the automated pipeline produced (2026-08-31 -> 2026-09-01), where it found a genuine $178k
 residual, almost all in one position — see Step 13. Since 2026-10 every residual carries a Monte
 Carlo standard error (16 independently scrambled sub-runs) and alerts only when it exceeds the 5bp
-threshold by more than its noise (otherwise INCONCLUSIVE). Current state over 22 real day pairs:
-mean absolute residual 36bp of NAV, almost all from the NVDA autocallable on a few vol-surface-shape
-days and big NVDA move days (see Step 13). The 60+ day acceptance bar (median residual < 2bp) is
+threshold by more than its noise (otherwise INCONCLUSIVE). Current state over 23 real day pairs:
+mean absolute residual 27bp of NAV (median day 11bp), almost all from the NVDA autocallable on
+vol-surface-shape days (see Step 13). The spot step uses sticky-moneyness Greeks, matching how the
+explain moves the market; a revaluation ladder was measured as the alternative and rejected. The 60+ day acceptance bar (median residual < 2bp) is
 still pending real history and is not met for the Monte Carlo exotics.
 
 **This is the module that makes the project read as risk rather than pricing.**
@@ -1002,12 +1003,13 @@ If your residual is small and stable, your risk representation is adequate. If i
 incident (see `docs/incidents/2026-09-01_p008_autocallable_vega_residual.md`): a $178k residual,
 almost all in the NVDA autocallable. The original diagnosis (missing vanna/volga) and its "~13%
 improvement" were single-run results and did not survive testing. The follow-up investigation in
-the same report found six real causes: Monte Carlo noise in the note's Greeks, flickering
+the same report found seven real causes: Monte Carlo noise in the note's Greeks, flickering
 long-dated forwards and vol surface, extrapolation past the last expiry that assumed zero future
 vol and carry, local-vol smoothing re-chosen at every grid point every day, observation dates
-simulated up to 5.5 days off, and barriers measured against each day's spot instead of the note's
-initial fixing. All fixed and measured on the rebuilt history; the incident day's
-residual went from +$178k to -$34k (-80bp). The report keeps the original text as the record.
+simulated up to 5.5 days off, barriers measured against each day's spot instead of the note's
+initial fixing, and Greeks that held vol fixed by strike while the explain moved it with
+moneyness. All fixed and measured on the rebuilt history; the incident day's
+residual went from +$178k to -$39k (-94bp), almost all in the vol step now. The report keeps the original text as the record.
 
 Take the worst residual day from Step 12 and write it up as a production incident, in the format a bank actually uses.
 

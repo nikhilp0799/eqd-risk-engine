@@ -191,3 +191,13 @@ def test_price_moves_smoothly_as_a_seasoned_note_rolls_day_by_day():
         prices.append(price_autocallable(spec, 100.0, grid, 0.04, 0.0, 16384, 8, seed=7)[0])
     d = np.abs(np.diff(prices))
     assert d.max() < 8 * np.median(d)
+
+
+def test_sticky_moneyness_greeks_equal_sticky_strike_under_flat_vol():
+    """Moving a flat local-vol grid with spot changes nothing, so the two
+    conventions must agree exactly (same random numbers); they differ only when
+    local vol varies with spot."""
+    spec = _spec(obs_times=OBS_TIMES, initial_level=100.0)
+    g = autocallable_greeks(spec, 100.0, _flat_vol_grid(0.3), 0.03, 0.0, 4096, 4, seed=11)
+    assert g.delta_sm == pytest.approx(g.delta, rel=1e-12)
+    assert g.gamma_sm == pytest.approx(g.gamma, rel=1e-12)
