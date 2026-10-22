@@ -91,18 +91,17 @@ export interface PnlExplainData {
   asof_date: string;
   nav: number;
   residual_bp: number;
+  noise_band_bp: number;
+  status: "alert" | "inconclusive" | "ok";
   residual_alert_threshold_bp: number;
   positions: Record<string, string>;
   waterfall: PnlWaterfallStep[];
   by_position: PnlByPosition[];
   residual_series: PnlResidualPoint[];
-  case_study: PnlCaseStudy;
+  improvement: PnlImprovement;
 }
 
-export interface PnlCaseStudy {
-  then_unexplained: number;
-  then_unexplained_bp: number;
-  then_top_position_share_pct: number;
+export interface PnlImprovement {
   mean_abs_bp_before: number;
   mean_abs_bp_after: number;
   worst_bp_before: number;

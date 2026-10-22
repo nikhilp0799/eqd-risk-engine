@@ -44,7 +44,13 @@ export const DRIVER_SHORT_LABELS: Record<string, string> = {
 const topPosition = pnlExplain.by_position[0];
 const residualTotal = sum(pnlExplain.waterfall.map((s) => s.residual));
 const breaches = pnlExplain.residual_series.filter((p) => p.status === "alert");
-const caseStudy = pnlExplain.case_study;
+const improvement = pnlExplain.improvement;
+
+export const STATUS_LABELS: Record<PnlExplainData["status"], string> = {
+  alert: "Alert",
+  inconclusive: "Within noise",
+  ok: "Clear",
+};
 
 export const pnl = {
   actual: sum(pnlExplain.waterfall.map((s) => s.actual_pnl)),
@@ -63,15 +69,14 @@ export const pnl = {
   daysWithBreakdown: pnlExplain.residual_series.filter((p) => p.top_position_id !== null).length,
   daysInconclusive: pnlExplain.residual_series.filter((p) => p.status === "inconclusive").length,
   daysWithinThreshold: pnlExplain.residual_series.filter((p) => p.status === "ok").length,
-  // The incident as first recorded, before the follow-up investigation.
-  thenUnexplained: caseStudy.then_unexplained,
-  thenUnexplainedPctOfBook: caseStudy.then_unexplained_bp / 100,
-  thenTopPositionShare: caseStudy.then_top_position_share_pct,
-  gapReduction: 100 * (1 - Math.abs(residualTotal) / caseStudy.then_unexplained),
-  meanGapBeforePct: caseStudy.mean_abs_bp_before / 100,
-  meanGapAfterPct: caseStudy.mean_abs_bp_after / 100,
-  meanGapReduction: 100 * (1 - caseStudy.mean_abs_bp_after / caseStudy.mean_abs_bp_before),
-  findings: caseStudy.findings,
+  // The featured (latest) day's verdict: alert only beyond the noise band.
+  status: pnlExplain.status,
+  noiseBandPct: pnlExplain.noise_band_bp / 100,
+  // How the engine was improved (fixed values from the follow-up investigation).
+  meanGapBeforePct: improvement.mean_abs_bp_before / 100,
+  meanGapAfterPct: improvement.mean_abs_bp_after / 100,
+  meanGapReduction: 100 * (1 - improvement.mean_abs_bp_after / improvement.mean_abs_bp_before),
+  findings: improvement.findings,
 };
 
 // ---- Hedging ---------------------------------------------------------------

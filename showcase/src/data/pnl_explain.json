@@ -1,8 +1,10 @@
 {
-  "day0": "2026-09-02",
-  "asof_date": "2026-09-03",
-  "nav": 4288392.685363949,
-  "residual_bp": 0.8031474501063599,
+  "day0": "2026-10-20",
+  "asof_date": "2026-10-21",
+  "nav": 4286652.93896703,
+  "residual_bp": -47.92290129142345,
+  "noise_band_bp": 7.826668500666172,
+  "status": "alert",
   "residual_alert_threshold_bp": 5.0,
   "positions": {
     "P001": "S&P 500 put option (short)",
@@ -20,57 +22,57 @@
   "waterfall": [
     {
       "step": "time",
-      "actual_pnl": 1703.598987614688,
-      "explained_pnl": 1758.9922980728809,
-      "residual": -55.3933104581929
+      "actual_pnl": 992.3938768404071,
+      "explained_pnl": 1411.735464755977,
+      "residual": -419.34158791557
     },
     {
       "step": "rates_divs",
-      "actual_pnl": 1444.288977214721,
-      "explained_pnl": 19.868313565524513,
-      "residual": 1424.4206636491965
+      "actual_pnl": 0.0,
+      "explained_pnl": 0.0,
+      "residual": 0.0
     },
     {
       "step": "spot",
-      "actual_pnl": 31240.762163108207,
-      "explained_pnl": 32872.68518527335,
-      "residual": -1631.923022165145
+      "actual_pnl": 42304.86066309523,
+      "explained_pnl": 61327.84387005169,
+      "residual": -19022.983206956465
     },
     {
       "step": "vol",
-      "actual_pnl": -1710.8131743120016,
-      "explained_pnl": -2318.130008316625,
-      "residual": 607.3168340046236
+      "actual_pnl": 5679.5711601821695,
+      "explained_pnl": 6780.130931780855,
+      "residual": -1100.559771598685
     }
   ],
   "by_position": [
     {
       "position_id": "P008",
-      "residual": 426.4312627638701
+      "residual": -21103.261405431724
     },
     {
       "position_id": "P007",
-      "residual": 143.19225880031152
+      "residual": 1121.8277232593505
     },
     {
       "position_id": "P002",
-      "residual": -125.03571771653458
+      "residual": -553.9671732182561
     },
     {
       "position_id": "P003",
-      "residual": -114.96664853794975
+      "residual": 95.06201479234777
+    },
+    {
+      "position_id": "P011",
+      "residual": -82.40917960463904
+    },
+    {
+      "position_id": "P010",
+      "residual": -15.22241158454832
     },
     {
       "position_id": "P001",
-      "residual": 17.369688420692484
-    },
-    {
-      "position_id": "P004",
-      "residual": -3.6876085242326297
-    },
-    {
-      "position_id": "P005",
-      "residual": 1.117929824321957
+      "residual": -4.914134683250158
     },
     {
       "position_id": "P006",
@@ -290,10 +292,7 @@
       "top_position_share": 1.02727839107248
     }
   ],
-  "case_study": {
-    "then_unexplained": 284069.0,
-    "then_unexplained_bp": 670.2,
-    "then_top_position_share_pct": 93.9,
+  "improvement": {
     "mean_abs_bp_before": 104.9,
     "mean_abs_bp_after": 27.0,
     "worst_bp_before": 299.4,

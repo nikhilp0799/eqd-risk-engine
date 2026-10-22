@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { Badge, DemoNote, StatTile } from "@/components/ui";
 import { fmtDate, pct, signedUsdCompact, usdCompact } from "@/lib/format";
-import { hedging, pnl, pnlExplain, pricing } from "@/lib/metrics";
+import { STATUS_LABELS, hedging, pnl, pnlExplain, pricing } from "@/lib/metrics";
 
 // Not derived from exported data: the repo's own test count at the time of the
 // last site update (`pytest --collect-only`).
-const TEST_COUNT = "1,857";
+const TEST_COUNT = "1,879";
 
 const CAPABILITIES = [
   {
@@ -61,47 +61,42 @@ const TRUST = [
   },
 ];
 
-function IncidentPreview() {
+function LatestCheck() {
+  const tone = pnl.status === "alert" ? "critical" : pnl.status === "ok" ? "good" : "neutral";
   return (
     <div className="rounded-2xl border border-border bg-surface p-6 shadow-[0_12px_40px_rgba(14,26,43,0.08)]">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-ink">Daily P&amp;L check</p>
+          <p className="text-sm font-semibold text-ink">Latest daily P&amp;L check</p>
           <p className="text-xs text-muted">{fmtDate(pnlExplain.asof_date)}</p>
         </div>
-        <Badge tone="critical">Alert</Badge>
+        <Badge tone={tone}>{STATUS_LABELS[pnl.status]}</Badge>
       </div>
       <dl className="mt-5 divide-y divide-border text-sm">
         <div className="flex justify-between gap-4 py-2.5">
-          <dt className="text-ink-2">Unexplained, as first flagged</dt>
-          <dd className="tabular font-semibold text-critical">
-            {usdCompact(pnl.thenUnexplained)} ({pct(pnl.thenUnexplainedPctOfBook, 1)} of book)
-          </dd>
+          <dt className="text-ink-2">Actual P&amp;L</dt>
+          <dd className="tabular font-medium text-ink">{signedUsdCompact(pnl.actual)}</dd>
         </div>
         <div className="flex justify-between gap-4 py-2.5">
-          <dt className="text-ink-2">Traced to</dt>
-          <dd className="text-right font-medium text-ink">
-            {pnl.topPositionLabel}: {pct(pnl.thenTopPositionShare)}
-          </dd>
+          <dt className="text-ink-2">Expected by risk model</dt>
+          <dd className="tabular font-medium text-ink">{signedUsdCompact(pnl.expected)}</dd>
         </div>
         <div className="flex justify-between gap-4 py-2.5">
-          <dt className="text-ink-2">Same day, after the fixes</dt>
-          <dd className="tabular font-medium text-ink">
+          <dt className="text-ink-2">Unexplained</dt>
+          <dd className={`tabular font-semibold ${pnl.status === "alert" ? "text-critical" : "text-ink"}`}>
             {usdCompact(Math.abs(pnl.unexplained))} ({pct(Math.abs(pnl.unexplainedPctOfBook), 2)} of book)
           </dd>
         </div>
       </dl>
       <div className="mt-4 rounded-xl bg-subtle px-4 py-3 text-sm">
-        <p className="text-ink-2">Root cause</p>
-        <p className="mt-0.5 font-medium text-ink">
-          The engine&apos;s own inputs and model settings, found and fixed
-        </p>
+        <p className="text-ink-2">Largest contributor</p>
+        <p className="mt-0.5 font-medium text-ink">{pnl.topPositionLabel}</p>
       </div>
       <Link
         href="/pnl-explain"
         className="mt-4 inline-flex text-sm font-medium text-brand hover:text-brand-strong"
       >
-        Read the case study &rarr;
+        Open the full breakdown &rarr;
       </Link>
     </div>
   );
@@ -128,7 +123,7 @@ export default function Home() {
               href="/pnl-explain"
               className="rounded-xl bg-brand px-5 py-3 text-sm font-medium text-white shadow-sm hover:bg-brand-strong"
             >
-              See a real incident
+              See the daily P&amp;L check
             </Link>
             <a
               href="#how-it-works"
@@ -139,7 +134,7 @@ export default function Home() {
           </div>
           <DemoNote />
         </div>
-        <IncidentPreview />
+        <LatestCheck />
       </section>
 
       <section className="flex flex-col gap-6">
@@ -148,7 +143,7 @@ export default function Home() {
           <StatTile
             label="Smaller average daily P&L gap after a self-diagnosed fix"
             value={pct(pnl.meanGapReduction)}
-            detail={`The engine flagged ${usdCompact(pnl.thenUnexplained)} it could not explain, traced it to its own inputs and model, and fixed them.`}
+            detail={`Average daily unexplained P&L fell from ${pct(pnl.meanGapBeforePct, 2)} to ${pct(pnl.meanGapAfterPct, 2)} of book value after the engine traced the gaps to its own inputs and model.`}
           />
           <StatTile
             label="Smaller P&L swings when hedging a barrier option"
