@@ -43,7 +43,8 @@ not tuned-to-look-clean ones:
   ~0.1 SE at the same coarse step count (Step 6).
 - A live historical-replay stress test against five real episodes (Volmageddon, the COVID crash,
   the 2022 rate shock, the 2024 yen carry unwind) using REAL pulled spot/VIX moves — the COVID
-  scenario alone showed an 82%-of-book loss on the current 9-position portfolio (Step 11.1).
+  scenario showed an 82%-of-book loss on the 2026-08-28 book, and 62% (-$2.56M) on the book of
+  2026-10-22, after the autocallable was priced against its real issue level (Step 11.1).
 - Two real bugs were caught by testing a claim rather than assuming it: a wall-clock staleness bug
   that could zero out all quote coverage depending on time of day (Step 4), and a documented
   "exact" stress-shock math claim that turned out to be off by up to ~40% once actually tested
@@ -897,6 +898,16 @@ Write the backtest report the way a validator would want to read it: state the t
 ## Step 11 — Stress testing and reverse stress testing
 
 **Status: partially built.** 11.1 (historical replay, using real pulled spot/VIX moves from five named episodes) and 11.2 (the hypothetical spot×vol grid) are built and verified live. 11.3 (conditional stress) and 11.4 (reverse stress) are deferred — both need a real historical factor covariance/beta estimate; see the status table above.
+
+**Latest results (book of 2026-10-22, value $4.16M; re-run after the position lifecycle and the
+autocallable's issue-date fix, 2026-10-20).** Historical replay: COVID crash -$2.56M (62% of book),
+COVID single day -$0.96M, 2024 yen carry unwind -$0.88M, 2022 rate shock -$0.62M, Volmageddon
+-$0.53M. Hypothetical grid (2026-10-20): worst cell spot -30% / vol +50% at -$1.63M, against -$1.44M
+on 2026-09-04. The COVID loss was -$3.40M (82%) on the 2026-08-28 book; it is smaller now mainly
+because the note was then priced with its barriers re-struck at each day's spot, and partly because
+the book changed (two expiries settled, two rolls added). These runs needed FRED,
+which was down for maintenance on 2026-10-21 (the daily rates feed fell back to the previous curve
+and refilled itself the next day).
 
 Three tiers, increasing in sophistication.
 
