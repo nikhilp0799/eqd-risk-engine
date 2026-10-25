@@ -237,7 +237,9 @@ measuring local-vol Monte Carlo against Black-76 on all stored days. A long sing
 clean quotes but no forward fit of its own takes its forward from that day's forward curve, so its
 implied vols inherit any error in the curve's long-end carry (roughly 1-2 vol points near the money
 per 2% forward error at 2 years). An expiry that loses its quotes keeps the previous day's quotes,
-at half weight, for up to 3 trading days. All three are flagged in the stored data
+at half weight, for up to 3 trading days, but only on a day the underlying has observed quotes of
+its own: a day with none (a failed or after-hours snapshot) gets no surface rather than one rebuilt
+from the previous day. All three are flagged in the stored data
 (`implied_vols.forward_source`, `implied_vols.carried_from`, `vol_surface.n_carried`) and should be
 revisited if the universe changes.
 

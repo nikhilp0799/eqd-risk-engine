@@ -361,7 +361,13 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
             tagged["forward_source"] = forward_source
             out_rows.append(tagged[IV_COLUMNS])
 
-        if prev_date is not None:
+        # Stale fill patches gaps in a day that was actually observed; a day with no
+        # observed OK quote at all is a lost day, not a gap. Without this, a failed
+        # or after-hours snapshot got a surface rebuilt entirely from the previous
+        # day's quotes (SPX 2026-10-23 after a Yahoo outage: 16 of 16 expiries
+        # carried; JPM on six October days). On days with any observed expiry the
+        # carried share was at most 44% (October 2026, all underlyings).
+        if prev_date is not None and expiries_ok_today:
             prev_ok = store.query(
                 f"SELECT * FROM iv WHERE asof_date = DATE '{prev_date.isoformat()}' "
                 f"AND underlying = '{underlying}' AND reason = 'OK'",

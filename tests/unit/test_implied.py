@@ -318,11 +318,9 @@ def test_observed_quotes_excludes_carried_rows_and_accepts_legacy_frames():
     assert len(observed_quotes(rows.drop(columns=["carried_from"]))) == 3
 
 
-def test_run_iv_extraction_carries_an_expiry_that_loses_its_forward(tmp_path):
-    """Day 1 has a reliable forward for the expiry; day 2 does not (the typical
-    long-dated single-name case). Day 2's surface input keeps day 1's quotes,
-    flagged, instead of losing the expiry."""
-    from eqdrisk.config import BaseConfig, Paths, Universe
+def _write_stale_fill_day(tmp_path, asof: dt.date, reliable_by_expiry: dict) -> None:
+    """One underlying's chain priced at FORWARD / TRUE_SIGMA for each expiry, and a
+    forward row per expiry that is reliable or not as given."""
     from eqdrisk.io import store
     from eqdrisk.io.schemas import (
         CHAIN_REQUIRED_NOT_NULL,
@@ -332,23 +330,12 @@ def test_run_iv_extraction_carries_an_expiry_that_loses_its_forward(tmp_path):
         validate,
     )
     from eqdrisk.marketdata.calendar import year_fraction
-    from eqdrisk.vol.implied import NO_RELIABLE_FORWARD, run_iv_extraction
 
-    expiry = dt.date(2027, 2, 20)
-    strikes = [80, 85, 90, 95, 100.01, 105, 110, 115, 120]
-    cfg = BaseConfig(
-        run_date=dt.date(2026, 8, 21),
-        universe=Universe(index=["TEST"], single_names=[]),
-        paths=Paths(raw=str(tmp_path / "raw"), curated=str(tmp_path)),
-        calendar="NYSE",
-        daycount="ACT/365F",
-    )
-
-    def write_day(asof: dt.date, reliable: bool) -> None:
+    ts = pd.Timestamp(asof.isoformat() + " 16:00", tz="America/New_York")
+    rows, fwd_rows = [], []
+    for expiry, reliable in reliable_by_expiry.items():
         T_day = year_fraction(asof, expiry, "ACT/365F")
-        ts = pd.Timestamp(asof.isoformat() + " 16:00", tz="America/New_York")
-        rows = []
-        for strike in strikes:
+        for strike in STALE_FILL_STRIKES:
             cp = "C" if strike > FORWARD else "P"
             pricer = call_price if cp == "C" else put_price
             price = pricer(FORWARD, strike, T_day, TRUE_SIGMA, DISCOUNT_FACTOR)
@@ -371,47 +358,71 @@ def test_run_iv_extraction_carries_an_expiry_that_loses_its_forward(tmp_path):
                     "source": "test",
                 }
             )
-        chain = pd.DataFrame(rows)
-        chain["bid_size"] = pd.array(chain["bid_size"], dtype="Int64")
-        chain["ask_size"] = pd.array(chain["ask_size"], dtype="Int64")
-        store.write_partitioned(
-            validate(chain, CHAIN_SCHEMA, CHAIN_REQUIRED_NOT_NULL),
-            tmp_path / "chains",
-            ["asof_date", "underlying"],
+        fwd_rows.append(
+            {
+                "asof_date": asof,
+                "underlying": "TEST",
+                "expiry": expiry,
+                "T": T_day,
+                "n_strikes": len(STALE_FILL_STRIKES),
+                "forward": FORWARD,
+                "discount_factor_implied": DISCOUNT_FACTOR,
+                "discount_factor_curve": DISCOUNT_FACTOR,
+                "discount_factor_diff_bp": 0.0 if reliable else 400.0,
+                "r_squared": 0.9999,
+                "implied_dividend_yield": 0.0,
+                "announced_dividend_yield": None,
+                "dividend_yield_diff": None,
+                "flag_r2": False,
+                "flag_discount_factor_bp": not reliable,
+                "method": "parity_2p",
+                "dispersion_bp": None,
+                "reliable": reliable,
+            }
         )
-        fwd = pd.DataFrame(
-            [
-                {
-                    "asof_date": asof,
-                    "underlying": "TEST",
-                    "expiry": expiry,
-                    "T": T_day,
-                    "n_strikes": 9,
-                    "forward": FORWARD,
-                    "discount_factor_implied": DISCOUNT_FACTOR,
-                    "discount_factor_curve": DISCOUNT_FACTOR,
-                    "discount_factor_diff_bp": 0.0 if reliable else 400.0,
-                    "r_squared": 0.9999,
-                    "implied_dividend_yield": 0.0,
-                    "announced_dividend_yield": None,
-                    "dividend_yield_diff": None,
-                    "flag_r2": False,
-                    "flag_discount_factor_bp": not reliable,
-                    "method": "parity_2p",
-                    "dispersion_bp": None,
-                    "reliable": reliable,
-                }
-            ]
-        )
-        store.write_partitioned(
-            validate(fwd, FORWARD_SCHEMA, FORWARD_REQUIRED_NOT_NULL),
-            tmp_path / "forwards",
-            ["asof_date", "underlying"],
-        )
+    chain = pd.DataFrame(rows)
+    chain["bid_size"] = pd.array(chain["bid_size"], dtype="Int64")
+    chain["ask_size"] = pd.array(chain["ask_size"], dtype="Int64")
+    store.write_partitioned(
+        validate(chain, CHAIN_SCHEMA, CHAIN_REQUIRED_NOT_NULL),
+        tmp_path / "chains",
+        ["asof_date", "underlying"],
+    )
+    store.write_partitioned(
+        validate(pd.DataFrame(fwd_rows), FORWARD_SCHEMA, FORWARD_REQUIRED_NOT_NULL),
+        tmp_path / "forwards",
+        ["asof_date", "underlying"],
+    )
 
+
+STALE_FILL_STRIKES = [80, 85, 90, 95, 100.01, 105, 110, 115, 120]
+
+
+def _stale_fill_cfg(tmp_path):
+    from eqdrisk.config import BaseConfig, Paths, Universe
+
+    return BaseConfig(
+        run_date=dt.date(2026, 8, 21),
+        universe=Universe(index=["TEST"], single_names=[]),
+        paths=Paths(raw=str(tmp_path / "raw"), curated=str(tmp_path)),
+        calendar="NYSE",
+        daycount="ACT/365F",
+    )
+
+
+def test_run_iv_extraction_carries_an_expiry_that_loses_its_forward(tmp_path):
+    """Day 1 has a reliable forward for both expiries; on day 2 the longer one loses
+    it (the typical long-dated single-name case). Day 2's surface input keeps day
+    1's quotes for that expiry, flagged, instead of losing the expiry."""
+    from eqdrisk.io import store
+    from eqdrisk.marketdata.calendar import year_fraction
+    from eqdrisk.vol.implied import NO_RELIABLE_FORWARD, run_iv_extraction
+
+    anchor, expiry = dt.date(2026, 12, 18), dt.date(2027, 2, 20)
+    cfg = _stale_fill_cfg(tmp_path)
     day1, day2 = dt.date(2026, 8, 20), dt.date(2026, 8, 21)
-    write_day(day1, reliable=True)
-    write_day(day2, reliable=False)
+    _write_stale_fill_day(tmp_path, day1, {anchor: True, expiry: True})
+    _write_stale_fill_day(tmp_path, day2, {anchor: True, expiry: False})
     run_iv_extraction(cfg, day1)
     result = run_iv_extraction(cfg, day2)
 
@@ -422,11 +433,37 @@ def test_run_iv_extraction_carries_an_expiry_that_loses_its_forward(tmp_path):
         views={"iv": str(tmp_path / "implied_vols")},
     ).to_pandas()
     # Today's own rows are kept (audit trail), plus the carried, flagged OK rows.
-    assert (out["reason"] == NO_RELIABLE_FORWARD).sum() == len(strikes)
-    carried = out[out["reason"] == OK]
-    assert len(carried) == len(strikes)
+    assert (out["reason"] == NO_RELIABLE_FORWARD).sum() == len(STALE_FILL_STRIKES)
+    carried = out[out["carried_from"].notna()]
+    assert len(carried) == len(STALE_FILL_STRIKES)
+    assert (carried["reason"] == OK).all()
+    assert (pd.to_datetime(carried["expiry"]).dt.date == expiry).all()
     assert (pd.to_datetime(carried["carried_from"]).dt.date == day1).all()
     assert carried["T"].iloc[0] == year_fraction(day2, expiry, "ACT/365F")
+
+
+def test_run_iv_extraction_does_not_rebuild_a_day_with_nothing_observed(tmp_path):
+    """A day where no expiry has an observed OK quote (a failed or after-hours
+    snapshot) is a lost day: nothing is carried into it, so no surface can be
+    calibrated from the previous day's quotes alone (SPX on 2026-10-23)."""
+    from eqdrisk.io import store
+    from eqdrisk.vol.implied import NO_RELIABLE_FORWARD, run_iv_extraction
+
+    anchor, expiry = dt.date(2026, 12, 18), dt.date(2027, 2, 20)
+    cfg = _stale_fill_cfg(tmp_path)
+    day1, day2 = dt.date(2026, 8, 20), dt.date(2026, 8, 21)
+    _write_stale_fill_day(tmp_path, day1, {anchor: True, expiry: True})
+    _write_stale_fill_day(tmp_path, day2, {anchor: False, expiry: False})
+    run_iv_extraction(cfg, day1)
+    result = run_iv_extraction(cfg, day2)
+
+    assert "TEST" not in result.carried_expiries
+    out = store.query(
+        f"SELECT * FROM iv WHERE asof_date = DATE '{day2.isoformat()}'",
+        views={"iv": str(tmp_path / "implied_vols")},
+    ).to_pandas()
+    assert (out["reason"] == NO_RELIABLE_FORWARD).all()
+    assert out["carried_from"].isna().all()
 
 
 def _write_c7_inputs(tmp_path, asof, rate, chain_expiries, forward_rows, underlying="TEST"):
