@@ -22,6 +22,7 @@ from eqdrisk.io.schemas import (
 from eqdrisk.portfolio.mark import (
     _expiry_bucket,
     _moneyness_bucket,
+    build_grids_for_state,
     load_market_state,
     mark_portfolio,
 )
@@ -327,6 +328,53 @@ def test_barrier_and_autocall_positions_price_without_crashing(tmp_path, monkeyp
     for m in result.marks:
         assert np.isfinite(m.price)
         assert np.isfinite(m.delta)
+
+
+def test_mc_grids_are_built_from_expiries_at_least_a_month_out(tmp_path, monkeypatch):
+    """The Monte Carlo exotics' local-vol grid leaves out expiries inside a month
+    (their fitting noise moved the autocallable's price by tens of thousands a day);
+    the surface itself, used by vanillas, keeps them."""
+    from eqdrisk.marketdata.forward import ForwardCurve
+    from eqdrisk.vol.local_vol import LOCAL_VOL_MIN_PILLAR_T
+
+    seen: list[list[float]] = []
+
+    def capture(surface, forward_curve, s_grid, t_grid):
+        seen.append(sorted(surface["T"].tolist()))
+        return None
+
+    monkeypatch.setattr(mark_module, "build_local_vol_grid", capture)
+    ts = [0.01, 0.03, 0.06, 0.25, 0.5, 1.0, 1.5, 2.0]
+    surface = pd.DataFrame(
+        {"T": ts, "model": "SVI", "a": 0.01, "b": 0.1, "rho": -0.3, "m": 0.0, "sigma": 0.1}
+    )
+    portfolio = Portfolio.from_yaml(
+        _write_portfolio_yaml(
+            tmp_path,
+            [
+                {
+                    "id": "A1",
+                    "type": "autocall",
+                    "underlying": UNDERLYING,
+                    "notional": 1_000_000,
+                    "autocall_barrier": 1.00,
+                    "coupon_barrier": 0.75,
+                    "put_barrier": 0.65,
+                    "coupon": 0.02,
+                    "obs": "quarterly",
+                    "expiry": (ASOF + dt.timedelta(days=500)).isoformat(),
+                }
+            ],
+        )
+    )
+    fc = ForwardCurve(pillar_T=np.array([0.5]), pillar_log_forward=np.array([np.log(SPOT)]))
+
+    build_grids_for_state(
+        _cfg(tmp_path), ASOF, portfolio, {UNDERLYING: SPOT}, {UNDERLYING: surface}, {UNDERLYING: fc}
+    )
+
+    assert seen == [[t for t in ts if t >= LOCAL_VOL_MIN_PILLAR_T]]
+    assert surface["T"].tolist() == ts
 
 
 def test_skips_positions_with_no_market_data_for_their_underlying(tmp_path):

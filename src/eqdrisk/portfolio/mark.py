@@ -75,7 +75,7 @@ from eqdrisk.pricing.blackscholes import compute_greeks
 from eqdrisk.pricing.varswap import fair_variance_strike_from_w_func
 from eqdrisk.stress.shock import MarketShock, shock_local_vol_grid, shocked_spot, shocked_w
 from eqdrisk.vol.implied import EXTREME_K_MULTIPLE
-from eqdrisk.vol.local_vol import LocalVolGrid, build_local_vol_grid
+from eqdrisk.vol.local_vol import LocalVolGrid, build_local_vol_grid, local_vol_pillars
 
 EXPIRY_BUCKETS = [
     (0.25, "0-3m"),
@@ -329,7 +329,9 @@ def build_grids_for_state(
     autocall positions), built once and reused across that underlying's MC-priced
     positions. Factored out of `load_market_state` so Step 12's P&L explain can
     build a grid for an intermediate (mixed-day) state too, not just a real
-    store-loaded one."""
+    store-loaded one. Built from expiries at least a month out
+    (`local_vol_pillars`): the weeklies' fitting noise otherwise moved the exotics'
+    prices by tens of thousands a day."""
     mc_underlyings = {
         p.underlying
         for p in portfolio.positions
@@ -347,7 +349,7 @@ def build_grids_for_state(
         )
         s_grid = np.linspace(max(1.0, s0 * 0.1), s0 * 3.0, 100)
         t_grid = np.linspace(0.01, max_T, 60)
-        grid = build_local_vol_grid(surface[u], forward_curve[u], s_grid, t_grid)
+        grid = build_local_vol_grid(local_vol_pillars(surface[u]), forward_curve[u], s_grid, t_grid)
         if grid is not None:
             grids[u] = grid
     return grids

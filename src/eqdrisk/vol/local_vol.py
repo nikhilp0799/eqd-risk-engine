@@ -117,6 +117,32 @@ K_DERIVATIVE_H = 1e-4  # finite-difference step for SSVI's numeric k-derivatives
 LOCAL_VARIANCE_FLOOR = 1e-6  # sigma_loc^2 floor when interpolation dips non-positive
 
 
+# Shortest calibrated expiry the Monte Carlo exotics' local-vol grid is built from
+# (2026-10-24, planning/vol_step_buckets_plan.md). Expiries inside a month (NVDA's
+# weeklies fit with 5-15 vol-point errors against ~1.5 further out) swung P008's
+# price by $30-50K a day through the grid's first rows: an exact maturity-band
+# attribution put -80, +93 and -70bp of the three largest unexplained days on
+# expiries under 18 days. Below the first kept pillar, local vol is flat at that
+# pillar's average variance (the `T <= T_pillars[0]` rule), so the market's total
+# variance to it is kept; only the shape inside the first month is given up.
+# Measured on all 24 stored day pairs, P008's mean residual: 25.1bp production;
+# 12.9 / 12.0 / 9.2bp at 2 weeks / 18 days / 1 month; P007 unaffected (0.8 -> 0.5bp).
+LOCAL_VOL_MIN_PILLAR_T = 1 / 12
+
+
+def local_vol_pillars(
+    surface_for_underlying: pd.DataFrame, min_T: float = LOCAL_VOL_MIN_PILLAR_T
+) -> pd.DataFrame:
+    """The calibrated expiries the local-vol grid is built from: those at least
+    `min_T` out, unless that would leave too few to smooth across T, in which case
+    the full surface is used unchanged. Vanilla pricing, the variance swap and the
+    stored surface keep every expiry."""
+    kept = surface_for_underlying[surface_for_underlying["T"] >= min_T]
+    if len(kept) < MIN_PILLARS_FOR_SMOOTHING:
+        return surface_for_underlying
+    return kept
+
+
 def _beyond_last_scale(T: float, T_last: float) -> float:
     """Beyond the last calibrated pillar, each strike's implied vol is held at
     its last-pillar level: w(k, T) = w(k, T_N) * T / T_N, so total variance keeps

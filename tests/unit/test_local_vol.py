@@ -5,10 +5,13 @@ import pytest
 from eqdrisk.marketdata.forward import ForwardCurve
 from eqdrisk.vol.implied import EXTREME_K_MULTIPLE
 from eqdrisk.vol.local_vol import (
+    LOCAL_VOL_MIN_PILLAR_T,
     MIN_PILLARS_FOR_LOCAL_VOL,
+    MIN_PILLARS_FOR_SMOOTHING,
     _finite_diff_k,
     build_local_vol_grid,
     local_variance_at,
+    local_vol_pillars,
 )
 from eqdrisk.vol.svi import SVIParams, durrleman_g
 
@@ -269,3 +272,39 @@ def test_tiny_calibration_noise_moves_local_variance_only_a_little():
                     worst, abs(lv0.local_variance - lv1.local_variance) / lv1.local_variance
                 )
     assert worst < 0.04
+
+
+WEEKLY_AND_MONTHLY_TS = [0.01, 0.03, 0.06, 0.1, 0.25, 0.5, 1.0, 2.0]
+
+
+def test_local_vol_pillars_drops_expiries_inside_a_month():
+    kept = local_vol_pillars(_svi_surface(WEEKLY_AND_MONTHLY_TS))
+    assert kept["T"].tolist() == [0.1, 0.25, 0.5, 1.0, 2.0]
+    assert (kept["T"] >= LOCAL_VOL_MIN_PILLAR_T).all()
+
+
+def test_local_vol_pillars_keeps_every_expiry_when_too_few_would_remain():
+    surface = _svi_surface([0.02, 0.05, 0.3, 0.6, 1.0])
+    assert (surface["T"] >= LOCAL_VOL_MIN_PILLAR_T).sum() < MIN_PILLARS_FOR_SMOOTHING
+    assert local_vol_pillars(surface)["T"].tolist() == surface["T"].tolist()
+
+
+def test_grid_from_local_vol_pillars_ignores_noise_in_weekly_expiries():
+    """The point of the cutoff: a badly fitted weekly expiry (here its variance level
+    raised by half) moves the grid built from every expiry, and leaves the grid built
+    from `local_vol_pillars` unchanged."""
+    surface = _svi_surface(WEEKLY_AND_MONTHLY_TS)
+    noisy = surface.copy()
+    noisy.loc[noisy["T"] == 0.03, "a"] *= 1.5
+    fc = ForwardCurve(pillar_T=np.array([0.05, 2.0]), pillar_log_forward=np.log([100.0, 100.0]))
+    s_grid, t_grid = np.linspace(60, 160, 11), np.linspace(0.01, 1.5, 8)
+
+    full = build_local_vol_grid(surface, fc, s_grid, t_grid)
+    full_noisy = build_local_vol_grid(noisy, fc, s_grid, t_grid)
+    cut = build_local_vol_grid(local_vol_pillars(surface), fc, s_grid, t_grid)
+    cut_noisy = build_local_vol_grid(local_vol_pillars(noisy), fc, s_grid, t_grid)
+
+    assert full is not None and full_noisy is not None
+    assert cut is not None and cut_noisy is not None
+    assert not np.allclose(full.sigma_loc, full_noisy.sigma_loc)
+    np.testing.assert_array_equal(cut.sigma_loc, cut_noisy.sigma_loc)
