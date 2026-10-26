@@ -124,7 +124,11 @@ export default function AiAgentPage() {
               <Badge tone={confidenceTone}>AI confidence: {aiAgent.confidence}</Badge>
               {fc && (
                 <Badge tone={fc.status === "verified" ? "good" : "critical"}>
-                  {fc.status === "verified" ? "Figures checked" : "Figures not supported"}
+                  {fc.status === "verified"
+                    ? "Figures checked"
+                    : fc.status === "unparsed"
+                      ? "Answer not structured"
+                      : "Figures not supported"}
                 </Badge>
               )}
               <span className="text-xs text-muted">Written by the AI analyst, not independently verified.</span>
@@ -135,8 +139,10 @@ export default function AiAgentPage() {
                 included; the check confirms each number exists there, not that it is described
                 correctly.{" "}
                 {fc.status === "verified"
-                  ? `All ${fc.n_numbers} figures here were found in that data${fc.retried ? ", after the analyst was asked once to correct a figure that was not" : ""}.`
-                  : `${fc.unsupported.length} of ${fc.n_numbers} figures were not found in that data even after one correction request: ${fc.unsupported.join(", ")}.`}
+                  ? `All ${fc.n_numbers} figures here were found in that data${fc.retried ? ", after the analyst was asked once to correct its answer" : ""}.`
+                  : fc.status === "unparsed"
+                    ? `The answer was not in the required format even after one correction request, so it was checked as plain text: ${fc.unsupported.length} of ${fc.n_numbers} figures were not found in that data.`
+                    : `${fc.unsupported.length} of ${fc.n_numbers} figures were not found in that data even after one correction request: ${fc.unsupported.join(", ")}.`}
               </p>
             )}
           </Step>

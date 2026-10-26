@@ -43,9 +43,9 @@ VOL_SURFACE_UNDERLYING = "SPX"
 # incident.
 IMPROVEMENT = {
     "mean_abs_bp_before": 104.9,
-    "mean_abs_bp_after": 27.0,
+    "mean_abs_bp_after": 10.8,
     "worst_bp_before": 299.4,
-    "worst_bp_after": 106.0,
+    "worst_bp_after": 38.0,
     "findings": [
         {
             "title": "Noisy risk numbers",
@@ -80,6 +80,13 @@ IMPROVEMENT = {
             "title": "Observation dates simulated days off",
             "body": "The note's quarterly test dates were simulated up to 5.5 days from the real "
             "dates. The simulation now hits every date exactly.",
+        },
+        {
+            "title": "Next week's options moving a two-year note",
+            "body": "NVIDIA's weekly options are the noisiest part of the volatility surface, and "
+            "their daily swings moved the note's model value by $30-50K on quiet days. The note "
+            "is now simulated from options at least a month out, which cut its daily gap by "
+            "more than half.",
         },
     ],
 }

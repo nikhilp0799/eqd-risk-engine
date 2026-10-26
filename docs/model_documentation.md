@@ -147,7 +147,14 @@ is fixed (`T_SMOOTHING_LAM`) rather than chosen by cross-validation per point, w
 create day-to-day local-vol noise of 1.7-2.4 vol points at 2 years (Section 4). Beyond the last
 calibrated expiry each strike keeps its last implied vol (total variance keeps growing at the last
 expiry's average rate). Wing extrapolation is capped at Step 3's own extreme-log-moneyness quality
-threshold, not extrapolated indefinitely.
+threshold, not extrapolated indefinitely. The Monte Carlo exotics' grid is built only from expiries
+at least a month out (`LOCAL_VOL_MIN_PILLAR_T`): NVDA's weekly expiries are fitted with 5-15
+vol-point errors, and through the grid's first rows their day-to-day swings moved the autocallable
+by $30-50K on days when implied vols barely moved. Below the first kept expiry local vol is flat at
+that expiry's average variance, so the market's variance to it is kept and only the vol shape
+inside the first month is given up. This also removes a degenerate first grid row: at very short
+maturities the fixed-strength spline of total variance dipped below zero on 25 of 36 stored days.
+Vanillas and variance swaps price off the full surface.
 
 Monte Carlo paths use Sobol quasi-random sequences with a classic power-of-two Brownian bridge path
 construction (Glasserman), numba-JIT-compiled for the inner Euler step. Barrier positions use a
@@ -220,20 +227,25 @@ vanna and volga essentially noise), (2) long-dated forwards and vol-surface cove
 to day, (3) extrapolation past the last expiry that assumed zero future vol and carry,
 (4) local-vol smoothing re-chosen at every grid point every day, (5) observation dates
 simulated up to 5.5 days off, and (6) barriers measured against each day's spot instead of the
-note's initial fixing (Section 2, position lifecycle), and (7) Greeks that held vol fixed by strike
-while the explain moved it with moneyness (Section 3.5). Each was measured and fixed (follow-up section of the incident report). On the 16 comparable
-day pairs the mean absolute residual fell from 105bp to 27bp of NAV; over all 23 stored pairs it is
-27bp (median 11bp), almost all from P008.
+note's initial fixing (Section 2, position lifecycle), (7) Greeks that held vol fixed by strike
+while the explain moved it with moneyness (Section 3.5), and (8) weekly expiries whose fitting
+noise moved the note's local-vol model (Section 3.3). Each was measured and fixed (follow-up section
+of the incident report). On the 16 comparable day pairs the mean absolute residual fell from 105bp
+to 11bp of NAV; over all 24 stored pairs it is 9.9bp (median 6.8bp, worst 38bp).
 
-What remains is structural and documented, not fixed: the vol step (24.7bp mean against 7.3bp
-for the spot step), where the note responds to the vol surface's shape (skew and term structure)
-in a way one vega number times the ATM move cannot capture. A parallel vol ladder was measured and
-does not help; vega by maturity bucket plus a skew sensitivity would be the next step. Residuals carry a Monte Carlo standard error, so a day is flagged only
-when the gap exceeds the 5bp threshold by more than its noise.
+What remains: the explain's vol step is still one vega times the ATM move at the position's
+exposure dates. A parallel vol ladder, and vega by maturity bucket plus a skew sensitivity, were
+measured and did not help, so they were not built. The largest remaining day (2026-10-09, 38bp) is
+mostly an AAPL call a week from expiry, in the vol step, not yet investigated. Residuals carry a
+Monte Carlo standard error, so a day is flagged only when the gap exceeds the 5bp threshold by more
+than its noise.
 
 **Several input-stability choices are judgment calls, tuned on this five-name universe.** The
 local-vol term-structure smoothing strength is fixed (`T_SMOOTHING_LAM = 0.01`), chosen by
-measuring local-vol Monte Carlo against Black-76 on all stored days. A long single-name expiry with
+measuring local-vol Monte Carlo against Black-76 on all stored days. The exotics' local-vol grid
+ignores expiries inside a month (`LOCAL_VOL_MIN_PILLAR_T`); 2 weeks and 18 days gave most of the
+same gain, and longer cutoffs gained more partly by ignoring the short end, so the value is a
+judgment that gives up the vol shape inside the first month. A long single-name expiry with
 clean quotes but no forward fit of its own takes its forward from that day's forward curve, so its
 implied vols inherit any error in the curve's long-end carry (roughly 1-2 vol points near the money
 per 2% forward error at 2 years). An expiry that loses its quotes keeps the previous day's quotes,
@@ -451,7 +463,7 @@ than loosened to hide the platform difference.
 
 | Risk | Materiality | Mitigant / current state |
 |---|---|---|
-| P&L-explain residual on Monte Carlo exotics | **High** — 27bp of NAV mean absolute residual over 23 real day pairs (median 11bp), almost all P008 | Seven input and model causes found and fixed (Section 4); remaining vol-shape residual needs maturity-bucketed vega and a skew sensitivity, not built |
+| P&L-explain residual | **Medium** — 9.9bp of NAV mean absolute residual over 24 real day pairs (median 6.8bp, worst 38bp), still above the 5bp threshold on average | Eight input and model causes found and fixed (Section 4); bucketed vega and skew measured and rejected; largest remaining day (a near-expiry AAPL call) not yet investigated |
 | Vol-shock stress approximation error | **Medium**, grows with shock size (~7-40% measured) | Documented and bounded; not eliminated; matters most for the largest stress-ladder shocks |
 | Residual monitoring alerts are logged, not paged | **Low** — daily alerts are visible in the log and dashboard but nobody is notified | Automated 5bp check with a noise band since 2026-09-10 / 2026-10; paging not built |
 | Two single names (JPM, XLE) have no real coverage | **Low** for this book (no positions assigned there), but blocks any future position in those names | Not currently mitigated; Step 8.3 (proxy modelling) would address this if built |

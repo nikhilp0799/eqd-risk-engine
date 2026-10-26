@@ -1,10 +1,11 @@
 # Incident: P&L Explain Residual Breach — P008 (NVDA autocallable), 2026-08-31 -> 2026-09-01
 
-> **Correction (2026-10-14).** The root cause below (missing vanna and volga) was wrong. A
-> follow-up investigation found the residual came from Monte Carlo noise in the note's Greeks,
-> unstable long-dated market inputs, local-vol smoothing noise, and mistimed observation dates;
-> adding vanna and volga added noise rather than information. On the same day pair the residual
-> is now -$39,201 (-94bp of NAV), down from +$178,461, and almost all of it is now in the vol step (the surface's shape), which the remaining work is about. The original report is kept below
+> **Correction (2026-10-14, updated 2026-10-25).** The root cause below (missing vanna and volga)
+> was wrong. A follow-up investigation found the residual came from Monte Carlo noise in the note's
+> Greeks, unstable long-dated market inputs, local-vol smoothing noise, mistimed observation dates,
+> and weekly expiries moving the note's local-vol model; adding vanna and volga added noise rather
+> than information. On the same day pair the residual is now -$4,085 (-9.7bp of NAV, 2 SE +-5bp),
+> down from +$178,461. The original report is kept below
 > unchanged as the record of what was believed at the time; see
 > [Follow-up investigation](#follow-up-investigation-2026-10-05-to-2026-10-14) at the end.
 
@@ -189,6 +190,21 @@ chains after each fix. Planning record: `planning/pnl_explain_noise_plan.md` and
    ladder did not help (spot-step residual 19.3bp with Greeks, 21.0bp with a ladder); Greeks
    computed with the vol surface moving with spot cut it to 7.1bp. Every option now reports
    both deltas, and the explain uses the sticky-moneyness pair.
+8. **Weekly options moved the note's local-vol model (found 2026-10-24).** With causes 1-7 fixed,
+   the vol step was the remaining gap, and vega by maturity bucket plus a skew sensitivity did not
+   help (25.8bp and 23.8bp against 23.0bp for P008). An exact attribution of the vol step by
+   maturity band (day 0's surface with day 1's expiries swapped in band by band, full reprice) put
+   almost all of the three largest days on expiries under 18 days: -80 of -107bp on 2026-09-01,
+   +93 of +72bp on 09-04, -70 of -115bp on 09-08. NVDA's weekly expiries are fitted with 5-15
+   vol-point errors, and their swings flowed into the first rows of the local-vol grid, moving a
+   note whose first observation was two months away by $30-50K. Separately, the fixed-strength
+   spline of total variance dipped below zero at very short maturities on 25 of 36 stored days,
+   leaving the grid's first row degenerate. The exotics' local-vol grid is now built from expiries
+   at least a month out (flat local vol below the first kept expiry, at its average variance);
+   vanillas keep every expiry. Measured on all 24 day pairs before adopting it, P008's mean
+   residual fell from 25.1bp to 12.9 / 12.0 / 9.2bp with a 2-week / 18-day / 1-month cutoff, so the
+   gain does not depend on the exact value; 1 month was chosen (longer cutoffs gained more, partly
+   by ignoring the short end, which was not trusted). P007, the SPX barrier, was unaffected.
 
 ### Numbers
 
@@ -199,11 +215,12 @@ This day pair (2026-08-31 -> 2026-09-01):
 | Original report (single run, 1%/1pt Greeks) | +$178,461 (about 429bp of NAV) |
 | After the vanna/volga change | +$151,705 |
 | Noise-aware residual and better Greeks | -$43,927 (-104bp) |
-| All fixes above | **-$39,201 (-94bp, 2 SE +-7bp)**: spot step +$3.2K, vol step -$40.9K |
+| Causes 1-7 fixed | -$39,201 (-94bp, 2 SE +-7bp): spot step +$3.2K, vol step -$40.9K |
+| Cause 8 fixed (current) | **-$4,085 (-9.7bp, 2 SE +-5bp)**: spot step +$2.5K, vol step -$5.1K |
 
-On the 16 day pairs explained both before and after the input and model fixes (2-4 above), the
-mean absolute total residual fell from 104.9bp to 27.0bp. Across all 23 stored day pairs it is
-26.9bp, with a median day of 11.1bp; the worst is 106bp (2026-09-08), a vol-shape day. An
+On the 16 day pairs explained both before and after the input and model fixes, the mean absolute
+total residual fell from 104.9bp to 10.8bp. Across all 24 stored day pairs it is 9.9bp, with a
+median day of 6.8bp; the worst is 38bp (2026-10-09), mostly an AAPL call a week from expiry. An
 earlier version of this report also said P008's typical daily price move fell from $54.6K to $9.4K;
 that figure was an artefact of cause 6 (a note re-struck at the money every day has little delta)
 and is withdrawn: priced correctly, the note's value moves about $38K on a typical day, as a $5M
@@ -211,14 +228,13 @@ note with about 13,400 shares of NVDA delta should.
 
 ### What remains, honestly
 
-This day pair is still one of the larger ones: on full revaluation the day's vol-surface change
-cost the book $44.8K, while vega times the ATM vol move explains $3.9K. That is now the one
-material residual left across history: the vol step (24.7bp mean over 23 day pairs, against 7.3bp
-for the spot step), where the note responds to changes in the surface's shape (skew and term
-structure) that a single vega times an ATM move cannot capture. A parallel vol ladder was measured
-and does not help (22.6bp vs 22.7bp); the next step would be vega by maturity and a skew
-sensitivity. Big NVDA moves were thought to be the other source; they turned out to be cause 7
-above, now fixed.
+This day pair is now about two standard errors from the 5bp threshold, and on full revaluation the
+day's vol-surface change cost the book $9.2K, not the $44.8K it showed before cause 8: most of what
+looked like a vol move was the weekly expiries moving the model. Across history the largest
+remaining day (2026-10-09, 38bp) is mostly an AAPL call a week from expiry, in the vol step, and
+is not yet investigated. The 1-month cutoff gives up the vol shape inside the first month for the
+Monte Carlo exotics; a note within a month of an observation date is priced with flat local vol up
+to the first kept expiry.
 
 ### Corrected lessons
 
@@ -229,3 +245,6 @@ above, now fixed.
    (observation dates) changing day to day, not from the market.
 3. The Impact section above understates the size by a factor of ten ("~43bp"); $178K on a
    $4.16M book is about 429bp.
+4. When Greeks cannot explain a move, attribute the move exactly before adding more Greeks.
+   Vega by maturity and a skew sensitivity were measured to add nothing (cause 8); repricing with
+   one maturity band of the surface changed at a time found the cause in one run.

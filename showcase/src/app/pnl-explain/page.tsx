@@ -115,7 +115,7 @@ export default function PnlExplainPage() {
 
       <Card
         title="Alert history"
-        subtitle={`Unexplained P&L as a share of book value, one bar per trading day. A day alerts only when the gap is wider than the ±${pct(pnl.alertPctOfBook, 2)} alert level even after allowing for simulation noise: ${pnl.daysBreached} of ${pnl.daysRecorded} days alert, ${pnl.daysInconclusive} are within noise and ${pnl.daysWithinThreshold} are clear. The largest remaining gaps come from the structured note on days when the shape of NVIDIA's volatility curve changes, which a single volatility sensitivity cannot capture; maturity-level sensitivities are the documented next step.`}
+        subtitle={`Unexplained P&L as a share of book value, one bar per trading day. A day alerts only when the gap is wider than the ±${pct(pnl.alertPctOfBook, 2)} alert level even after allowing for simulation noise: ${pnl.daysBreached} of ${pnl.daysRecorded} days alert, ${pnl.daysInconclusive} are within noise and ${pnl.daysWithinThreshold} are clear. The largest gaps used to come from NVIDIA's weekly options moving the structured note's model; the note is now simulated from options at least a month out.`}
       >
         <AlertHistory data={history} highlightDate={pnlExplain.asof_date} />
         <p className="mt-3 text-xs text-muted">
@@ -126,7 +126,7 @@ export default function PnlExplainPage() {
 
       <Card
         title="How the engine was improved"
-        subtitle={`Early on, the daily check flagged gaps far larger than the market could explain. Testing six weeks of history traced them to the engine itself, not the market. These ${pnl.findings.length} causes were fixed and measured on every stored day; the average daily gap fell from ${pct(pnl.meanGapBeforePct, 2)} to ${pct(pnl.meanGapAfterPct, 2)} of book value.`}
+        subtitle={`Early on, the daily check flagged gaps far larger than the market could explain. Testing two months of history traced them to the engine itself, not the market. These ${pnl.findings.length} causes were fixed and measured on every stored day; the average daily gap fell from ${pct(pnl.meanGapBeforePct, 2)} to ${pct(pnl.meanGapAfterPct, 2)} of book value.`}
       >
         <div className="grid gap-4 sm:grid-cols-2">
           {pnl.findings.map((f) => (
@@ -163,7 +163,8 @@ export default function PnlExplainPage() {
           Monte Carlo exotics; single-name forwards fitted with the rates curve&apos;s discount
           factor and one reliability rule for surface and pricing; flat implied vol and continued
           carry past the last expiry; short gaps in long-dated quotes filled from the previous day;
-          a fixed local-vol smoothing strength; observation dates simulated exactly; and the structured note
+          a fixed local-vol smoothing strength; observation dates simulated exactly; the exotics&apos;
+          local-vol model built from expiries at least a month out; and the structured note
           priced against its issue-date fixing, with expiries settled at the expiry close and expired
           options rolled to the next quarter. The full
           write-up, including the original diagnosis that turned out to be wrong, is in the
