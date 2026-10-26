@@ -142,3 +142,53 @@ def test_still_wrong_after_the_retry_is_flagged_and_stored(tmp_path):
     assert row["factcheck_unsupported"] == '["350bp"]'
     assert bool(row["factcheck_retried"])
     assert "NAV=1,000,000.00" in row["prompt"]
+
+
+def _broken(summary: str) -> dict:
+    # Arithmetic inside the JSON, as qwen2.5 wrote on 2026-10-02.
+    content = (
+        f'{{"summary": "{summary}", "root_cause_hypothesis": "delta on P1", '
+        '"confidence": "low", "flagged_positions": [], "proposed_changes": '
+        '[{"parameter": "delta", "current_value": 23231.16, "suggested_value": 23231.16 - 548.97, '
+        '"rationale": "x"}]}'
+    )
+    return {"role": "assistant", "content": content}
+
+
+def test_invalid_json_uses_the_retry_and_a_valid_retry_is_checked(tmp_path):
+    investigation, chat = _run(
+        tmp_path, [_broken("residual of 200.00"), _answer("residual of 200.00, 2.0bp of NAV")]
+    )
+    assert chat.call_count == 2
+    assert "not valid JSON" in chat.call_args_list[1].args[0][-1]["content"]
+    assert investigation.parse_error is None
+    assert investigation.factcheck_retried
+    assert investigation.factcheck is not None
+    assert investigation.factcheck.status == "verified"
+
+
+def test_still_invalid_json_after_the_retry_is_checked_on_raw_text_and_flagged(tmp_path):
+    investigation, chat = _run(
+        tmp_path, [_broken("residual of 200.00"), _broken("residual of 200.00")]
+    )
+    assert chat.call_count == 2
+    assert investigation.parse_error is not None
+    assert investigation.factcheck is not None
+    assert investigation.factcheck.status == "unparsed"
+    assert investigation.factcheck.n_numbers > 0
+    assert sorted(investigation.factcheck.unsupported) == ["23231.16", "23231.16", "548.97"]
+    assert "FACT-CHECK: the answer was not valid JSON" in investigation.render()
+
+    stored = store.query(
+        "SELECT * FROM t", views={"t": str(tmp_path / "ai_investigations")}
+    ).to_pandas()
+    assert stored.iloc[0]["factcheck_status"] == "unparsed"
+    assert not bool(stored.iloc[0]["factcheck_retried"])
+
+
+def test_invalid_json_with_supported_numbers_is_still_flagged_unparsed():
+    from eqdrisk.agent.factcheck import FactCheckResult
+
+    result = FactCheckResult(n_numbers=2, unsupported=[], parsed=False)
+    assert result.status == "unparsed"
+    assert result.render().startswith("FACT-CHECK:")

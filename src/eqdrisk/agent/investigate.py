@@ -26,9 +26,11 @@ for an outside reviewer, not a claim about it.
 
 **Fact-checked, not trusted (2026-10-19, `agent/factcheck.py`):** every number in
 the answer is checked, with its unit, against the exact prompt and tool results the
-model saw. One corrective retry names any unsupported numbers; if they survive it,
-the answer is kept and marked. The prompt is stored with the investigation, so any
-figure can be traced to what the model was given.
+model saw. One corrective retry names any unsupported numbers (or says the answer
+was not valid JSON); if the problem survives it, the answer is kept and marked, and
+an answer that is still not valid JSON is checked on its raw text and marked
+`unparsed`. The prompt is stored with the investigation, so any figure can be traced
+to what the model was given.
 
 **What this deliberately does not do:** never auto-applies a proposed config
 change (always a written suggestion for a human to review), never recalibrates
@@ -123,6 +125,8 @@ class AIInvestigationResult:
             return "\n".join(lines)
         if self.parse_error:
             lines.append(f"  NOTE: structured parsing failed ({self.parse_error}); raw text below.")
+            if self.factcheck is not None:
+                lines.append(f"  {self.factcheck.render()}")
             lines.append(f"  {self.summary}")
             if self.trace:
                 lines.append("  investigation trace:")
@@ -326,22 +330,23 @@ def run_daily_investigation(
         prompt=prompt,
     )
     _fill_from_raw(investigation, raw)
-    if not investigation.parse_error:
-        context = _factcheck_context(messages)
-        shares = _residual_shares(result)
-        checked = factcheck.check(_answer_texts(investigation), context, shares)
-        if checked.unsupported:
-            retry_raw = _corrective_retry(messages, raw, checked.unsupported)
-            if retry_raw is not None:
-                retry = AIInvestigationResult(
-                    day0=result.day0, day1=result.day1, model=investigation.model, ai_available=True
-                )
-                _fill_from_raw(retry, retry_raw)
-                if not retry.parse_error:
-                    _fill_from_raw(investigation, retry_raw)
-                    investigation.factcheck_retried = True
-                    checked = factcheck.check(_answer_texts(investigation), context, shares)
-        investigation.factcheck = checked
+    context = _factcheck_context(messages)
+    shares = _residual_shares(result)
+    checked = _check(investigation, context, shares)
+    # One corrective retry in total, for whatever went wrong: invalid JSON or
+    # numbers not in the data. A retry that is not valid JSON is discarded.
+    if investigation.parse_error or checked.unsupported:
+        retry_raw = _corrective_retry(messages, raw, investigation.parse_error, checked.unsupported)
+        if retry_raw is not None:
+            retry = AIInvestigationResult(
+                day0=result.day0, day1=result.day1, model=investigation.model, ai_available=True
+            )
+            _fill_from_raw(retry, retry_raw)
+            if not retry.parse_error:
+                _fill_from_raw(investigation, retry_raw)
+                investigation.factcheck_retried = True
+                checked = _check(investigation, context, shares)
+    investigation.factcheck = checked
 
     _persist(investigation, curated_root)
     _write_markdown(investigation, project_root)
@@ -383,6 +388,19 @@ def _answer_texts(investigation: AIInvestigationResult) -> list[str]:
     return texts
 
 
+def _check(
+    investigation: AIInvestigationResult, context: str, shares: list[float]
+) -> factcheck.FactCheckResult:
+    """Fact-check the answer's fields, or its raw text when it was not valid JSON
+    (2026-10-02: the model wrote arithmetic inside its JSON, and the answer used
+    to go unchecked with a null status)."""
+    if investigation.parse_error:
+        checked = factcheck.check([investigation.raw_response or ""], context, shares)
+        checked.parsed = False
+        return checked
+    return factcheck.check(_answer_texts(investigation), context, shares)
+
+
 def _factcheck_context(messages: list[dict[str, Any]]) -> str:
     """Everything the model saw: the prompt and every full tool result (the
     stored trace keeps only a truncated summary)."""
@@ -401,23 +419,29 @@ def _residual_shares(result: PnLExplainResult) -> list[float]:
 
 
 def _corrective_retry(
-    messages: list[dict[str, Any]], raw: str, unsupported: list[str]
+    messages: list[dict[str, Any]], raw: str, parse_error: str | None, unsupported: list[str]
 ) -> str | None:
-    """One more turn: name the numbers that are not in the model's data and ask
-    for the same JSON with them corrected (planning/ai_factcheck_plan.md)."""
+    """One more turn: say what was wrong (invalid JSON, numbers that are not in the
+    model's data, or both) and ask for the same JSON corrected
+    (planning/ai_factcheck_plan.md)."""
+    problems = []
+    if parse_error:
+        problems.append(
+            f"Your answer was not valid JSON ({parse_error}). Write every value as a plain "
+            "number or string: no arithmetic, no comments."
+        )
+    if unsupported:
+        problems.append(
+            "These numbers in your answer do not appear in the data you were given, or "
+            f"carry the wrong unit: {', '.join(unsupported)}. Dollar residuals and "
+            "residuals in bp of NAV are different numbers in the data; use each with the "
+            "unit it has there, and do not present a what-if scenario as something that "
+            "happened."
+        )
     retry_messages = [
         *messages,
         {"role": "assistant", "content": raw},
-        {
-            "role": "user",
-            "content": (
-                "These numbers in your answer do not appear in the data you were given, or "
-                f"carry the wrong unit: {', '.join(unsupported)}. Dollar residuals and "
-                "residuals in bp of NAV are different numbers in the data; use each with the "
-                "unit it has there, and do not present a what-if scenario as something that "
-                f"happened. {_FINAL_JSON_INSTRUCTIONS}"
-            ),
-        },
+        {"role": "user", "content": f"{' '.join(problems)} {_FINAL_JSON_INSTRUCTIONS}"},
     ]
     message = ollama_client.chat(retry_messages, tools=None)
     if message is None:

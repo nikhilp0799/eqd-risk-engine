@@ -56,12 +56,25 @@ class Claim:
 class FactCheckResult:
     n_numbers: int = 0
     unsupported: list[str] = field(default_factory=list)
+    # False when the answer was not valid JSON even after the corrective retry:
+    # its numbers were checked in the raw text, but its fields could not be read,
+    # so it is flagged whatever the numbers say.
+    parsed: bool = True
 
     @property
     def status(self) -> str:
+        if not self.parsed:
+            return "unparsed"
         return "unsupported_numbers" if self.unsupported else "verified"
 
     def render(self) -> str:
+        if not self.parsed:
+            found = f": {', '.join(self.unsupported)}" if self.unsupported else ""
+            return (
+                "FACT-CHECK: the answer was not valid JSON, so its fields could not be read; "
+                f"in its raw text {len(self.unsupported)} of {self.n_numbers} numbers are not "
+                f"in the data given{found}"
+            )
         if not self.unsupported:
             return f"fact-check: {self.n_numbers} numbers checked, all found in the data given"
         return (
