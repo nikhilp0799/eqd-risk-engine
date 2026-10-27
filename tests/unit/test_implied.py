@@ -639,3 +639,29 @@ def test_curve_df_forward_extracts_ivs_with_the_curve_discount_factor(tmp_path):
     ok = _ivs(tmp_path).query("reason == 'OK'")
     assert len(ok) >= 8
     assert (ok["iv"] - TRUE_SIGMA).abs().max() < 1e-6
+
+
+def test_run_iv_extraction_carries_across_a_lost_day(tmp_path):
+    """Observed day, lost day, then a day missing one expiry: the missing expiry is
+    carried from the observed day (still inside the 3-trading-day limit), not lost
+    because the day in between had nothing to carry (SPX, 2026-10-23 -> 10-26)."""
+    from eqdrisk.io import store
+    from eqdrisk.vol.implied import run_iv_extraction
+
+    anchor, expiry = dt.date(2026, 12, 18), dt.date(2027, 2, 20)
+    cfg = _stale_fill_cfg(tmp_path)
+    day1, lost, day3 = dt.date(2026, 8, 19), dt.date(2026, 8, 20), dt.date(2026, 8, 21)
+    _write_stale_fill_day(tmp_path, day1, {anchor: True, expiry: True})
+    _write_stale_fill_day(tmp_path, lost, {anchor: False, expiry: False})
+    _write_stale_fill_day(tmp_path, day3, {anchor: True, expiry: False})
+    for d in (day1, lost):
+        run_iv_extraction(cfg, d)
+    result = run_iv_extraction(cfg, day3)
+
+    assert result.carried_expiries["TEST"] == [expiry]
+    out = store.query(
+        f"SELECT * FROM iv WHERE asof_date = DATE '{day3.isoformat()}'",
+        views={"iv": str(tmp_path / "implied_vols")},
+    ).to_pandas()
+    carried = out[out["carried_from"].notna()]
+    assert (pd.to_datetime(carried["carried_from"]).dt.date == day1).all()

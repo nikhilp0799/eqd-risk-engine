@@ -36,5 +36,18 @@
       "arguments": "{\"position_id\": \"P008\", \"spot_shock_pct\": -0.1, \"vol_shock_pct\": 0.25}",
       "result_summary": "{\"position_id\": \"P008\", \"spot_shock_pct\": -0.1, \"vol_shock_pct\": 0.25, \"base_price\": 4834609.464223166, \"shocked_price\": 4288831.661161052, \"price_delta\": -545777.8030621139, \"shocked_delta\": 19409.15965871685, \"shocked_gamma\": 1990.574679744232, \"shocked_vega\": -1758673.6708681565}"
     }
-  ]
+  ],
+  "position_underlyings": {
+    "P001": "S&P 500",
+    "P002": "S&P 500",
+    "P003": "S&P 500",
+    "P004": "Apple",
+    "P005": "NVIDIA",
+    "P006": "S&P 500",
+    "P007": "S&P 500",
+    "P008": "NVIDIA",
+    "P009": "S&P 500",
+    "P010": "NVIDIA",
+    "P011": "Apple"
+  }
 }

@@ -36,6 +36,14 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
 }
 
 const r = ai.reprice;
+
+// The what-if the analyst chose, in words: "the S&P 500 up 10% and volatility down 25%".
+function shockWords(underlying: string, spotPct: number, volPct: number, verbs: [string, string]) {
+  const spot = `${underlying} ${spotPct >= 0 ? verbs[0] : verbs[1]} ${pct(Math.abs(spotPct))}`;
+  if (volPct === 0) return spot;
+  return `${spot} and volatility ${volPct >= 0 ? "up" : "down"} ${pct(Math.abs(volPct))}`;
+}
+const NOTE_ID = "P008";
 const fc = aiAgent.factcheck;
 const confidenceTone = aiAgent.confidence === "high" ? "good" : "neutral";
 
@@ -52,11 +60,12 @@ export default function AiAgentPage() {
       {r && (
         <Takeaway>
           Given a <strong>{usdCompact(Math.abs(ai.unexplained))}</strong> gap ({pct(Math.abs(ai.unexplainedPctOfBook), 2)} of book), the analyst didn&apos;t just
-          summarise the numbers. It ran its own stress test on the {r.positionLabel}: NVIDIA down{" "}
-          {pct(-r.spotShockPct)} and volatility up by a quarter. That took{" "}
-          <strong>{usdCompact(-r.priceDelta)}</strong> ({pct(-r.priceDeltaPct, 1)}) off the
-          note&apos;s value, showing how sharply this position reacts to large moves. It then wrote up
-          the likely cause and a recommendation for a person to review.
+          summarise the numbers. It ran its own stress test on the {r.positionLabel}:{" "}
+          {shockWords(r.underlying, r.spotShockPct, r.volShockPct, ["up", "down"])}. That{" "}
+          {r.priceDelta <= 0 ? "took" : "added"} <strong>{usdCompact(Math.abs(r.priceDelta))}</strong>{" "}
+          {`(${pct(Math.abs(r.priceDeltaPct), 1)})`} {r.priceDelta <= 0 ? "off" : "to"} the
+          position&apos;s value, showing how it reacts to a large move. It then wrote up the likely cause and a
+          recommendation for a person to review.
         </Takeaway>
       )}
 
@@ -81,15 +90,18 @@ export default function AiAgentPage() {
       <Card title="How the investigation went">
         <ol>
           <Step n={1} title="Spotted the outlier">
-            Of the day&apos;s {signedUsdCompact(ai.unexplained)} unexplained P&amp;L, the largest share
-            ({pct(Math.min(ai.topPositionShare, 100))}) sat in the {ai.topPositionLabel}. The analyst picked it
+            Of the day&apos;s {signedUsdCompact(ai.unexplained)} unexplained P&amp;L,{" "}
+            {ai.topPositionShare >= 100
+              ? `all of it sat in the ${ai.topPositionLabel} (the other positions partly offset it)`
+              : `the largest share (${pct(ai.topPositionShare)}) sat in the ${ai.topPositionLabel}`}
+            . The analyst picked it
             for a closer look.
           </Step>
           {r && (
             <Step n={2} title="Ran its own what-if test">
               <p>
-                It asked the pricing engine: what is this note worth if NVIDIA falls{" "}
-                {pct(-r.spotShockPct)} and volatility rises by a quarter?
+                It asked the pricing engine: what is this position worth with{" "}
+                {shockWords(r.underlying, r.spotShockPct, r.volShockPct, ["up", "down"])}?
               </p>
               <div className="mt-3 grid gap-3 sm:grid-cols-3">
                 <div className="rounded-xl bg-subtle px-4 py-3">
@@ -116,9 +128,10 @@ export default function AiAgentPage() {
               {aiAgent.root_cause_hypothesis}
             </blockquote>
             <p className="mt-2 text-xs text-muted">
-              An AI hypothesis for a person to check, not a conclusion. On an earlier day the team&apos;s own
-              investigation of this note&apos;s gaps found the causes in the engine&apos;s inputs and
-              model; see How the engine was improved on the Daily P&amp;L Explain page.
+              An AI hypothesis for a person to check, not a conclusion.{" "}
+              {aiAgent.top_position_id === NOTE_ID
+                ? "On earlier days the team's own investigation of this note's gaps found the causes in the engine's inputs and model; see How the engine was improved on the Daily P&L Explain page."
+                : "The team's own investigations of earlier gaps are on the Daily P&L Explain page, under How the engine was improved."}
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Badge tone={confidenceTone}>AI confidence: {aiAgent.confidence}</Badge>

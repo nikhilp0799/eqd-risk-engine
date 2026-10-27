@@ -64,10 +64,10 @@ export default function PnlExplainPage() {
         {pnl.status === "alert"
           ? `beyond the ${pct(pnl.alertPctOfBook, 2)} alert level, so it is flagged and traced to the ${pnl.topPositionLabel}.`
           : pnl.status === "inconclusive"
-            ? "within simulation noise of the alert level, so it is not flagged."
+            ? "too close to the alert level to call once simulation noise is allowed for, so it is not flagged."
             : `inside the ${pct(pnl.alertPctOfBook, 2)} alert level.`}{" "}
-        Across the stored history the average daily gap is {pct(pnl.meanGapAfterPct, 2)} of book value,
-        down from {pct(pnl.meanGapBeforePct, 2)} before the engine was improved.
+        On the 16 days measured before and after the engine was improved, the average daily gap fell
+        from {pct(pnl.meanGapBeforePct, 2)} to {pct(pnl.meanGapAfterPct, 2)} of book value.
       </Takeaway>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -106,8 +106,8 @@ export default function PnlExplainPage() {
         title="Unexplained P&L by position"
         subtitle={
           pnl.topPositionShare >= 100
-            ? `The ${pnl.topPositionLabel} is still the largest contributor; the other ${ranked.length - 1} positions together partly offset it.`
-            : `The ${pnl.topPositionLabel} is still the largest contributor; the other ${ranked.length - 1} positions together make up ${pct(100 - pnl.topPositionShare)}.`
+            ? `The ${pnl.topPositionLabel} is the largest contributor; the other ${ranked.length - 1} positions together partly offset it.`
+            : `The ${pnl.topPositionLabel} is the largest contributor; the other ${ranked.length - 1} positions together make up ${pct(100 - pnl.topPositionShare)}.`
         }
       >
         <RankedBars data={positionBars} highlight={pnl.topPositionLabel} format="usdCompact" />

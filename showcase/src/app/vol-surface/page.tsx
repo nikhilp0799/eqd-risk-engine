@@ -29,7 +29,7 @@ export default function VolSurfacePage() {
 
       <Takeaway>
         <strong>{pricing.quotes.toLocaleString("en-US")}</strong> market quotes across{" "}
-        {pricing.maturities} maturities, from next-day to one year, fitted with a median error of{" "}
+        {pricing.maturities} maturities, from {pricing.maturityRange}, fitted with a median error of{" "}
         <strong>{pricing.medianFitErrorVolPts.toFixed(1)} volatility points</strong> and no
         strike-to-strike pricing inconsistencies. Option prices computed from it agree with QuantLib,
         the industry&apos;s benchmark library, to eight decimal places.
@@ -37,7 +37,7 @@ export default function VolSurfacePage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="Market quotes used" value={pricing.quotes.toLocaleString("en-US")} />
-        <StatTile label="Maturities covered" value={String(pricing.maturities)} detail="Next day to one year" />
+        <StatTile label="Maturities covered" value={String(pricing.maturities)} detail={pricing.maturityRange} />
         <StatTile
           label="Median fit error"
           value={`${pricing.medianFitErrorVolPts.toFixed(1)} pts`}
