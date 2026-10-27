@@ -5,7 +5,7 @@ import { STATUS_LABELS, hedging, pnl, pnlExplain, pricing } from "@/lib/metrics"
 
 // Not derived from exported data: the repo's own test count at the time of the
 // last site update (`pytest --collect-only`).
-const TEST_COUNT = "1,887";
+const TEST_COUNT = "1,888";
 
 const CAPABILITIES = [
   {
@@ -141,7 +141,7 @@ export default function Home() {
         <h2 className="text-2xl font-semibold tracking-tight text-ink">Results from real runs</h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatTile
-            label="Smaller average daily P&L gap after a self-diagnosed fix"
+            label="Smaller average daily P&L gap after the engine found and fixed its own errors"
             value={pct(pnl.meanGapReduction)}
             detail={`Average daily unexplained P&L fell from ${pct(pnl.meanGapBeforePct, 2)} to ${pct(pnl.meanGapAfterPct, 2)} of book value after the engine traced the gaps to its own inputs and model.`}
           />

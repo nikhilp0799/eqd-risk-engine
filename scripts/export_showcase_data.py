@@ -33,7 +33,8 @@ CURATED = PROJECT_ROOT / "data" / "curated"
 OUT_DIR = PROJECT_ROOT / "showcase" / "src" / "data"
 
 DEEP_HEDGE_DATE = dt.date(2026, 9, 22)
-VOL_SURFACE_DATE = dt.date(2026, 9, 22)
+# Latest day with SPX's full calibrated range (2026-10-26's surface stopped at 0.15y).
+VOL_SURFACE_DATE = dt.date(2026, 10, 22)
 VOL_SURFACE_UNDERLYING = "SPX"
 # How the engine's explain was improved (follow-up section of
 # docs/incidents/2026-09-01_p008_autocallable_vega_residual.md). Fixed values: the
@@ -397,6 +398,14 @@ def _valid_residual_series(steps_all: pd.DataFrame, by_pos_all: pd.DataFrame) ->
 UNDERLYING_NAMES = {"SPX": "S&P 500", "NVDA": "NVIDIA", "AAPL": "Apple"}
 
 
+def _position_underlyings() -> dict[str, str]:
+    """Plain-language underlying name per position id (the AI page's what-if text)."""
+    config = yaml.safe_load((PROJECT_ROOT / "configs" / "portfolio.yaml").read_text())
+    return {
+        p["id"]: UNDERLYING_NAMES.get(p["underlying"], p["underlying"]) for p in config["positions"]
+    }
+
+
 def _position_labels() -> dict[str, str]:
     """Plain-language name per position id, from `configs/portfolio.yaml`."""
     config = yaml.safe_load((PROJECT_ROOT / "configs" / "portfolio.yaml").read_text())
@@ -474,6 +483,7 @@ def export_ai_agent(pnl_payload: dict[str, Any]) -> dict[str, Any]:
         "trace": trace[["round", "tool_name", "arguments", "result_summary"]].to_dict(
             orient="records"
         ),
+        "position_underlyings": _position_underlyings(),
     }
     _write("ai_agent", payload)
     return payload

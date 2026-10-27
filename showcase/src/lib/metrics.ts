@@ -6,6 +6,7 @@ import deepHedgingJson from "@/data/deep_hedging.json";
 import robustnessJson from "@/data/deep_hedging_robustness.json";
 import pnlExplainJson from "@/data/pnl_explain.json";
 import volSurfaceJson from "@/data/vol_surface.json";
+import { maturityLabel } from "@/lib/format";
 import type {
   AiAgentData,
   DeepHedgeData,
@@ -200,7 +201,9 @@ export const ai = {
   topPositionShare: aiAgent.top_position_share_pct,
   toolCalls: aiAgent.trace.length,
   reprice: reprice && {
+    positionId: reprice.position_id,
     positionLabel: pnlExplain.positions[reprice.position_id] ?? reprice.position_id,
+    underlying: aiAgent.position_underlyings[reprice.position_id] ?? "the underlying",
     spotShockPct: 100 * reprice.spot_shock_pct,
     volShockPct: 100 * reprice.vol_shock_pct,
     basePrice: reprice.base_price,
@@ -212,9 +215,11 @@ export const ai = {
 // ---- Pricing / vol surface -------------------------------------------------
 
 const rmses = volSurface.pillars.map((p) => p.rmse_vol_points).sort((a, b) => a - b);
+const pillarTs = volSurface.pillars.map((p) => p.T);
 
 export const pricing = {
   maturities: volSurface.pillars.length,
+  maturityRange: `${maturityLabel(Math.min(...pillarTs))} to ${maturityLabel(Math.max(...pillarTs))}`,
   quotes: sum(volSurface.pillars.map((p) => p.n_points)),
   butterflyViolations: sum(volSurface.pillars.map((p) => p.butterfly_violations)),
   medianFitErrorVolPts:

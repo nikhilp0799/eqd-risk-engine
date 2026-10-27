@@ -150,6 +150,7 @@ export interface AiAgentData {
   flagged_positions: AiFlaggedPosition[];
   proposed_changes: AiProposedChange[];
   trace: AiTraceEntry[];
+  position_underlyings: Record<string, string>;
 }
 
 export type RobustnessScenario = "in_sample" | "vol_up_25" | "vol_down_25" | "jumps" | "history";

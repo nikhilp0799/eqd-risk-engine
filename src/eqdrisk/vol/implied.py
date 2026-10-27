@@ -211,6 +211,21 @@ def carry_forward_quotes(
     return df
 
 
+def _latest_ok_dates_before(iv_root: Path, asof: dt.date) -> dict[str, dt.date]:
+    """Each underlying's latest stored day before `asof` with any OK quote, looking
+    back far enough to cover `STALE_FILL_MAX_TRADING_DAYS` plus holidays."""
+    if not iv_root.exists() or not any(iv_root.rglob("*.parquet")):
+        return {}
+    start = asof - dt.timedelta(days=3 * STALE_FILL_MAX_TRADING_DAYS + 7)
+    rows = store.query(
+        f"SELECT underlying, max(asof_date) AS d FROM iv WHERE reason = 'OK' "
+        f"AND asof_date < DATE '{asof.isoformat()}' AND asof_date >= DATE '{start.isoformat()}' "
+        "GROUP BY underlying",
+        views={"iv": str(iv_root)},
+    ).to_pandas()
+    return {str(u): pd.Timestamp(d).date() for u, d in rows.itertuples(index=False)}
+
+
 def observed_quotes(ivs: pd.DataFrame) -> pd.DataFrame:
     """Quotes actually observed on their `asof_date` (excludes stale-fill rows),
     for consumers that compare the model with the day's market prices."""
@@ -250,7 +265,7 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
     universe = cfg.universe.index + cfg.universe.single_names
 
     iv_root = curated_root / "implied_vols"
-    prev_date = store.latest_available_date(iv_root, asof - dt.timedelta(days=1))
+    prev_ok_dates = _latest_ok_dates_before(iv_root, asof)
 
     rates_curve = None
     curves_date = store.latest_available_date(curated_root / "curves", asof)
@@ -367,6 +382,12 @@ def run_iv_extraction(cfg: BaseConfig, asof: dt.date) -> IVExtractionResult:
         # day's quotes (SPX 2026-10-23 after a Yahoo outage: 16 of 16 expiries
         # carried; JPM on six October days). On days with any observed expiry the
         # carried share was at most 44% (October 2026, all underlyings).
+        # The source is the underlying's latest earlier day with OK quotes, not just
+        # the previous stored day: after a lost day (no OK quotes, so nothing to carry
+        # from it) the day before it still holds quotes inside the 3-trading-day limit.
+        # Reading only the previous day cost SPX its long end on 2026-10-26, the first
+        # day after the lost 2026-10-23 (14 expiries instead of about 20).
+        prev_date = prev_ok_dates.get(underlying)
         if prev_date is not None and expiries_ok_today:
             prev_ok = store.query(
                 f"SELECT * FROM iv WHERE asof_date = DATE '{prev_date.isoformat()}' "
