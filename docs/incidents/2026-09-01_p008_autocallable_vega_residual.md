@@ -1,10 +1,10 @@
 # Incident: P&L Explain Residual Breach — P008 (NVDA autocallable), 2026-08-31 -> 2026-09-01
 
-> **Correction (2026-10-14, updated 2026-10-25).** The root cause below (missing vanna and volga)
+> **Correction (2026-10-14, updated 2026-10-27).** The root cause below (missing vanna and volga)
 > was wrong. A follow-up investigation found the residual came from Monte Carlo noise in the note's
 > Greeks, unstable long-dated market inputs, local-vol smoothing noise, mistimed observation dates,
 > and weekly expiries moving the note's local-vol model; adding vanna and volga added noise rather
-> than information. On the same day pair the residual is now -$4,085 (-9.7bp of NAV, 2 SE +-5bp),
+> than information. On the same day pair the residual is now -$4,488 (-10.7bp of NAV, 2 SE +-5bp),
 > down from +$178,461. The original report is kept below
 > unchanged as the record of what was believed at the time; see
 > [Follow-up investigation](#follow-up-investigation-2026-10-05-to-2026-10-14) at the end.
@@ -216,11 +216,12 @@ This day pair (2026-08-31 -> 2026-09-01):
 | After the vanna/volga change | +$151,705 |
 | Noise-aware residual and better Greeks | -$43,927 (-104bp) |
 | Causes 1-7 fixed | -$39,201 (-94bp, 2 SE +-7bp): spot step +$3.2K, vol step -$40.9K |
-| Cause 8 fixed (current) | **-$4,085 (-9.7bp, 2 SE +-5bp)**: spot step +$2.5K, vol step -$5.1K |
+| Cause 8 fixed | -$4,085 (-9.7bp, 2 SE +-5bp): spot step +$2.5K, vol step -$5.1K |
+| SPX forwards fitted from the whole session (current) | **-$4,488 (-10.7bp, 2 SE +-5bp)**: P008 unchanged at -$4,463; the SPX options' small residuals that partly offset it moved |
 
 On the 16 day pairs explained both before and after the input and model fixes, the mean absolute
-total residual fell from 104.9bp to 10.8bp. Across all 24 stored day pairs it is 9.9bp, with a
-median day of 6.8bp; the worst is 38bp (2026-10-09), mostly an AAPL call a week from expiry. An
+total residual fell from 104.9bp to 10.9bp. Across all 26 stored day pairs it is 9.7bp, with a
+median day of 7.2bp; the worst is 38bp (2026-10-09), mostly an AAPL call a week from expiry. An
 earlier version of this report also said P008's typical daily price move fell from $54.6K to $9.4K;
 that figure was an artefact of cause 6 (a note re-struck at the money every day has little delta)
 and is withdrawn: priced correctly, the note's value moves about $38K on a typical day, as a $5M

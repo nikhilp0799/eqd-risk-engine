@@ -2,7 +2,7 @@ import datetime as dt
 
 import pandas as pd
 
-from eqdrisk.marketdata.quality import OK
+from eqdrisk.marketdata.quality import OK, STALE
 from eqdrisk.pricing.blackscholes import call_price, put_price
 from eqdrisk.vol.implied import (
     EXTREME_K,
@@ -54,6 +54,19 @@ def test_extract_slice_ivs_recovers_known_sigma():
     assert (ok["total_variance"] > 0).all()
     assert (ok["vega"] > 0).all()
     assert (ok["weight"] > 0).all()
+
+
+def test_vol_stage_keeps_the_30_minute_staleness_window():
+    # The index forward fit counts any trade in the session; the vol stage does not
+    # (planning/spx_long_end_forwards_plan.md, decision 3).
+    strikes = [80, 85, 90, 95, 100.01, 105, 110, 115, 120]
+    chain = _slice_df(strikes)
+    chain.loc[0, "last_trade_ts"] = FRESH - pd.Timedelta(hours=2)
+    df = extract_slice_ivs(
+        chain, spot=FORWARD, forward=FORWARD, discount_factor=DISCOUNT_FACTOR, T=T
+    )
+    assert df.loc[0, "reason"] == STALE
+    assert (df.loc[1:, "reason"] == OK).all()
 
 
 def test_itm_side_excluded():

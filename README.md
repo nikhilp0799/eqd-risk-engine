@@ -49,6 +49,11 @@ not tuned-to-look-clean ones:
   that could zero out all quote coverage depending on time of day (Step 4), and a documented
   "exact" stress-shock math claim that turned out to be off by up to ~40% once actually tested
   (Step 11).
+- A quote filter built for live intraday data (last trade within 30 minutes) was silently cutting
+  the SPX surface short: long-dated index options rarely trade in the last half hour, so the
+  longest reliable SPX forward had a median of 0.48y and two SPX positions expiring in 0.64y were
+  priced on extrapolated vol. Counting any trade in the session took it to 2.3y on every stored
+  day (1.18y at worst) and cut those positions' unexplained P&L by about 90% (Step 2).
 - The project's first real day-over-day P&L explain run found a $178k unexplained residual, almost
   all in one position (P008, an NVDA autocallable). The first diagnosis, a vega-only Greek set
   missing vanna and volga, turned out to be wrong once six weeks of history allowed testing it:
@@ -58,8 +63,8 @@ not tuned-to-look-clean ones:
   simulated up to 5.5 days off, weekly options moving the note's local-vol model). Each cause was
   measured and fixed and the whole history rebuilt from stored option chains: once the noise was
   handled, the input and model fixes cut the mean absolute residual on the 16 comparable day pairs
-  from 105bp to 11bp of NAV, and the incident day itself went from +$178k to -$4k (-9.7bp, within
-  about two standard errors of the 5bp threshold). The incident report keeps
+  from 105bp to 11bp of NAV, and the incident day itself went from +$178k to -$4.5k (-10.7bp, about
+  two standard errors from the 5bp threshold). The incident report keeps
   the original diagnosis as the record and adds the correction:
   `docs/incidents/2026-09-01_p008_autocallable_vega_residual.md`.
 - The book now has a real position lifecycle (2026-10-20): an AAPL call that expired on 2026-10-16
@@ -446,6 +451,11 @@ Define one canonical snap time in config (`16:00:00 ET`), pull every input as cl
 ## Step 2 — Curves, forwards, implied dividends
 
 **Status: done, verified live** (refined further by Step 3's root-cause fix below). Curve bootstrap + put-call-parity forward regression + implied dividend, live on all 5 underlyings.
+
+Since 2026-10-27 the SPX forward fit counts a quote if its contract traded at any point in the
+session, not only in the last 30 minutes: under the old rule the longest reliable SPX forward had a
+median of 0.48y over 33 stored days (0.12y at worst); now 2.3y (1.18y at worst), with no added
+scatter in the fitted carry. The vol stage and the single names keep the 30-minute rule.
 
 ### 2.1 Discount curve
 
@@ -967,8 +977,11 @@ vol waterfall from two real `MarketState`s; verified on the first real consecuti
 the automated pipeline produced (2026-08-31 -> 2026-09-01), where it found a genuine $178k
 residual, almost all in one position — see Step 13. Since 2026-10 every residual carries a Monte
 Carlo standard error (16 independently scrambled sub-runs) and alerts only when it exceeds the 5bp
-threshold by more than its noise (otherwise INCONCLUSIVE). Current state over 24 real day pairs:
-mean absolute residual 9.9bp of NAV (median day 6.8bp, worst 38bp). The spot step uses
+threshold by more than its noise (otherwise INCONCLUSIVE). Current state over 26 real day pairs:
+mean absolute residual 9.7bp of NAV (median day 7.2bp, worst 38bp). Since the SPX forward fix
+(2026-10-27) the SPX options' residuals no longer offset the autocallable's on some days, so the
+net book figure moved little (9.2 to 9.7bp on the same 26 pairs) while the sum of each position's
+absolute residual fell from 16.2 to 13.9bp (7.1 to 4.8bp without the autocallable). The spot step uses
 sticky-moneyness Greeks, matching how the explain moves the market; a revaluation ladder was
 measured as the alternative and rejected. Vega by maturity bucket plus a skew sensitivity was also
 measured and rejected (no gain); the large vol-step days turned out to be weekly expiries moving
@@ -1025,7 +1038,7 @@ vol and carry, local-vol smoothing re-chosen at every grid point every day, obse
 simulated up to 5.5 days off, barriers measured against each day's spot instead of the note's
 initial fixing, Greeks that held vol fixed by strike while the explain moved it with moneyness,
 and weekly expiries whose fitting noise moved the note's local-vol model. All fixed and measured on
-the rebuilt history; the incident day's residual went from +$178k to -$4k (-9.7bp). The report
+the rebuilt history; the incident day's residual went from +$178k to -$4.5k (-10.7bp). The report
 keeps the original text as the record.
 
 Take the worst residual day from Step 12 and write it up as a production incident, in the format a bank actually uses.
@@ -1307,7 +1320,11 @@ warning. The result (status, numbers checked, unsupported list, whether a retry 
 quantity a number is attached to (the same answer calls a residual the "actual P&L" and passes).
 A second full rerun on 2026-10-20 (after the position-lifecycle rebuild, 22 days): 1 retry, 0
 flagged; a third on 2026-10-25 (after the local-vol rebuild, 24 days): 19 verified, 4 flagged
-after the retry. The error rate varies from run to run, which is why the check runs on every
+after the retry; a fourth on 2026-10-27 (after the SPX forward rebuild, 26 days): 25 verified
+(5 of them after the retry), 1 flagged. That run also showed leftover rows: a rerun that flagged
+nothing, proposed nothing or made no tool call left the earlier run's rows for that day in place
+(the site featured a proposed change about a problem already fixed). Each run now clears its day's
+rows in those three tables first. The error rate varies from run to run, which is why the check runs on every
 answer. That third run also found a gap: on 2026-10-02 the model wrote arithmetic inside its JSON
 (`23231.16 - 548.97`), parsing failed, and the answer went unchecked. Invalid JSON now uses the
 same single retry; an answer still not valid JSON is checked on its raw text and marked

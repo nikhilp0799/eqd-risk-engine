@@ -96,6 +96,15 @@ strikes with both legs clean for a fit takes its forward from that day's forward
 `implied_vols.forward_source = "curve"`). Beyond the last reliable expiry the forward curve
 continues at the carry measured over its last 0.25y, not flat.
 
+For SPX the forward fit counts a quote if its contract traded at any point in that day's session;
+the vol stage, and the single names' fits, keep the 30-minute last-trade rule. Long-dated index
+options rarely trade in the last half hour, and the fit needs the call and the put at the same
+strike, so under the 30-minute rule the longest reliable SPX forward had a median of 0.48y across
+33 stored days (0.12y on the worst day), and the surface's long end existed only through stale
+fill. With the session rule it is 2.3y (1.18y worst), with no added scatter in the fitted carry.
+Contracts with no trade that day stay excluded: every junk quote found (for example a call last
+traded months earlier, $337 away from parity on a $4.80 spread) was on such a contract.
+
 **Consequence for downstream steps:** because the forward is a jointly-fitted regression output,
 not a closed-form function of $(S_0, r, q)$, it cannot be decomposed *after the fact* into a rate
 piece, a dividend piece, and a spot piece. This directly shapes the P&L explain waterfall (3.5) and
@@ -231,7 +240,9 @@ note's initial fixing (Section 2, position lifecycle), (7) Greeks that held vol 
 while the explain moved it with moneyness (Section 3.5), and (8) weekly expiries whose fitting
 noise moved the note's local-vol model (Section 3.3). Each was measured and fixed (follow-up section
 of the incident report). On the 16 comparable day pairs the mean absolute residual fell from 105bp
-to 11bp of NAV; over all 24 stored pairs it is 9.9bp (median 6.8bp, worst 38bp).
+to 11bp of NAV; over all 26 stored pairs it is 9.7bp (median 7.2bp, worst 38bp). Fitting SPX
+forwards from any trade in the session (Section 3.1) then removed the SPX options' artificial
+residuals: P003 and P007 fell from $758 and $334 to $87 and $39 a day on average.
 
 What remains: the explain's vol step is still one vega times the ATM move at the position's
 exposure dates. A parallel vol ladder, and vega by maturity bucket plus a skew sensitivity, were
@@ -253,7 +264,8 @@ at half weight, for up to 3 trading days, but only on a day the underlying has o
 its own: a day with none (a failed or after-hours snapshot) gets no surface rather than one rebuilt
 from the previous day. All three are flagged in the stored data
 (`implied_vols.forward_source`, `implied_vols.carried_from`, `vol_surface.n_carried`) and should be
-revisited if the universe changes.
+revisited if the universe changes. The SPX forward fit's "traded during the session" window is the
+same kind of choice: a 3-trading-day window reached further (3.2y) with slightly more scatter.
 
 **The hypothetical-stress vol-shock model is a documented approximation, not an exact
 recalibration.** Applying a parallel vol shock to an already-built local-vol grid via $\sigma_{loc}
@@ -463,7 +475,7 @@ than loosened to hide the platform difference.
 
 | Risk | Materiality | Mitigant / current state |
 |---|---|---|
-| P&L-explain residual | **Medium** — 9.9bp of NAV mean absolute residual over 24 real day pairs (median 6.8bp, worst 38bp), still above the 5bp threshold on average | Eight input and model causes found and fixed (Section 4); bucketed vega and skew measured and rejected; largest remaining day (a near-expiry AAPL call) not yet investigated |
+| P&L-explain residual | **Medium** — 9.7bp of NAV mean absolute residual over 26 real day pairs (median 7.2bp, worst 38bp), still above the 5bp threshold on average | Eight input and model causes found and fixed (Section 4), plus the SPX long-end forwards; bucketed vega and skew measured and rejected; largest remaining day (a near-expiry AAPL call) not yet investigated |
 | Vol-shock stress approximation error | **Medium**, grows with shock size (~7-40% measured) | Documented and bounded; not eliminated; matters most for the largest stress-ladder shocks |
 | Residual monitoring alerts are logged, not paged | **Low** — daily alerts are visible in the log and dashboard but nobody is notified | Automated 5bp check with a noise band since 2026-09-10 / 2026-10; paging not built |
 | Two single names (JPM, XLE) have no real coverage | **Low** for this book (no positions assigned there), but blocks any future position in those names | Not currently mitigated; Step 8.3 (proxy modelling) would address this if built |

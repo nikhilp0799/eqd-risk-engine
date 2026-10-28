@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import shutil
 from pathlib import Path
 
 import duckdb
@@ -26,6 +27,17 @@ def write_partitioned(table: pa.Table, base_path: str | Path, partition_cols: li
         partitioning=partitioning,
         existing_data_behavior="delete_matching",
     )
+
+
+def remove_partition(base_path: str | Path, partition: dict[str, object]) -> None:
+    """Delete one hive partition (e.g. {"asof_date": day}) if it exists.
+
+    For tables whose rows for a key can legitimately be empty on a rerun: writing
+    nothing would leave the previous run's rows in place.
+    """
+    path = Path(base_path).joinpath(*(f"{k}={v}" for k, v in partition.items()))
+    if path.exists():
+        shutil.rmtree(path)
 
 
 def query(sql: str, views: dict[str, str] | None = None) -> pa.Table:

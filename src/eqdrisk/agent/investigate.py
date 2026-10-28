@@ -471,6 +471,11 @@ def _persist(investigation: AIInvestigationResult, curated_root: Path) -> None:
     )
     store.write_partitioned(table, curated_root / "ai_investigations", ["asof_date"])
 
+    # A rerun can legitimately produce no flagged positions, changes or tool calls;
+    # clear the day's old rows first so they don't outlive the run that wrote them.
+    for child in ("ai_flagged_positions", "ai_proposed_changes", "ai_investigation_trace"):
+        store.remove_partition(curated_root / child, {"asof_date": investigation.day1})
+
     if investigation.flagged_positions:
         flagged_df = pd.DataFrame(
             [

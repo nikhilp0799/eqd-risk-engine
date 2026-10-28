@@ -34,7 +34,11 @@ from eqdrisk.io.schemas import (
 from eqdrisk.marketdata import quality
 from eqdrisk.marketdata.calendar import year_fraction
 from eqdrisk.marketdata.curve import TENOR_YEARS, bootstrap_curve
-from eqdrisk.marketdata.quality import classify_quotes, staleness_reference_ts
+from eqdrisk.marketdata.quality import (
+    classify_quotes,
+    session_stale_minutes,
+    staleness_reference_ts,
+)
 
 MIN_STRIKES = 6
 MONEYNESS_BAND = 0.3  # tighter than the old 0.5 — forward extraction wants near-the-money strikes
@@ -187,6 +191,7 @@ def fit_forward(
     T: float,
     reference_ts: pd.Timestamp | None = None,
     curve_discount_factor: float | None = None,
+    stale_minutes: int = quality.DEFAULT_STALE_MINUTES,
 ) -> ForwardFitResult | None:
     """Fit one (underlying, expiry) slice. Returns None if too few clean matched strikes
     or the fit is economically nonsensical (non-positive implied discount factor).
@@ -199,8 +204,12 @@ def fit_forward(
     LOW_OI, WIDE_SPREAD) before matching call/put pairs, rather than fitting against
     the raw chain and hoping the regression averages out the noise. This was found to
     matter a lot on real data: some far-wing quotes are literally years stale.
+    `stale_minutes` widens the STALE window (the index fit passes the whole
+    session, `quality.session_stale_minutes`).
     """
-    tagged = classify_quotes(chain_expiry, spot, reference_ts=reference_ts)
+    tagged = classify_quotes(
+        chain_expiry, spot, stale_minutes=stale_minutes, reference_ts=reference_ts
+    )
     pairs = _matched_pairs(tagged[tagged["reason"] == quality.OK], spot)
     if len(pairs) < MIN_STRIKES:
         return None
@@ -340,6 +349,17 @@ def run_forward_construction(cfg: BaseConfig, asof: dt.date) -> ForwardConstruct
         # maturity, so fix it at the curve's and fit only the forward.
         use_curve_df = underlying in cfg.universe.single_names
 
+        # Index options: a leg counts if its contract traded at any point in the
+        # session, not just the last 30 minutes. Measured on all SPX history
+        # (2026-10-27): the longest reliable forward went from a median 0.48y
+        # (minimum 0.12y) to 2.29y (minimum 1.18y), with no added noise in the
+        # fitted carry (planning/spx_long_end_forwards_plan.md).
+        stale_minutes = (
+            session_stale_minutes(reference_ts, cfg.canonical_snap_time, cfg.calendar)
+            if underlying in cfg.universe.index
+            else quality.DEFAULT_STALE_MINUTES
+        )
+
         for expiry, chain_expiry in chain.groupby("expiry"):
             expiry_date = pd.Timestamp(expiry).date()
             T = year_fraction(asof, expiry_date, cfg.daycount)
@@ -354,6 +374,7 @@ def run_forward_construction(cfg: BaseConfig, asof: dt.date) -> ForwardConstruct
                 T,
                 reference_ts,
                 curve_discount_factor=df_curve if use_curve_df else None,
+                stale_minutes=stale_minutes,
             )
             if fit is None:
                 continue
