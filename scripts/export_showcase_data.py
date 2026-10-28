@@ -33,8 +33,8 @@ CURATED = PROJECT_ROOT / "data" / "curated"
 OUT_DIR = PROJECT_ROOT / "showcase" / "src" / "data"
 
 DEEP_HEDGE_DATE = dt.date(2026, 9, 22)
-# Latest day with SPX's full calibrated range (2026-10-26's surface stopped at 0.15y).
-VOL_SURFACE_DATE = dt.date(2026, 10, 22)
+# Latest stored day (SPX keeps its long end daily since the 2026-10-27 forward fix: 2.1y here).
+VOL_SURFACE_DATE = dt.date(2026, 10, 27)
 VOL_SURFACE_UNDERLYING = "SPX"
 # How the engine's explain was improved (follow-up section of
 # docs/incidents/2026-09-01_p008_autocallable_vega_residual.md). Fixed values: the
@@ -44,9 +44,9 @@ VOL_SURFACE_UNDERLYING = "SPX"
 # incident.
 IMPROVEMENT = {
     "mean_abs_bp_before": 104.9,
-    "mean_abs_bp_after": 10.8,
+    "mean_abs_bp_after": 10.9,
     "worst_bp_before": 299.4,
-    "worst_bp_after": 38.0,
+    "worst_bp_after": 38.2,
     "findings": [
         {
             "title": "Noisy risk numbers",
@@ -88,6 +88,13 @@ IMPROVEMENT = {
             "their daily swings moved the note's model value by $30-50K on quiet days. The note "
             "is now simulated from options at least a month out, which cut its daily gap by "
             "more than half.",
+        },
+        {
+            "title": "Index options discarded for not trading late",
+            "body": "A quote filter kept only options that traded in the last half hour, and "
+            "long-dated S&P 500 options rarely do, so the index's long end vanished most days "
+            "and two positions were valued on guessed volatility. Any trade in the day now "
+            "counts, which cut those positions' daily gap by about 90%.",
         },
     ],
 }

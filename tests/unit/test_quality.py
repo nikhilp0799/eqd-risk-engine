@@ -12,6 +12,7 @@ from eqdrisk.marketdata.quality import (
     ZERO_BID,
     classify_quotes,
     rejection_counts,
+    session_stale_minutes,
     staleness_reference_ts,
     wide_spread_threshold,
 )
@@ -126,3 +127,34 @@ def test_staleness_reference_on_a_non_trading_day_falls_back_to_prior_trading_da
     capture = pd.Timestamp("2026-08-22 10:00:00", tz="America/New_York")
     ref = staleness_reference_ts(capture, weekend_day, CANONICAL_CLOSE_TIME)
     assert ref == pd.Timestamp("2026-08-21 16:00:00", tz="America/New_York")
+
+
+def test_session_stale_minutes_spans_back_to_the_prior_trading_day_close():
+    close = pd.Timestamp("2026-08-21 16:00:00", tz="America/New_York")  # Friday
+    assert session_stale_minutes(close, CANONICAL_CLOSE_TIME) == 24 * 60
+    monday_close = pd.Timestamp("2026-08-24 16:00:00", tz="America/New_York")
+    assert session_stale_minutes(monday_close, CANONICAL_CLOSE_TIME) == 3 * 24 * 60
+    # Saturday after "close": the latest session is Friday's, which began at
+    # Thursday's close, not just the late prints after Friday's close.
+    saturday = pd.Timestamp("2026-08-22 16:00:00", tz="America/New_York")
+    assert session_stale_minutes(saturday, CANONICAL_CLOSE_TIME) == 2 * 24 * 60
+
+
+def test_session_window_keeps_trades_from_the_session_and_drops_older_ones():
+    ref = pd.Timestamp("2026-08-21 16:00:00", tz="America/New_York")
+    window = session_stale_minutes(ref, CANONICAL_CLOSE_TIME)
+    chain = pd.DataFrame(
+        [
+            _row(
+                asof_ts=ref, last_trade_ts=pd.Timestamp("2026-08-21 10:15", tz="America/New_York")
+            ),
+            _row(
+                asof_ts=ref, last_trade_ts=pd.Timestamp("2026-08-20 15:45", tz="America/New_York")
+            ),
+        ]
+    )
+    tagged = classify_quotes(chain, spot=100.0, stale_minutes=window, reference_ts=ref)
+    assert list(tagged["reason"]) == [OK, STALE]
+    # The default 30-minute window rejects both.
+    default = classify_quotes(chain, spot=100.0, reference_ts=ref)
+    assert list(default["reason"]) == [STALE, STALE]

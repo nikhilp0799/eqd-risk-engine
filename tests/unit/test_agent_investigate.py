@@ -357,6 +357,34 @@ def test_run_daily_investigation_persists_proposed_changes(tmp_path):
     assert changes_df.iloc[0]["parameter"] == "RESIDUAL_ALERT_THRESHOLD_BP"
 
 
+def test_rerun_without_proposed_changes_clears_the_days_old_rows(tmp_path):
+    cfg = _cfg(tmp_path)
+    result = _pnl_result()
+    with_change = (
+        '{"summary": "s", "root_cause_hypothesis": "r", "confidence": "low", '
+        '"flagged_positions": [{"position_id": "P1", "reason": "big"}], '
+        '"proposed_changes": [{"parameter": "X", "current_value": "1", '
+        '"suggested_value": "2", "rationale": "r"}]}'
+    )
+    without = (
+        '{"summary": "s", "root_cause_hypothesis": "r", "confidence": "low", '
+        '"flagged_positions": [], "proposed_changes": []}'
+    )
+    for response in (with_change, without):
+        with (
+            patch("eqdrisk.agent.ollama_client.is_available", return_value=True),
+            patch(
+                "eqdrisk.agent.investigate.ollama_client.chat",
+                return_value=_final_message(response),
+            ),
+        ):
+            run_daily_investigation(cfg, result, PORTFOLIO_PATH, project_root=tmp_path)
+
+    for child in ("ai_proposed_changes", "ai_flagged_positions"):
+        root = tmp_path / child
+        assert not root.exists() or not any(root.rglob("*.parquet"))
+
+
 def test_run_daily_investigation_persists_and_renders_tool_call_trace(tmp_path):
     cfg = _cfg(tmp_path)
     result = _pnl_result()

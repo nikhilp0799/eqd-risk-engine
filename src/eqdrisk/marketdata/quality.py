@@ -126,3 +126,23 @@ def staleness_reference_ts(
         return pd.Timestamp.combine(prior_day, canonical_snap_time).tz_localize(NY_TZ)
 
     return capture_ts
+
+
+def session_stale_minutes(
+    reference_ts: pd.Timestamp, canonical_snap_time: dt.time, calendar: str = "NYSE"
+) -> int:
+    """A `stale_minutes` window for `classify_quotes` that keeps exactly the quotes
+    whose contract traded during the latest session at or before `reference_ts`:
+    anything since the close of the trading day before it. On a non-trading day
+    that is the previous session, not the hours since the previous close, which
+    would hold only that close's late prints.
+
+    Used by the index forward fit (planning/spx_long_end_forwards_plan.md):
+    long-dated SPX options rarely trade in the last 30 minutes, so the default
+    window left too few call-put pairs beyond a few months, while every junk
+    quote found was on a contract that had not traded for days.
+    """
+    session_day = last_n_trading_days(reference_ts.tz_convert(NY_TZ).date(), 1, calendar)[0]
+    prior_day = last_n_trading_days(session_day - dt.timedelta(days=1), 1, calendar)[0]
+    prior_close = pd.Timestamp.combine(prior_day, canonical_snap_time).tz_localize(NY_TZ)
+    return int((reference_ts - prior_close).total_seconds() // 60)

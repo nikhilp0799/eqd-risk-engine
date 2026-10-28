@@ -50,7 +50,8 @@ export function maturityLabel(T: number): string {
   if (days < 14) return `${days} day${days === 1 ? "" : "s"}`;
   if (days < 60) return `${Math.round(days / 7)} weeks`;
   if (days < 330) return `${Math.round(days / 30)} months`;
-  return `${Math.round(days / 365)} year`;
+  const years = Math.round(days / 365);
+  return `${years} year${years === 1 ? "" : "s"}`;
 }
 
 // Chart components are client components, and a server page can't hand them a

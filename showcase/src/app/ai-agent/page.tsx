@@ -159,7 +159,20 @@ export default function AiAgentPage() {
               </p>
             )}
           </Step>
-          <Step n={4} title="Recommended a change, for a person to decide">
+          <Step
+            n={4}
+            title={
+              aiAgent.proposed_changes.length
+                ? "Recommended a change, for a person to decide"
+                : "Proposed no change"
+            }
+          >
+            {aiAgent.proposed_changes.length === 0 && (
+              <p>
+                The analyst did not suggest changing any model setting for this day. Any change it
+                does suggest goes to a person to decide.
+              </p>
+            )}
             {aiAgent.proposed_changes.map((c) => (
               <div key={c.parameter} className="rounded-xl border border-border px-4 py-3">
                 <p className="font-medium capitalize text-ink">{c.parameter}</p>
@@ -169,9 +182,11 @@ export default function AiAgentPage() {
                 <p className="mt-1 text-muted">{c.rationale}</p>
               </div>
             ))}
-            <div className="mt-2">
-              <Badge>Sent for review, not applied</Badge>
-            </div>
+            {aiAgent.proposed_changes.length > 0 && (
+              <div className="mt-2">
+                <Badge>Sent for review, not applied</Badge>
+              </div>
+            )}
           </Step>
         </ol>
       </Card>

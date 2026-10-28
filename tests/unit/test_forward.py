@@ -213,11 +213,15 @@ def test_announced_dividend_yield_sums_trailing_12mo(tmp_path):
     assert q == pytest.approx((0.26 + 0.26 + 0.26 + 0.27) / 200.0)
 
 
-def _write_synthetic_curated_store(root, asof, expiry):
+def _write_synthetic_curated_store(root, asof, expiry, last_trade_ts=None):
     strikes = [90.0, 92.0, 94.0, 96.0, 98.0, 100.0, 102.0, 104.0, 106.0, 108.0, 110.0]
     asof_ts = pd.Timestamp(asof, tz="America/New_York").replace(hour=16)
     parity = _synthetic_parity_chain(
-        forward=101.5, discount_factor=0.98, strikes=strikes, asof_ts=asof_ts, last_trade_ts=asof_ts
+        forward=101.5,
+        discount_factor=0.98,
+        strikes=strikes,
+        asof_ts=asof_ts,
+        last_trade_ts=asof_ts if last_trade_ts is None else last_trade_ts,
     )
     n = len(parity)
     chain_df = pd.DataFrame(
@@ -320,6 +324,49 @@ def test_run_forward_construction_uses_curve_df_for_single_names(tmp_path):
     assert bool(row["reliable"])
     # Forward recovered within the small fan-out a curve-vs-chain DF gap causes.
     assert row["forward"] == pytest.approx(101.5, rel=1e-3)
+
+
+def _test_config(tmp_path, asof, index, single_names):
+    from eqdrisk.config import BaseConfig, Paths, Universe
+
+    return BaseConfig(
+        run_date=asof,
+        universe=Universe(index=index, single_names=single_names),
+        paths=Paths(raw=str(tmp_path / "raw"), curated=str(tmp_path)),
+        calendar="NYSE",
+        daycount="ACT/365F",
+    )
+
+
+def test_index_forward_counts_legs_that_traded_earlier_in_the_session(tmp_path):
+    asof = dt.date(2026, 8, 20)
+    morning = pd.Timestamp("2026-08-20 11:00", tz="America/New_York")
+    _write_synthetic_curated_store(tmp_path, asof, dt.date(2027, 2, 20), last_trade_ts=morning)
+
+    result = run_forward_construction(_test_config(tmp_path, asof, ["TEST"], []), asof)
+
+    assert len(result.fits) == 1
+    assert result.fits[0].forward == pytest.approx(101.5, abs=1e-6)
+
+
+def test_index_forward_still_excludes_legs_not_traded_today(tmp_path):
+    asof = dt.date(2026, 8, 20)
+    yesterday = pd.Timestamp("2026-08-19 15:30", tz="America/New_York")
+    _write_synthetic_curated_store(tmp_path, asof, dt.date(2027, 2, 20), last_trade_ts=yesterday)
+
+    result = run_forward_construction(_test_config(tmp_path, asof, ["TEST"], []), asof)
+
+    assert result.fits == []
+
+
+def test_single_name_forward_keeps_the_30_minute_window(tmp_path):
+    asof = dt.date(2026, 8, 20)
+    morning = pd.Timestamp("2026-08-20 11:00", tz="America/New_York")
+    _write_synthetic_curated_store(tmp_path, asof, dt.date(2027, 2, 20), last_trade_ts=morning)
+
+    result = run_forward_construction(_test_config(tmp_path, asof, [], ["TEST"]), asof)
+
+    assert result.fits == []
 
 
 def test_forward_curve_continues_carry_beyond_last_pillar():
