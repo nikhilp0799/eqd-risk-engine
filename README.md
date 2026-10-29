@@ -74,6 +74,12 @@ not tuned-to-look-clean ones:
   Building it exposed a bigger bug: the autocallable's barriers were measured against each day's
   spot, re-issuing the note at the money every day; against its real initial fixing its NVDA delta
   is about 13,400 shares, not about 2,700. See `portfolio/lifecycle.py`.
+- The worst remaining P&L-explain day (2026-10-09, 38bp) was a short AAPL call 34% in the money a
+  week from expiry, valued at 426% vol (2026-10-29). AAPL weeklies are quoted only near the money,
+  and a fitted SVI wing shot upward past the last quote. Wings whose kink lies outside the quotes
+  or that break Lee's moment bound now continue in a straight line past the last quote, and every
+  pricing use reads slices through that one rule. Out of sample it beat the raw wing (mean error
+  4.0 vs 7.0 vol points on 2,887 slices); the call's summed residual fell from $37.6K to $2.0K.
 - Building the dashboard (Step 14) surfaced a real gap: two stress-testing modules (Step 11) and
   P&L explain's per-position breakdown had never persisted their results to disk, only rendered
   them in-memory via the CLI — which would have meant either violating the dashboard's own "no
@@ -977,8 +983,8 @@ vol waterfall from two real `MarketState`s; verified on the first real consecuti
 the automated pipeline produced (2026-08-31 -> 2026-09-01), where it found a genuine $178k
 residual, almost all in one position — see Step 13. Since 2026-10 every residual carries a Monte
 Carlo standard error (16 independently scrambled sub-runs) and alerts only when it exceeds the 5bp
-threshold by more than its noise (otherwise INCONCLUSIVE). Current state over 26 real day pairs:
-mean absolute residual 9.7bp of NAV (median day 7.2bp, worst 38bp). Since the SPX forward fix
+threshold by more than its noise (otherwise INCONCLUSIVE). Current state over 27 real day pairs:
+mean absolute residual 8.9bp of NAV (median day 6.8bp, worst 25bp). Since the SPX forward fix
 (2026-10-27) the SPX options' residuals no longer offset the autocallable's on some days, so the
 net book figure moved little (9.2 to 9.7bp on the same 26 pairs) while the sum of each position's
 absolute residual fell from 16.2 to 13.9bp (7.1 to 4.8bp without the autocallable). The spot step uses
@@ -986,8 +992,15 @@ sticky-moneyness Greeks, matching how the explain moves the market; a revaluatio
 measured as the alternative and rejected. Vega by maturity bucket plus a skew sensitivity was also
 measured and rejected (no gain); the large vol-step days turned out to be weekly expiries moving
 the local-vol model, fixed by building the exotics' grid from expiries at least a month out. The
-largest remaining day (2026-10-09, 38bp) is mostly an AAPL call a week from expiry, in the vol
-step; not yet investigated. The 60+ day acceptance bar (median residual < 2bp) is
+previous worst day (2026-10-09, 38bp) was a short AAPL call a week from expiry valued at 426% vol:
+AAPL weeklies are quoted only near the money, and the fitted SVI wing shot upward past the last
+quote. Fitted wings that put their kink outside the quotes or break Lee's moment bound now
+continue in a straight line past the last quote (2026-10-29); that day fell to 4.2bp, the call's
+summed absolute residual from $37.6K to $2.0K, and the sum of each position's absolute residual
+from 13.7 to 10.5bp (4.9 to 1.8bp without the autocallable). The net book figure moved less
+(9.3 to 8.9bp on the same 27 pairs) because the call's errors had been offsetting the
+autocallable's on some days. The largest remaining day (2026-09-28, 25bp) is almost all the
+autocallable. The 60+ day acceptance bar (median residual < 2bp) is
 still pending real history and is not met for the Monte Carlo exotics.
 
 **This is the module that makes the project read as risk rather than pricing.**
@@ -1321,7 +1334,10 @@ quantity a number is attached to (the same answer calls a residual the "actual P
 A second full rerun on 2026-10-20 (after the position-lifecycle rebuild, 22 days): 1 retry, 0
 flagged; a third on 2026-10-25 (after the local-vol rebuild, 24 days): 19 verified, 4 flagged
 after the retry; a fourth on 2026-10-27 (after the SPX forward rebuild, 26 days): 25 verified
-(5 of them after the retry), 1 flagged. That run also showed leftover rows: a rerun that flagged
+(5 of them after the retry), 1 flagged; a fifth on 2026-10-29 (after the SVI wing rebuild, 27
+days): 27 verified (1 after the retry). Passing is not the same as right: on 2026-10-26 the
+answer calls a what-if reprice's -$548K the position's actual price change, which the check
+cannot catch. That run also showed leftover rows: a rerun that flagged
 nothing, proposed nothing or made no tool call left the earlier run's rows for that day in place
 (the site featured a proposed change about a problem already fixed). Each run now clears its day's
 rows in those three tables first. The error rate varies from run to run, which is why the check runs on every

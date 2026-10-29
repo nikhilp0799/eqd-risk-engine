@@ -81,6 +81,8 @@ def _write_surface_and_iv(tmp_path, params: SVIParams):
             "butterfly_violations": [0],
             "calendar_violated": [False],
             "n_carried": [0],
+            "k_min": [None],
+            "k_max": [None],
         }
     )
     surface_table = validate(surface_df, VOL_SURFACE_SCHEMA, VOL_SURFACE_REQUIRED_NOT_NULL)

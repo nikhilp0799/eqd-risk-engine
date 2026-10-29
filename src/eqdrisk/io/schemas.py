@@ -178,6 +178,10 @@ VOL_SURFACE_SCHEMA = pa.schema(
         ("calendar_violated", pa.bool_()),
         # Of n_points, how many were carried from an earlier day (stale fill).
         ("n_carried", pa.int64()),
+        # Log-moneyness range of the quotes the slice was fitted to; beyond it an
+        # ill-behaved SVI wing is replaced by a straight line (local_vol._slice_w_dk_dkk).
+        ("k_min", pa.float64()),
+        ("k_max", pa.float64()),
     ]
 )
 VOL_SURFACE_REQUIRED_NOT_NULL = [

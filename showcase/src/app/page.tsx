@@ -5,7 +5,7 @@ import { STATUS_LABELS, hedging, pnl, pnlExplain, pricing } from "@/lib/metrics"
 
 // Not derived from exported data: the repo's own test count at the time of the
 // last site update (`pytest --collect-only`).
-const TEST_COUNT = "1,895";
+const TEST_COUNT = "1,901";
 
 const CAPABILITIES = [
   {
@@ -89,7 +89,7 @@ function LatestCheck() {
         </div>
       </dl>
       <div className="mt-4 rounded-xl bg-subtle px-4 py-3 text-sm">
-        <p className="text-ink-2">Largest contributor</p>
+        <p className="text-ink-2">Largest source of the gap</p>
         <p className="mt-0.5 font-medium text-ink">{pnl.topPositionLabel}</p>
       </div>
       <Link

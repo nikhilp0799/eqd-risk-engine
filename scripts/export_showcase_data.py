@@ -25,16 +25,15 @@ import yaml
 
 from eqdrisk.io import store
 from eqdrisk.pricing.pnl_explain import RESIDUAL_ALERT_THRESHOLD_BP
-from eqdrisk.vol.ssvi import SSVIParams
-from eqdrisk.vol.svi import SVIParams
+from eqdrisk.vol.local_vol import slice_total_variance
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CURATED = PROJECT_ROOT / "data" / "curated"
 OUT_DIR = PROJECT_ROOT / "showcase" / "src" / "data"
 
 DEEP_HEDGE_DATE = dt.date(2026, 9, 22)
-# Latest stored day (SPX keeps its long end daily since the 2026-10-27 forward fix: 2.1y here).
-VOL_SURFACE_DATE = dt.date(2026, 10, 27)
+# Latest stored day (SPX keeps its long end daily since the 2026-10-27 forward fix).
+VOL_SURFACE_DATE = dt.date(2026, 10, 28)
 VOL_SURFACE_UNDERLYING = "SPX"
 # How the engine's explain was improved (follow-up section of
 # docs/incidents/2026-09-01_p008_autocallable_vega_residual.md). Fixed values: the
@@ -44,9 +43,9 @@ VOL_SURFACE_UNDERLYING = "SPX"
 # incident.
 IMPROVEMENT = {
     "mean_abs_bp_before": 104.9,
-    "mean_abs_bp_after": 10.9,
+    "mean_abs_bp_after": 9.5,
     "worst_bp_before": 299.4,
-    "worst_bp_after": 38.2,
+    "worst_bp_after": 24.9,
     "findings": [
         {
             "title": "Noisy risk numbers",
@@ -96,6 +95,13 @@ IMPROVEMENT = {
             "and two positions were valued on guessed volatility. Any trade in the day now "
             "counts, which cut those positions' daily gap by about 90%.",
         },
+        {
+            "title": "Volatility guessed far beyond the quotes",
+            "body": "Apple's weekly options are quoted only near the stock price, and the fitted "
+            "curve could shoot upward past the last quote, once valuing a deep in-the-money "
+            "call at over 400% volatility. Past the last quote the curve now continues in a "
+            "straight line, which cut that position's total gap by 95%.",
+        },
     ],
 }
 
@@ -123,12 +129,7 @@ def _reconstruct_smile(row: pd.Series) -> list[float]:
     (a,b,rho,m,sigma) or (eta,theta) columns are ALREADY-calibrated params
     read straight from the row, not a new fit."""
     T = float(row["T"])
-    if row["model"] == "SVI":
-        params = SVIParams(a=row["a"], b=row["b"], rho=row["rho"], m=row["m"], sigma=row["sigma"])
-        w = params.total_variance(K_GRID)
-    else:
-        params = SSVIParams(rho=row["rho"], eta=row["eta"])
-        w = params.total_variance(K_GRID, float(row["theta"]))
+    w = slice_total_variance(row, K_GRID)
     return list(np.sqrt(np.clip(w, 1e-12, None) / T))
 
 

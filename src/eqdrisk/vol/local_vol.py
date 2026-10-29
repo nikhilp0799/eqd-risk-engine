@@ -183,11 +183,61 @@ def _t_interpolant(T_pillars: np.ndarray, values: np.ndarray):
     return PchipInterpolator(T_pillars, values, extrapolate=True)
 
 
+# Lee's moment formula: total variance can grow at most 2|k| in either wing, which
+# for raw SVI is b(1 + |rho|) <= 2.
+LEE_WING_SLOPE_MAX = 2.0
+
+
+def _svi_wing_is_trusted(params: SVIParams, k_min: float, k_max: float) -> bool:
+    """An SVI fit whose wings can be extrapolated as fitted: its kink `m` lies inside
+    the quoted strikes and its wing slopes respect Lee's bound.
+
+    The fit often puts the kink outside the quotes with a near-vertical wing beyond it
+    (2026-10-09, AAPL 10-23 slice: m = -0.25 with quotes ending at -0.10, wing slope
+    17.7, 657% vol at P004's k = -0.34 against ~60% for its neighbours), which the
+    T-smoothing then carries into nearby expiries (P004 marked at 426%). Refit on
+    quotes with k >= -0.10 or -0.05 and scored against real deeper quotes (2,887
+    slices), this rule against the current wing: median error 2.30 vs 2.32 vol points,
+    mean 4.04 vs 6.95, share off by more than 20 vol points 2.2% vs 3.7%
+    (planning/svi_wing_guard_plan.md). Holding vol flat instead was far worse (median
+    9.6): where the market quotes these strikes, the wing vol really is high."""
+    return k_min <= params.m <= k_max and params.b * (1 + abs(params.rho)) <= LEE_WING_SLOPE_MAX
+
+
+def _svi_w_dk_dkk(
+    params: SVIParams, k: np.ndarray, k_min: float | None, k_max: float | None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """SVI (w, dk_w, dkk_w); beyond the quoted range of an untrusted fit, total
+    variance continues in a straight line at the smile's slope at the last quoted
+    strike (never sloping back down, capped at Lee's bound), with zero curvature."""
+    k = np.asarray(k, dtype=float)
+    w = np.asarray(params.total_variance(k), dtype=float)
+    dk_w = np.asarray(params.first_derivative(k), dtype=float)
+    dkk_w = np.asarray(params.second_derivative(k), dtype=float)
+    if k_min is None or k_max is None or pd.isna(k_min) or pd.isna(k_max):
+        return w, dk_w, dkk_w  # surfaces stored before the quoted range was recorded
+    if _svi_wing_is_trusted(params, k_min, k_max):
+        return w, dk_w, dkk_w
+    for edge, beyond, lo, hi in (
+        (k_min, k < k_min, -LEE_WING_SLOPE_MAX, 0.0),
+        (k_max, k > k_max, 0.0, LEE_WING_SLOPE_MAX),
+    ):
+        if not np.any(beyond):
+            continue
+        slope = float(np.clip(params.first_derivative(edge), lo, hi))
+        w = np.where(beyond, float(params.total_variance(edge)) + slope * (k - edge), w)
+        dk_w = np.where(beyond, slope, dk_w)
+        dkk_w = np.where(beyond, 0.0, dkk_w)
+    return w, dk_w, dkk_w
+
+
 def _slice_w_dk_dkk(
     surface_row: pd.Series, k: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """(w, dk_w, dkk_w) for one calibrated expiry slice, at log-moneyness `k`
-    relative to THAT expiry's own forward."""
+    relative to THAT expiry's own forward. Every pricing use of a stored slice goes
+    through here, so vanilla marks, stress, local vol and the variance swap see the
+    same wings."""
     if surface_row["model"] == "SVI":
         params = SVIParams(
             a=float(surface_row["a"]),
@@ -196,11 +246,7 @@ def _slice_w_dk_dkk(
             m=float(surface_row["m"]),
             sigma=float(surface_row["sigma"]),
         )
-        return (
-            np.asarray(params.total_variance(k)),
-            np.asarray(params.first_derivative(k)),
-            np.asarray(params.second_derivative(k)),
-        )
+        return _svi_w_dk_dkk(params, k, surface_row.get("k_min"), surface_row.get("k_max"))
 
     ssvi = SSVIParams(rho=float(surface_row["rho"]), eta=float(surface_row["eta"]))
     theta = float(surface_row["theta"])

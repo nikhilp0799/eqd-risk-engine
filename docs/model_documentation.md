@@ -165,6 +165,21 @@ inside the first month is given up. This also removes a degenerate first grid ro
 maturities the fixed-strength spline of total variance dipped below zero on 25 of 36 stored days.
 Vanillas and variance swaps price off the full surface.
 
+**SVI wings past the quotes.** Every use of a fitted slice (vanilla marks, local vol, the
+dashboard and site smiles) reads it through one function, which stores each slice's quoted
+log-moneyness range (`k_min`, `k_max`) and checks the fitted wing. A raw-SVI wing is kept as fitted
+only if its kink lies inside the quotes and its slopes respect Lee's moment bound,
+$b(1+|\rho|) \le 2$. Otherwise, past the last quote, total variance continues in a straight line
+from the edge, with the edge slope clipped to $[0, 2]$ (it never slopes back down). Inside the
+quotes nothing changes, and the fitted parameters are identical. The cause was AAPL weeklies, quoted
+only to about $k=-0.10$: on 2026-10-09 the 10-23 slice put its kink outside the quotes with a wing
+slope of 17.7 (657% vol at $k=-0.34$), and the term-structure spline carried it to 426% vol for
+P004, a short call 34% in the money a week from expiry. That overvalued it by $14.4K, with a delta
+of -404 instead of -500. Out of sample (dropping each slice's outermost quotes and refitting, 2,887
+slices), the guarded wing missed the dropped quotes by a median 2.30 vol points (mean 4.04, 2.2%
+off by more than 20 points), against 2.32 (mean 6.95, 3.7%) for the raw wing. A flat vol past the
+quotes (median 9.6) and forcing Lee's bound into the fit (mean 17.8) were measured and rejected.
+
 Monte Carlo paths use Sobol quasi-random sequences with a classic power-of-two Brownian bridge path
 construction (Glasserman), numba-JIT-compiled for the inner Euler step. Barrier positions use a
 Brownian-bridge continuity correction for the discretely-simulated barrier crossing probability,
@@ -240,14 +255,17 @@ note's initial fixing (Section 2, position lifecycle), (7) Greeks that held vol 
 while the explain moved it with moneyness (Section 3.5), and (8) weekly expiries whose fitting
 noise moved the note's local-vol model (Section 3.3). Each was measured and fixed (follow-up section
 of the incident report). On the 16 comparable day pairs the mean absolute residual fell from 105bp
-to 11bp of NAV; over all 26 stored pairs it is 9.7bp (median 7.2bp, worst 38bp). Fitting SPX
-forwards from any trade in the session (Section 3.1) then removed the SPX options' artificial
-residuals: P003 and P007 fell from $758 and $334 to $87 and $39 a day on average.
+to 11bp of NAV. Fitting SPX forwards from any trade in the session (Section 3.1) then removed the
+SPX options' artificial residuals: P003 and P007 fell from $758 and $334 to $87 and $39 a day on
+average. Guarding SVI wings past the last quote (Section 3.3) then removed the near-expiry AAPL
+call's: P004's summed absolute residual over 27 pairs fell from $37.6K to $2.0K. On the 16
+comparable pairs the residual is now 9.5bp; over all 27 stored pairs it is 8.9bp (median 6.8bp,
+worst 25bp), and the sum of each position's absolute residual is 10.5bp (1.8bp without P008).
 
 What remains: the explain's vol step is still one vega times the ATM move at the position's
 exposure dates. A parallel vol ladder, and vega by maturity bucket plus a skew sensitivity, were
-measured and did not help, so they were not built. The largest remaining day (2026-10-09, 38bp) is
-mostly an AAPL call a week from expiry, in the vol step, not yet investigated. Residuals carry a
+measured and did not help, so they were not built. The largest remaining day (2026-09-28, 25bp) is
+almost all P008; it was 9bp before the wing guard only because P004's mispricing offset it. Residuals carry a
 Monte Carlo standard error, so a day is flagged only when the gap exceeds the 5bp threshold by more
 than its noise.
 
@@ -475,7 +493,7 @@ than loosened to hide the platform difference.
 
 | Risk | Materiality | Mitigant / current state |
 |---|---|---|
-| P&L-explain residual | **Medium** — 9.7bp of NAV mean absolute residual over 26 real day pairs (median 7.2bp, worst 38bp), still above the 5bp threshold on average | Eight input and model causes found and fixed (Section 4), plus the SPX long-end forwards; bucketed vega and skew measured and rejected; largest remaining day (a near-expiry AAPL call) not yet investigated |
+| P&L-explain residual | **Medium** — 8.9bp of NAV mean absolute residual over 27 real day pairs (median 6.8bp, worst 25bp), still above the 5bp threshold on average; almost all of what remains is P008 | Eight input and model causes found and fixed (Section 4), plus the SPX long-end forwards and the SVI wing guard; bucketed vega and skew measured and rejected |
 | Vol-shock stress approximation error | **Medium**, grows with shock size (~7-40% measured) | Documented and bounded; not eliminated; matters most for the largest stress-ladder shocks |
 | Residual monitoring alerts are logged, not paged | **Low** — daily alerts are visible in the log and dashboard but nobody is notified | Automated 5bp check with a noise band since 2026-09-10 / 2026-10; paging not built |
 | Two single names (JPM, XLE) have no real coverage | **Low** for this book (no positions assigned there), but blocks any future position in those names | Not currently mitigated; Step 8.3 (proxy modelling) would address this if built |

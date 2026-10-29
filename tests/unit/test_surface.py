@@ -158,3 +158,14 @@ def test_calibrate_underlying_counts_carried_quotes():
     slices, _ = calibrate_underlying("TEST", groups)
     by_T = {s.T: s.n_carried for s in slices}
     assert by_T == {0.25: 0, 0.5: 12}
+
+
+def test_calibrate_underlying_records_the_quoted_range():
+    k = np.linspace(-0.12, 0.08, 15)
+    groups = {
+        dt.date(2026, 9, 1): _slice_df(k, (0.04 + 0.02 * k**2) * 0.1).assign(T=0.1),
+        dt.date(2026, 12, 1): _slice_df(k[2:], (0.04 + 0.02 * k[2:] ** 2) * 0.35).assign(T=0.35),
+    }
+    results, _ = calibrate_underlying("TEST", groups)
+    by_T = {r.T: (r.k_min, r.k_max) for r in results}
+    assert by_T == {0.1: (k[0], k[-1]), 0.35: (k[2], k[-1])}

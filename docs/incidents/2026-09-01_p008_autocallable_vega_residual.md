@@ -217,11 +217,15 @@ This day pair (2026-08-31 -> 2026-09-01):
 | Noise-aware residual and better Greeks | -$43,927 (-104bp) |
 | Causes 1-7 fixed | -$39,201 (-94bp, 2 SE +-7bp): spot step +$3.2K, vol step -$40.9K |
 | Cause 8 fixed | -$4,085 (-9.7bp, 2 SE +-5bp): spot step +$2.5K, vol step -$5.1K |
-| SPX forwards fitted from the whole session (current) | **-$4,488 (-10.7bp, 2 SE +-5bp)**: P008 unchanged at -$4,463; the SPX options' small residuals that partly offset it moved |
+| SPX forwards fitted from the whole session | -$4,488 (-10.7bp, 2 SE +-5bp): P008 unchanged at -$4,463; the SPX options' small residuals that partly offset it moved |
+| SVI wings guarded past the last quote (current) | **-$4,834 (-11.5bp, 2 SE +-4.7bp)**: P008 -$4,835, its local-vol grid now built from guarded wings |
 
 On the 16 day pairs explained both before and after the input and model fixes, the mean absolute
-total residual fell from 104.9bp to 10.9bp. Across all 26 stored day pairs it is 9.7bp, with a
-median day of 7.2bp; the worst is 38bp (2026-10-09), mostly an AAPL call a week from expiry. An
+total residual fell from 104.9bp to 9.5bp. Across all 27 stored day pairs it is 8.9bp, with a
+median day of 6.8bp; the worst is 25bp (2026-09-28), almost all P008. The previous worst day
+(2026-10-09, 38bp) was an AAPL call a week from expiry valued at 426% vol off an SVI wing that shot
+upward past the last quote; guarding those wings (model documentation, Section 3.3) took that day
+to 4.2bp. An
 earlier version of this report also said P008's typical daily price move fell from $54.6K to $9.4K;
 that figure was an artefact of cause 6 (a note re-struck at the money every day has little delta)
 and is withdrawn: priced correctly, the note's value moves about $38K on a typical day, as a $5M
@@ -232,8 +236,7 @@ note with about 13,400 shares of NVDA delta should.
 This day pair is now about two standard errors from the 5bp threshold, and on full revaluation the
 day's vol-surface change cost the book $9.2K, not the $44.8K it showed before cause 8: most of what
 looked like a vol move was the weekly expiries moving the model. Across history the largest
-remaining day (2026-10-09, 38bp) is mostly an AAPL call a week from expiry, in the vol step, and
-is not yet investigated. The 1-month cutoff gives up the vol shape inside the first month for the
+remaining day (2026-09-28, 25bp) is almost all P008. The 1-month cutoff gives up the vol shape inside the first month for the
 Monte Carlo exotics; a note within a month of an observation date is priced with flat local vol up
 to the first kept expiry.
 
