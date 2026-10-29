@@ -1,9 +1,9 @@
 {
-  "day0": "2026-10-26",
-  "asof_date": "2026-10-27",
-  "nav": 4237742.663504363,
-  "residual_bp": -2.568221569786793,
-  "noise_band_bp": 5.123814873592667,
+  "day0": "2026-10-27",
+  "asof_date": "2026-10-28",
+  "nav": 4206594.784216396,
+  "residual_bp": -1.081346328573169,
+  "noise_band_bp": 5.559836838198252,
   "status": "inconclusive",
   "residual_alert_threshold_bp": 5.0,
   "positions": {
@@ -22,9 +22,9 @@
   "waterfall": [
     {
       "step": "time",
-      "actual_pnl": 1765.8347079785185,
-      "explained_pnl": 1752.887560854556,
-      "residual": 12.947147123962395
+      "actual_pnl": 2004.551801989876,
+      "explained_pnl": 2000.882392765005,
+      "residual": 3.669409224870833
     },
     {
       "step": "rates_divs",
@@ -34,52 +34,52 @@
     },
     {
       "step": "spot",
-      "actual_pnl": 25608.682992167902,
-      "explained_pnl": 23105.484455892616,
-      "residual": 2503.1985362752857
+      "actual_pnl": -33506.8269150458,
+      "explained_pnl": -29169.51454869784,
+      "residual": -4337.31236634796
     },
     {
       "step": "vol",
-      "actual_pnl": 931.450879165669,
-      "explained_pnl": 4535.942774126681,
-      "residual": -3604.491894961012
+      "actual_pnl": 853.9470208161412,
+      "explained_pnl": -3024.817353736204,
+      "residual": 3878.764374552345
     }
   ],
   "by_position": [
     {
+      "position_id": "P002",
+      "residual": -1582.3337956838623
+    },
+    {
       "position_id": "P008",
-      "residual": -1167.557161177565
+      "residual": 1139.7482077190048
     },
     {
       "position_id": "P011",
-      "residual": 173.09783868997624
-    },
-    {
-      "position_id": "P002",
-      "residual": -154.1528232406731
-    },
-    {
-      "position_id": "P010",
-      "residual": 37.830291066593205
+      "residual": -100.7394859299511
     },
     {
       "position_id": "P007",
-      "residual": 23.712151603338246
+      "residual": 80.70620015474702
     },
     {
-      "position_id": "P003",
-      "residual": -5.303535458044934
+      "position_id": "P010",
+      "residual": 10.705269554506192
     },
     {
       "position_id": "P001",
-      "residual": 4.027026954614737
+      "residual": -6.130668156589977
     },
     {
-      "position_id": "P009",
-      "residual": 0.0
+      "position_id": "P003",
+      "residual": 3.1656897713992933
     },
     {
       "position_id": "P006",
+      "residual": 0.0
+    },
+    {
+      "position_id": "P009",
       "residual": 0.0
     }
   ],
@@ -87,243 +87,252 @@
     {
       "day0": "2026-08-31",
       "asof_date": "2026-09-01",
-      "residual_bp": -10.67002084231619,
-      "noise_band_bp": 4.995294377219698,
+      "residual_bp": -11.492351706633363,
+      "noise_band_bp": 4.706787364260119,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.9943023941382922
+      "top_position_share": 1.0001393767641857
     },
     {
       "day0": "2026-09-01",
       "asof_date": "2026-09-02",
-      "residual_bp": 2.0191941027600446,
-      "noise_band_bp": 3.5836220988433,
+      "residual_bp": 2.6641246367586096,
+      "noise_band_bp": 4.153868170452946,
       "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 1.0266807777308862
+      "top_position_share": 0.9765569889839539
     },
     {
       "day0": "2026-09-02",
       "asof_date": "2026-09-03",
-      "residual_bp": 2.1478297090218708,
-      "noise_band_bp": 4.8564068592155945,
-      "status": "ok",
+      "residual_bp": 1.2732462786393937,
+      "noise_band_bp": 5.177214468794647,
+      "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 1.8983941039545744
+      "top_position_share": 2.474583983829149
     },
     {
       "day0": "2026-09-03",
       "asof_date": "2026-09-04",
-      "residual_bp": -11.083073919300853,
-      "noise_band_bp": 5.154467756544747,
-      "status": "alert",
+      "residual_bp": -8.931976319482107,
+      "noise_band_bp": 4.807884792803806,
+      "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 0.8771269077038305
+      "top_position_share": 0.8333686865761435
     },
     {
       "day0": "2026-09-04",
       "asof_date": "2026-09-08",
-      "residual_bp": -2.029439504795801,
-      "noise_band_bp": 10.149693174247972,
+      "residual_bp": 3.266556184446713,
+      "noise_band_bp": 9.977349440309618,
       "status": "inconclusive",
-      "top_position_id": "P004",
-      "top_position_share": 4.366820674483682
+      "top_position_id": "P002",
+      "top_position_share": 0.5356197944585712
     },
     {
       "day0": "2026-09-08",
       "asof_date": "2026-09-10",
-      "residual_bp": 30.232954843211207,
-      "noise_band_bp": 6.798260759145123,
+      "residual_bp": 18.160698925223805,
+      "noise_band_bp": 6.582078352517612,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.558576496981431
+      "top_position_share": 0.8760063866331022
     },
     {
       "day0": "2026-09-16",
       "asof_date": "2026-09-17",
-      "residual_bp": 23.125342968137875,
-      "noise_band_bp": 6.799114405163656,
+      "residual_bp": 23.484302213167513,
+      "noise_band_bp": 6.9013714602634755,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.0439707376654526
+      "top_position_share": 1.0436733915956669
     },
     {
       "day0": "2026-09-25",
       "asof_date": "2026-09-28",
-      "residual_bp": -9.332351612474481,
-      "noise_band_bp": 6.233270496175216,
-      "status": "inconclusive",
+      "residual_bp": -24.86362347064648,
+      "noise_band_bp": 6.075598585184477,
+      "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 2.3281892267911806
+      "top_position_share": 1.0121863750542393
     },
     {
       "day0": "2026-09-28",
       "asof_date": "2026-09-29",
-      "residual_bp": 2.484564659700297,
+      "residual_bp": 2.4584960766098094,
       "noise_band_bp": 4.4086619628046995,
       "status": "ok",
       "top_position_id": "P002",
-      "top_position_share": 0.5896009131575124
+      "top_position_share": 0.595852727240563
     },
     {
       "day0": "2026-10-01",
       "asof_date": "2026-10-02",
-      "residual_bp": 10.279445163968672,
-      "noise_band_bp": 5.102668150900943,
+      "residual_bp": 9.856704451699398,
+      "noise_band_bp": 4.8354261588374445,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.1377318275709318
+      "top_position_share": 1.1467158079218485
     },
     {
       "day0": "2026-10-02",
       "asof_date": "2026-10-05",
-      "residual_bp": 1.063004705082778,
-      "noise_band_bp": 4.491620324217147,
+      "residual_bp": 2.1025487378973216,
+      "noise_band_bp": 4.215762341718613,
       "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 1.4182211817445178
+      "top_position_share": 1.195020470883433
     },
     {
       "day0": "2026-10-05",
       "asof_date": "2026-10-06",
-      "residual_bp": 7.575012695507896,
-      "noise_band_bp": 4.603172986502615,
+      "residual_bp": 6.800418917526891,
+      "noise_band_bp": 4.648232267167782,
       "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 0.884393540172811
+      "top_position_share": 0.8698821157440997
     },
     {
       "day0": "2026-10-06",
       "asof_date": "2026-10-07",
-      "residual_bp": -17.956896474444306,
-      "noise_band_bp": 6.05449904379856,
+      "residual_bp": -17.992634028530603,
+      "noise_band_bp": 5.797148302641224,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.9291067205051033
+      "top_position_share": 0.9276325043065541
     },
     {
       "day0": "2026-10-07",
       "asof_date": "2026-10-08",
-      "residual_bp": -6.3755777245115,
-      "noise_band_bp": 5.682586396636916,
+      "residual_bp": -6.7450278795717695,
+      "noise_band_bp": 5.6543619272755405,
       "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 1.1967665962713698
+      "top_position_share": 1.195546930823979
     },
     {
       "day0": "2026-10-08",
       "asof_date": "2026-10-09",
-      "residual_bp": -38.1732477869205,
-      "noise_band_bp": 4.507992999064683,
-      "status": "alert",
-      "top_position_id": "P004",
-      "top_position_share": 0.8545817897095443
+      "residual_bp": -4.203588907863858,
+      "noise_band_bp": 4.332413473199996,
+      "status": "ok",
+      "top_position_id": "P008",
+      "top_position_share": 0.6677944633405372
     },
     {
       "day0": "2026-10-09",
       "asof_date": "2026-10-12",
-      "residual_bp": 0.34723378157416307,
-      "noise_band_bp": 3.607007266158641,
+      "residual_bp": -7.3806395451150975,
+      "noise_band_bp": 3.6017774400903826,
       "status": "ok",
-      "top_position_id": "P004",
-      "top_position_share": 22.29764747760839
+      "top_position_id": "P008",
+      "top_position_share": 1.0010917973342577
     },
     {
       "day0": "2026-10-12",
       "asof_date": "2026-10-13",
-      "residual_bp": -2.1652897160296614,
-      "noise_band_bp": 3.2224251520532587,
-      "status": "ok",
+      "residual_bp": -11.967168827712179,
+      "noise_band_bp": 3.2224032750511715,
+      "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 5.391062066302762
+      "top_position_share": 0.975429708514987
     },
     {
       "day0": "2026-10-13",
       "asof_date": "2026-10-14",
-      "residual_bp": -3.7268934239460583,
-      "noise_band_bp": 6.789327918871457,
+      "residual_bp": -3.715462230233491,
+      "noise_band_bp": 6.789327918871458,
       "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 0.7222440372064884
+      "top_position_share": 0.7244661325974394
     },
     {
       "day0": "2026-10-14",
       "asof_date": "2026-10-15",
-      "residual_bp": 13.30479460318299,
-      "noise_band_bp": 4.469359829561955,
+      "residual_bp": 12.591236937543998,
+      "noise_band_bp": 4.809421705966417,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.9101266913810335
+      "top_position_share": 0.9068429490609519
     },
     {
       "day0": "2026-10-15",
       "asof_date": "2026-10-16",
-      "residual_bp": 1.7742875220996057,
-      "noise_band_bp": 4.894196475284283,
-      "status": "ok",
+      "residual_bp": 3.0112624198287263,
+      "noise_band_bp": 5.116417138715476,
+      "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 1.5645440620199316
+      "top_position_share": 1.3304567593050431
     },
     {
       "day0": "2026-10-16",
       "asof_date": "2026-10-19",
-      "residual_bp": -19.108918320366627,
-      "noise_band_bp": 7.872318802246894,
+      "residual_bp": -19.077316751287043,
+      "noise_band_bp": 7.770584599240404,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.085217614994234
+      "top_position_share": 1.0883956000296597
     },
     {
       "day0": "2026-10-19",
       "asof_date": "2026-10-20",
-      "residual_bp": 6.889215622736267,
-      "noise_band_bp": 3.1809273884769955,
+      "residual_bp": 6.136646601712121,
+      "noise_band_bp": 3.3225039491105752,
       "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 0.8243209581943742
+      "top_position_share": 0.8187133052017748
     },
     {
       "day0": "2026-10-20",
       "asof_date": "2026-10-21",
-      "residual_bp": 9.510645656337433,
-      "noise_band_bp": 5.481170570482477,
+      "residual_bp": 10.306370632553353,
+      "noise_band_bp": 5.847770903386003,
       "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 1.144688359246697
+      "top_position_share": 1.126103541496122
     },
     {
       "day0": "2026-10-21",
       "asof_date": "2026-10-22",
-      "residual_bp": 2.7946369074949913,
-      "noise_band_bp": 4.992872852488301,
+      "residual_bp": -1.0585185451054075,
+      "noise_band_bp": 4.221120004617794,
       "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 0.9025742060067294
+      "top_position_share": 1.249908108115546
     },
     {
       "day0": "2026-10-22",
       "asof_date": "2026-10-26",
-      "residual_bp": -14.563062508946755,
-      "noise_band_bp": 4.624244343704841,
+      "residual_bp": -14.387314360225098,
+      "noise_band_bp": 4.624163191648823,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.9182877718472426
+      "top_position_share": 0.9294887982649452
     },
     {
       "day0": "2026-10-26",
       "asof_date": "2026-10-27",
-      "residual_bp": -2.568221569786793,
-      "noise_band_bp": 5.123814873592667,
+      "residual_bp": -3.986994292667143,
+      "noise_band_bp": 5.125637625255481,
       "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 1.07278102204457
+      "top_position_share": 1.0127854108134826
+    },
+    {
+      "day0": "2026-10-27",
+      "asof_date": "2026-10-28",
+      "residual_bp": -1.081346328573169,
+      "noise_band_bp": 5.559836838198252,
+      "status": "inconclusive",
+      "top_position_id": "P002",
+      "top_position_share": 3.4785849594001776
     }
   ],
   "improvement": {
     "mean_abs_bp_before": 104.9,
-    "mean_abs_bp_after": 10.9,
+    "mean_abs_bp_after": 9.5,
     "worst_bp_before": 299.4,
-    "worst_bp_after": 38.2,
+    "worst_bp_after": 24.9,
     "findings": [
       {
         "title": "Noisy risk numbers",
@@ -356,6 +365,10 @@
       {
         "title": "Index options discarded for not trading late",
         "body": "A quote filter kept only options that traded in the last half hour, and long-dated S&P 500 options rarely do, so the index's long end vanished most days and two positions were valued on guessed volatility. Any trade in the day now counts, which cut those positions' daily gap by about 90%."
+      },
+      {
+        "title": "Volatility guessed far beyond the quotes",
+        "body": "Apple's weekly options are quoted only near the stock price, and the fitted curve could shoot upward past the last quote, once valuing a deep in-the-money call at over 400% volatility. Past the last quote the curve now continues in a straight line, which cut that position's total gap by 95%."
       }
     ]
   }

@@ -43,6 +43,8 @@ class SliceCalibration:
     butterfly_violations: int
     calendar_violated: bool
     n_carried: int = 0  # of n_points, quotes carried from an earlier day (stale fill)
+    k_min: float | None = None  # log-moneyness range of the fitted quotes
+    k_max: float | None = None
 
 
 @dataclass
@@ -199,6 +201,8 @@ def calibrate_underlying(
                 n_carried=(
                     int(df["carried_from"].notna().sum()) if "carried_from" in df.columns else 0
                 ),
+                k_min=float(k.min()),
+                k_max=float(k.max()),
             )
         )
 
@@ -300,6 +304,8 @@ def run_surface_calibration(
                     "butterfly_violations": s.butterfly_violations,
                     "calendar_violated": s.calendar_violated,
                     "n_carried": s.n_carried,
+                    "k_min": s.k_min,
+                    "k_max": s.k_max,
                 }
             )
 

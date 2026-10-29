@@ -24,8 +24,7 @@ import streamlit as st
 from eqdrisk.config import BaseConfig
 from eqdrisk.io import store
 from eqdrisk.pricing.pnl_explain import RESIDUAL_ALERT_THRESHOLD_BP
-from eqdrisk.vol.ssvi import SSVIParams
-from eqdrisk.vol.svi import SVIParams
+from eqdrisk.vol.local_vol import slice_total_variance
 
 CONFIG_PATH = "configs/base.yaml"
 VAR_ACCEPTANCE_DAYS = 250  # README's own Step 9 window
@@ -66,12 +65,7 @@ def reconstruct_curve(row: pd.Series, k_grid: pd.Series | list[float]) -> list[f
 
     k = np.asarray(k_grid, dtype=float)
     T = float(row["T"])
-    if row["model"] == "SVI":
-        params = SVIParams(a=row["a"], b=row["b"], rho=row["rho"], m=row["m"], sigma=row["sigma"])
-        w = params.total_variance(k)
-    else:
-        params = SSVIParams(rho=row["rho"], eta=row["eta"])
-        w = params.total_variance(k, float(row["theta"]))
+    w = slice_total_variance(row, k)
     return list(np.sqrt(np.clip(w, 1e-12, None) / T))
 
 

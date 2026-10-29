@@ -5,13 +5,16 @@ import pytest
 from eqdrisk.marketdata.forward import ForwardCurve
 from eqdrisk.vol.implied import EXTREME_K_MULTIPLE
 from eqdrisk.vol.local_vol import (
+    LEE_WING_SLOPE_MAX,
     LOCAL_VOL_MIN_PILLAR_T,
     MIN_PILLARS_FOR_LOCAL_VOL,
     MIN_PILLARS_FOR_SMOOTHING,
     _finite_diff_k,
+    _slice_w_dk_dkk,
     build_local_vol_grid,
     local_variance_at,
     local_vol_pillars,
+    slice_total_variance,
 )
 from eqdrisk.vol.svi import SVIParams, durrleman_g
 
@@ -308,3 +311,72 @@ def test_grid_from_local_vol_pillars_ignores_noise_in_weekly_expiries():
     assert cut is not None and cut_noisy is not None
     assert not np.allclose(full.sigma_loc, full_noisy.sigma_loc)
     np.testing.assert_array_equal(cut.sigma_loc, cut_noisy.sigma_loc)
+
+
+# The 2026-10-09 AAPL 2026-10-23 slice: kink outside the quotes, wing slope 17.7.
+STEEP_WING_ROW = pd.Series(
+    {
+        "T": 0.0384,
+        "model": "SVI",
+        "a": -0.0035,
+        "b": 8.8763,
+        "rho": -0.999,
+        "m": -0.2469,
+        "sigma": 0.0134,
+        "k_min": -0.100,
+        "k_max": 0.066,
+    }
+)
+
+
+def _raw_svi(row: pd.Series) -> SVIParams:
+    return SVIParams(a=row["a"], b=row["b"], rho=row["rho"], m=row["m"], sigma=row["sigma"])
+
+
+def test_untrusted_svi_wing_continues_as_a_straight_line_beyond_the_quotes():
+    raw = _raw_svi(STEEP_WING_ROW)
+    k = -0.34
+    w, dk_w, dkk_w = _slice_w_dk_dkk(STEEP_WING_ROW, np.asarray(k))
+
+    edge_slope = float(np.clip(raw.first_derivative(-0.100), -LEE_WING_SLOPE_MAX, 0.0))
+    assert float(w) == pytest.approx(raw.total_variance(-0.100) + edge_slope * (k + 0.100))
+    assert float(dk_w) == pytest.approx(edge_slope)
+    assert float(dkk_w) == 0.0
+    assert raw.total_variance(k) > 1.0  # the raw wing: over 500% vol at this T
+    assert np.sqrt(float(w) / STEEP_WING_ROW["T"]) < 0.6  # about 51%, the neighbours' level
+
+
+def test_untrusted_svi_slice_is_unchanged_inside_the_quoted_range():
+    raw = _raw_svi(STEEP_WING_ROW)
+    k = np.linspace(-0.100, 0.066, 9)
+    w, dk_w, dkk_w = _slice_w_dk_dkk(STEEP_WING_ROW, k)
+    np.testing.assert_array_equal(w, raw.total_variance(k))
+    np.testing.assert_array_equal(dk_w, raw.first_derivative(k))
+    np.testing.assert_array_equal(dkk_w, raw.second_derivative(k))
+
+
+def test_trusted_svi_wing_is_extrapolated_as_fitted():
+    row = _svi_surface([0.25]).iloc[0].copy()
+    row["k_min"], row["k_max"] = -0.2, 0.2
+    raw = _raw_svi(row)
+    k = np.array([-0.9, -0.5, 0.6])
+    np.testing.assert_array_equal(slice_total_variance(row, k), raw.total_variance(k))
+
+
+def test_straight_line_wing_never_slopes_back_down():
+    """Kink below the quotes: the fitted smile is still rising at the lowest quoted
+    strike, so a straight line at that slope would fall further out; it is held flat."""
+    row = pd.Series(
+        {"T": 0.1, "model": "SVI", "a": 0.001, "b": 0.5, "rho": -0.3, "m": -0.5, "sigma": 0.05}
+    )
+    row["k_min"], row["k_max"] = -0.1, 0.1
+    assert _raw_svi(row).first_derivative(-0.1) > 0
+    w = slice_total_variance(row, np.array([-0.1, -0.3, -0.6]))
+    np.testing.assert_allclose(w, w[0])
+
+
+def test_surfaces_stored_without_a_quoted_range_keep_the_svi_wing():
+    row = STEEP_WING_ROW.drop(["k_min", "k_max"])
+    assert float(slice_total_variance(row, -0.34)) == pytest.approx(
+        _raw_svi(row).total_variance(-0.34)
+    )
