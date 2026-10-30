@@ -1,7 +1,7 @@
 import datetime as dt
 from unittest.mock import patch
 
-from eqdrisk.agent.factcheck import check, extract_claims
+from eqdrisk.agent.factcheck import check, extract_claims, labelled_sources
 from eqdrisk.agent.investigate import run_daily_investigation
 from eqdrisk.config import BaseConfig, Paths, Universe
 from eqdrisk.io import store
@@ -60,6 +60,73 @@ def test_percent_claims_match_tool_fractions():
 def test_dates_ids_and_small_counts_are_not_checked():
     claims = extract_claims("On 2026-10-19 P008 (model qwen2.5:7b) took 3 rounds")
     assert claims == []
+
+
+# The what_if_reprice result the model got on 2026-10-26 (P008, spot -10%, vol +25%).
+WHAT_IF_2026_10_26 = {
+    "position_id": "P008",
+    "spot_shock_pct": -0.1,
+    "vol_shock_pct": 0.25,
+    "base_price": 4748524.610855177,
+    "shocked_price": 4200504.573801067,
+    "price_delta": -548020.0370541103,
+    "shocked_delta": 17862.66234384465,
+}
+
+
+def _labelled_check(answer: str, what_if: dict | None = None, shares: list[float] | None = None):
+    context = CONTEXT_2026_10_19 + ("\n" + str(what_if) if what_if else "")
+    labels = labelled_sources(CONTEXT_2026_10_19, [what_if] if what_if else [], shares)
+    return check([answer], context, shares, labels)
+
+
+def test_what_if_results_called_actual_or_explained_are_mislabelled():
+    """The real 2026-10-26 answer: real numbers, but what-if results written up
+    as what happened."""
+    answer = (
+        "The position's actual price change of -548,020.04 differs from the explained "
+        "change of 17,862.66."
+    )
+    result = _labelled_check(answer, WHAT_IF_2026_10_26)
+    assert result.status == "mislabelled_numbers"
+    assert not result.unsupported
+    assert result.mislabelled == [
+        "-548,020.04 (called an actual P&L or value; in the data it is a what-if reprice result)",
+        "17,862.66 (called an explained P&L; in the data it is a what-if reprice result)",
+    ]
+    assert "described as the wrong quantity" in result.render()
+
+
+def test_the_same_numbers_described_as_what_ifs_are_verified():
+    answer = (
+        "The what_if_reprice call shows a price change of -548,020.04 under a 10% spot fall, "
+        "with a shocked delta of 17,862.66; the position is worth 4,748,524.61 today."
+    )
+    assert _labelled_check(answer, WHAT_IF_2026_10_26).status == "verified"
+
+
+def test_a_residual_called_the_actual_pnl_is_mislabelled():
+    wrong = _labelled_check("P008 had a large negative actual P&L (-5,020.37).")
+    assert wrong.mislabelled == [
+        "-5,020.37 (called an actual P&L or value; in the data it is a residual)"
+    ]
+    right = _labelled_check("The book's actual P&L was +18,914.19, with P008's residual -5,020.37.")
+    assert right.status == "verified"
+
+
+def test_threshold_noise_and_unlabelled_wording_fall_back_to_the_plain_check():
+    for answer in [
+        "The residual exceeds the 5bp threshold.",
+        "The total residual is inconclusive, with Monte Carlo noise wider than the 5bp threshold.",
+        "an unexpected -4,997.42 move",  # "unexpected" is not "expected"
+        "P008 contributed -5,020.37.",  # no quantity named: existence only
+        "a residual of -11.5bp with a noise band of 7.7bp",
+    ]:
+        assert _labelled_check(answer).status == "verified", answer
+
+
+def test_without_labels_only_existence_and_unit_are_checked():
+    assert check(["an actual P&L of -5,020.37"], CONTEXT_2026_10_19).status == "verified"
 
 
 def _cfg(tmp_path) -> BaseConfig:
@@ -192,3 +259,34 @@ def test_invalid_json_with_supported_numbers_is_still_flagged_unparsed():
     result = FactCheckResult(n_numbers=2, unsupported=[], parsed=False)
     assert result.status == "unparsed"
     assert result.render().startswith("FACT-CHECK:")
+
+
+def test_mislabelled_numbers_get_the_retry_and_are_stored_if_they_survive(tmp_path):
+    # In _result() 200.00 is the residual; the actual P&L is 1,000.00.
+    investigation, chat = _run(
+        tmp_path, [_answer("an actual P&L of 200.00"), _answer("an actual P&L of 200.00")]
+    )
+    assert chat.call_count == 2
+    retry_prompt = chat.call_args_list[1].args[0][-1]["content"]
+    assert "calls them a different quantity" in retry_prompt
+    assert "200.00 (called an actual P&L or value; in the data it is a residual)" in retry_prompt
+    assert investigation.factcheck is not None
+    assert investigation.factcheck.status == "mislabelled_numbers"
+
+    stored = store.query(
+        "SELECT * FROM t", views={"t": str(tmp_path / "ai_investigations")}
+    ).to_pandas()
+    row = stored.iloc[0]
+    assert row["factcheck_status"] == "mislabelled_numbers"
+    assert row["factcheck_unsupported"] == "[]"
+    assert "a residual" in row["factcheck_mislabelled"]
+
+
+def test_a_corrected_label_after_the_retry_is_verified(tmp_path):
+    investigation, _ = _run(
+        tmp_path,
+        [_answer("an actual P&L of 200.00"), _answer("an actual P&L of 1,000.00, residual 200.00")],
+    )
+    assert investigation.factcheck_retried
+    assert investigation.factcheck is not None
+    assert investigation.factcheck.status == "verified"

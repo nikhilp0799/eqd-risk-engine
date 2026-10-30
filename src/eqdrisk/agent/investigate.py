@@ -30,7 +30,9 @@ model saw. One corrective retry names any unsupported numbers (or says the answe
 was not valid JSON); if the problem survives it, the answer is kept and marked, and
 an answer that is still not valid JSON is checked on its raw text and marked
 `unparsed`. The prompt is stored with the investigation, so any figure can be traced
-to what the model was given.
+to what the model was given. Since 2026-10-30 a number must also be called what it is:
+a what-if result written up as "the actual price change" is marked
+`mislabelled_numbers`.
 
 **What this deliberately does not do:** never auto-applies a proposed config
 change (always a written suggestion for a human to review), never recalibrates
@@ -332,11 +334,13 @@ def run_daily_investigation(
     _fill_from_raw(investigation, raw)
     context = _factcheck_context(messages)
     shares = _residual_shares(result)
-    checked = _check(investigation, context, shares)
-    # One corrective retry in total, for whatever went wrong: invalid JSON or
-    # numbers not in the data. A retry that is not valid JSON is discarded.
-    if investigation.parse_error or checked.unsupported:
-        retry_raw = _corrective_retry(messages, raw, investigation.parse_error, checked.unsupported)
+    labelled = _labelled_sources(messages, trace, shares)
+    checked = _check(investigation, context, shares, labelled)
+    # One corrective retry in total, for whatever went wrong: invalid JSON, numbers
+    # not in the data, or numbers called the wrong quantity. A retry that is not
+    # valid JSON is discarded.
+    if investigation.parse_error or checked.unsupported or checked.mislabelled:
+        retry_raw = _corrective_retry(messages, raw, investigation.parse_error, checked)
         if retry_raw is not None:
             retry = AIInvestigationResult(
                 day0=result.day0, day1=result.day1, model=investigation.model, ai_available=True
@@ -345,7 +349,7 @@ def run_daily_investigation(
             if not retry.parse_error:
                 _fill_from_raw(investigation, retry_raw)
                 investigation.factcheck_retried = True
-                checked = _check(investigation, context, shares)
+                checked = _check(investigation, context, shares, labelled)
     investigation.factcheck = checked
 
     _persist(investigation, curated_root)
@@ -389,16 +393,19 @@ def _answer_texts(investigation: AIInvestigationResult) -> list[str]:
 
 
 def _check(
-    investigation: AIInvestigationResult, context: str, shares: list[float]
+    investigation: AIInvestigationResult,
+    context: str,
+    shares: list[float],
+    labelled: list[factcheck.Source],
 ) -> factcheck.FactCheckResult:
     """Fact-check the answer's fields, or its raw text when it was not valid JSON
     (2026-10-02: the model wrote arithmetic inside its JSON, and the answer used
     to go unchecked with a null status)."""
     if investigation.parse_error:
-        checked = factcheck.check([investigation.raw_response or ""], context, shares)
+        checked = factcheck.check([investigation.raw_response or ""], context, shares, labelled)
         checked.parsed = False
         return checked
-    return factcheck.check(_answer_texts(investigation), context, shares)
+    return factcheck.check(_answer_texts(investigation), context, shares, labelled)
 
 
 def _factcheck_context(messages: list[dict[str, Any]]) -> str:
@@ -407,6 +414,26 @@ def _factcheck_context(messages: list[dict[str, Any]]) -> str:
     return "\n".join(
         str(m.get("content", "")) for m in messages if m.get("role") in ("system", "user", "tool")
     )
+
+
+def _labelled_sources(
+    messages: list[dict[str, Any]], trace: list[ToolCallTrace], shares: list[float]
+) -> list[factcheck.Source]:
+    """The numbers whose meaning is known: the explain and history in the user
+    turn, and each what_if_reprice result (tool messages follow the trace's order)."""
+    explain_text = next((str(m["content"]) for m in messages if m.get("role") == "user"), "")
+    tool_messages = [m for m in messages if m.get("role") == "tool"]
+    what_ifs = []
+    for t, m in zip(trace, tool_messages, strict=False):
+        if t.tool_name != "what_if_reprice":
+            continue
+        try:
+            payload = json.loads(str(m.get("content", "")))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            what_ifs.append(payload)
+    return factcheck.labelled_sources(explain_text, what_ifs, shares)
 
 
 def _residual_shares(result: PnLExplainResult) -> list[float]:
@@ -419,11 +446,15 @@ def _residual_shares(result: PnLExplainResult) -> list[float]:
 
 
 def _corrective_retry(
-    messages: list[dict[str, Any]], raw: str, parse_error: str | None, unsupported: list[str]
+    messages: list[dict[str, Any]],
+    raw: str,
+    parse_error: str | None,
+    checked: factcheck.FactCheckResult,
 ) -> str | None:
     """One more turn: say what was wrong (invalid JSON, numbers that are not in the
-    model's data, or both) and ask for the same JSON corrected
-    (planning/ai_factcheck_plan.md)."""
+    model's data, numbers called the wrong quantity) and ask for the same JSON
+    corrected (planning/ai_factcheck_plan.md, ai_factcheck_labels_plan.md)."""
+    unsupported = checked.unsupported
     problems = []
     if parse_error:
         problems.append(
@@ -437,6 +468,13 @@ def _corrective_retry(
             "residuals in bp of NAV are different numbers in the data; use each with the "
             "unit it has there, and do not present a what-if scenario as something that "
             "happened."
+        )
+    if checked.mislabelled:
+        problems.append(
+            "These numbers are in your data but your answer calls them a different quantity: "
+            f"{'; '.join(checked.mislabelled)}. Describe each number as what it is in the data: "
+            "a what-if reprice result is a hypothetical, not an actual or explained P&L, and a "
+            "residual is neither the actual nor the explained P&L."
         )
     retry_messages = [
         *messages,
@@ -464,6 +502,7 @@ def _persist(investigation: AIInvestigationResult, curated_root: Path) -> None:
         "factcheck_status": None if fc is None else fc.status,
         "factcheck_n_numbers": None if fc is None else fc.n_numbers,
         "factcheck_unsupported": None if fc is None else json.dumps(fc.unsupported),
+        "factcheck_mislabelled": None if fc is None else json.dumps(fc.mislabelled),
         "factcheck_retried": investigation.factcheck_retried,
     }
     table = validate(

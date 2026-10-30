@@ -1,32 +1,33 @@
 {
   "day0": "2026-10-22",
   "asof_date": "2026-10-26",
-  "unexplained": -6056.355185473714,
-  "unexplained_bp": -14.3873143602251,
+  "unexplained": -6056.355185473722,
+  "unexplained_bp": -14.387314360225117,
   "top_position_id": "P008",
-  "top_position_share_pct": 92.9488798264945,
+  "top_position_share_pct": 92.9488798264944,
   "model": "qwen2.5:7b",
   "confidence": "high",
-  "summary": "Today's P&L explain shows a large residual of -13.4bp of NAV for position P008, which is driven by a significant spot sensitivity. The position's actual price change of -548,020.04 differs from the explained change of 17,862.66, suggesting a large spot sensitivity that was not captured in the model.",
-  "root_cause_hypothesis": "The large residual for P008 is due to a significant spot sensitivity, as verified by the what_if_reprice call showing a price delta of -548,020.04 under a 10% spot shock, compared to the explained delta of 17,862.66.",
+  "summary": "The largest residual today was -13.4bp of NAV (-5,629.31) for position P008, driven by a large negative spot shock. The shocked delta of -17,862.66 suggests that P008 is significantly sensitive to spot movements, which explains the large residual.",
+  "root_cause_hypothesis": "Position P008 is highly sensitive to spot movements, as indicated by its shocked delta. A 10% spot decline and a 25% vol increase led to a significant price drop, explaining the large residual of -13.4bp of NAV.",
   "factcheck": {
     "status": "verified",
-    "n_numbers": 7,
+    "n_numbers": 6,
     "unsupported": [],
+    "mislabelled": [],
     "retried": false
   },
   "flagged_positions": [
     {
       "position_id": "P008",
-      "reason": "Large residual of -13.4bp of NAV, significant spot sensitivity not captured in the model"
+      "reason": "High spot sensitivity leading to a large negative residual"
     }
   ],
   "proposed_changes": [
     {
-      "parameter": "spot sensitivity model",
-      "current_value": "default",
-      "suggested_value": "enhanced",
-      "rationale": "The current model underestimates the spot sensitivity for P008, leading to large residuals. Enhancing the spot sensitivity model should better capture the actual risk exposure."
+      "parameter": "spot sensitivity",
+      "current_value": "high",
+      "suggested_value": "moderate",
+      "rationale": "Reduce the position's sensitivity to spot movements to align better with the model's expectations and reduce residual risk"
     }
   ],
   "trace": [

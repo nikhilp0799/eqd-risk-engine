@@ -221,7 +221,7 @@ This day pair (2026-08-31 -> 2026-09-01):
 | SVI wings guarded past the last quote (current) | **-$4,834 (-11.5bp, 2 SE +-4.7bp)**: P008 -$4,835, its local-vol grid now built from guarded wings |
 
 On the 16 day pairs explained both before and after the input and model fixes, the mean absolute
-total residual fell from 104.9bp to 9.5bp. Across all 27 stored day pairs it is 8.9bp, with a
+total residual fell from 104.9bp to 9.5bp. Across all 28 stored day pairs it is 8.6bp, with a
 median day of 6.8bp; the worst is 25bp (2026-09-28), almost all P008. The previous worst day
 (2026-10-09, 38bp) was an AAPL call a week from expiry valued at 426% vol off an SVI wing that shot
 upward past the last quote; guarding those wings (model documentation, Section 3.3) took that day

@@ -409,12 +409,15 @@ AI_INVESTIGATION_SCHEMA = pa.schema(
         ("confidence", pa.string()),  # "low" | "medium" | "high" | "" (unavailable/unparsed)
         ("raw_response", pa.string()),
         # Provenance and fact-check (planning/ai_factcheck_plan.md): the exact
-        # prompt the model was given; "verified" / "unsupported_numbers"; numbers
-        # checked; the unsupported ones as a JSON list; whether a corrective retry ran.
+        # prompt the model was given; "verified" / "unsupported_numbers" /
+        # "mislabelled_numbers" / "unparsed"; numbers checked; the unsupported ones
+        # and those called the wrong quantity (planning/ai_factcheck_labels_plan.md)
+        # as JSON lists; whether a corrective retry ran.
         ("prompt", pa.string()),
         ("factcheck_status", pa.string()),
         ("factcheck_n_numbers", pa.int64()),
         ("factcheck_unsupported", pa.string()),
+        ("factcheck_mislabelled", pa.string()),
         ("factcheck_retried", pa.bool_()),
     ]
 )

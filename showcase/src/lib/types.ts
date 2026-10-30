@@ -129,9 +129,10 @@ export interface AiTraceEntry {
 }
 
 export interface AiFactCheck {
-  status: "verified" | "unsupported_numbers" | "unparsed";
+  status: "verified" | "unsupported_numbers" | "mislabelled_numbers" | "unparsed";
   n_numbers: number;
   unsupported: string[];
+  mislabelled: string[];
   retried: boolean;
 }
 
