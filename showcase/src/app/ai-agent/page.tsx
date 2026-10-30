@@ -141,7 +141,9 @@ export default function AiAgentPage() {
                     ? "Figures checked"
                     : fc.status === "unparsed"
                       ? "Answer not structured"
-                      : "Figures not supported"}
+                      : fc.status === "mislabelled_numbers"
+                        ? "Figures misdescribed"
+                        : "Figures not supported"}
                 </Badge>
               )}
               <span className="text-xs text-muted">Written by the AI analyst, not independently verified.</span>
@@ -149,13 +151,16 @@ export default function AiAgentPage() {
             {fc && (
               <p className="mt-2 text-xs text-muted">
                 Every figure the analyst writes is checked against the data it was given, units
-                included; the check confirms each number exists there, not that it is described
-                correctly.{" "}
+                included, and where the analyst says what a figure is (an actual, explained or
+                unexplained P&amp;L, or a what-if result), it must be that figure in the data.
+                The check does not judge the reasoning.{" "}
                 {fc.status === "verified"
-                  ? `All ${fc.n_numbers} figures here were found in that data${fc.retried ? ", after the analyst was asked once to correct its answer" : ""}.`
+                  ? `All ${fc.n_numbers} figures here were found in that data and described as what they are${fc.retried ? ", after the analyst was asked once to correct its answer" : ""}.`
                   : fc.status === "unparsed"
                     ? `The answer was not in the required format even after one correction request, so it was checked as plain text: ${fc.unsupported.length} of ${fc.n_numbers} figures were not found in that data.`
-                    : `${fc.unsupported.length} of ${fc.n_numbers} figures were not found in that data even after one correction request: ${fc.unsupported.join(", ")}.`}
+                    : fc.status === "mislabelled_numbers"
+                      ? `${fc.mislabelled.length} of ${fc.n_numbers} figures were described as the wrong quantity even after one correction request: ${fc.mislabelled.join("; ")}.`
+                      : `${fc.unsupported.length} of ${fc.n_numbers} figures were not found in that data even after one correction request: ${fc.unsupported.join(", ")}.`}
               </p>
             )}
           </Step>

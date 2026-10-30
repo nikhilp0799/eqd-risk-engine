@@ -33,7 +33,7 @@ OUT_DIR = PROJECT_ROOT / "showcase" / "src" / "data"
 
 DEEP_HEDGE_DATE = dt.date(2026, 9, 22)
 # Latest stored day (SPX keeps its long end daily since the 2026-10-27 forward fix).
-VOL_SURFACE_DATE = dt.date(2026, 10, 28)
+VOL_SURFACE_DATE = dt.date(2026, 10, 29)
 VOL_SURFACE_UNDERLYING = "SPX"
 # How the engine's explain was improved (follow-up section of
 # docs/incidents/2026-09-01_p008_autocallable_vega_residual.md). Fixed values: the
@@ -444,15 +444,18 @@ def _ai_feature_pair(pnl_payload: dict[str, Any]) -> tuple[dt.date, dt.date]:
 
 
 def _factcheck_fields(row: pd.Series) -> dict[str, Any] | None:
-    """The investigation's fact-check (planning/ai_factcheck_plan.md); None for
-    investigations stored before it existed."""
+    """The investigation's fact-check (planning/ai_factcheck_plan.md,
+    ai_factcheck_labels_plan.md); None for investigations stored before it existed."""
     status = row.get("factcheck_status")
     if status is None or pd.isna(status):
         return None
+    mislabelled = row.get("factcheck_mislabelled")
     return {
         "status": status,
         "n_numbers": int(row["factcheck_n_numbers"]),
         "unsupported": json.loads(row["factcheck_unsupported"] or "[]"),
+        # Stored before the label check existed: null in the table.
+        "mislabelled": json.loads(mislabelled) if isinstance(mislabelled, str) else [],
         "retried": bool(row["factcheck_retried"]),
     }
 

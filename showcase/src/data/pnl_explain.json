@@ -1,9 +1,9 @@
 {
-  "day0": "2026-10-27",
-  "asof_date": "2026-10-28",
-  "nav": 4206594.784216396,
-  "residual_bp": -1.081346328573169,
-  "noise_band_bp": 5.559836838198252,
+  "day0": "2026-10-28",
+  "asof_date": "2026-10-29",
+  "nav": 4187951.791936362,
+  "residual_bp": -1.7273563067439597,
+  "noise_band_bp": 8.921068785167304,
   "status": "inconclusive",
   "residual_alert_threshold_bp": 5.0,
   "positions": {
@@ -22,9 +22,9 @@
   "waterfall": [
     {
       "step": "time",
-      "actual_pnl": 2004.551801989876,
-      "explained_pnl": 2000.882392765005,
-      "residual": 3.669409224870833
+      "actual_pnl": 3543.8073477300086,
+      "explained_pnl": 3544.3048067124196,
+      "residual": -0.49745898241098985
     },
     {
       "step": "rates_divs",
@@ -34,45 +34,45 @@
     },
     {
       "step": "spot",
-      "actual_pnl": -33506.8269150458,
-      "explained_pnl": -29169.51454869784,
-      "residual": -4337.31236634796
+      "actual_pnl": -26631.143603015167,
+      "explained_pnl": -24739.911878932355,
+      "residual": -1891.2317240828124
     },
     {
       "step": "vol",
-      "actual_pnl": 853.9470208161412,
-      "explained_pnl": -3024.817353736204,
-      "residual": 3878.764374552345
+      "actual_pnl": 3625.9471061687714,
+      "explained_pnl": 2457.626417117642,
+      "residual": 1168.3206890511292
     }
   ],
   "by_position": [
     {
       "position_id": "P002",
-      "residual": -1582.3337956838623
+      "residual": -2142.5152117907833
     },
     {
       "position_id": "P008",
-      "residual": 1139.7482077190048
-    },
-    {
-      "position_id": "P011",
-      "residual": -100.7394859299511
+      "residual": 1248.4886591985269
     },
     {
       "position_id": "P007",
-      "residual": 80.70620015474702
+      "residual": 69.19329831608836
     },
     {
-      "position_id": "P010",
-      "residual": 10.705269554506192
-    },
-    {
-      "position_id": "P001",
-      "residual": -6.130668156589977
+      "position_id": "P011",
+      "residual": 64.57960301527359
     },
     {
       "position_id": "P003",
-      "residual": 3.1656897713992933
+      "residual": 64.06731369884102
+    },
+    {
+      "position_id": "P010",
+      "residual": -20.490934396598742
+    },
+    {
+      "position_id": "P001",
+      "residual": -6.731222055443548
     },
     {
       "position_id": "P006",
@@ -87,92 +87,92 @@
     {
       "day0": "2026-08-31",
       "asof_date": "2026-09-01",
-      "residual_bp": -11.492351706633363,
-      "noise_band_bp": 4.706787364260119,
+      "residual_bp": -11.492351706633356,
+      "noise_band_bp": 4.706787364260118,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.0001393767641857
+      "top_position_share": 1.0001393767641864
     },
     {
       "day0": "2026-09-01",
       "asof_date": "2026-09-02",
-      "residual_bp": 2.6641246367586096,
+      "residual_bp": 2.6641246367585607,
       "noise_band_bp": 4.153868170452946,
       "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 0.9765569889839539
+      "top_position_share": 0.9765569889839719
     },
     {
       "day0": "2026-09-02",
       "asof_date": "2026-09-03",
-      "residual_bp": 1.2732462786393937,
+      "residual_bp": 1.2732462786393768,
       "noise_band_bp": 5.177214468794647,
       "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 2.474583983829149
+      "top_position_share": 2.4745839838291817
     },
     {
       "day0": "2026-09-03",
       "asof_date": "2026-09-04",
-      "residual_bp": -8.931976319482107,
-      "noise_band_bp": 4.807884792803806,
+      "residual_bp": -8.93197631948212,
+      "noise_band_bp": 4.807884792803805,
       "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 0.8333686865761435
+      "top_position_share": 0.8333686865761423
     },
     {
       "day0": "2026-09-04",
       "asof_date": "2026-09-08",
-      "residual_bp": 3.266556184446713,
+      "residual_bp": 3.266556184446703,
       "noise_band_bp": 9.977349440309618,
       "status": "inconclusive",
       "top_position_id": "P002",
-      "top_position_share": 0.5356197944585712
+      "top_position_share": 0.535619794458573
     },
     {
       "day0": "2026-09-08",
       "asof_date": "2026-09-10",
-      "residual_bp": 18.160698925223805,
+      "residual_bp": 18.16069892522384,
       "noise_band_bp": 6.582078352517612,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.8760063866331022
+      "top_position_share": 0.8760063866331005
     },
     {
       "day0": "2026-09-16",
       "asof_date": "2026-09-17",
-      "residual_bp": 23.484302213167513,
+      "residual_bp": 23.484302213167478,
       "noise_band_bp": 6.9013714602634755,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.0436733915956669
+      "top_position_share": 1.0436733915956684
     },
     {
       "day0": "2026-09-25",
       "asof_date": "2026-09-28",
-      "residual_bp": -24.86362347064648,
-      "noise_band_bp": 6.075598585184477,
+      "residual_bp": -24.8636234706465,
+      "noise_band_bp": 6.075598585184475,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.0121863750542393
+      "top_position_share": 1.0121863750542386
     },
     {
       "day0": "2026-09-28",
       "asof_date": "2026-09-29",
-      "residual_bp": 2.4584960766098094,
+      "residual_bp": 2.4584960766098125,
       "noise_band_bp": 4.4086619628046995,
       "status": "ok",
       "top_position_id": "P002",
-      "top_position_share": 0.595852727240563
+      "top_position_share": 0.5958527272405623
     },
     {
       "day0": "2026-10-01",
       "asof_date": "2026-10-02",
-      "residual_bp": 9.856704451699398,
+      "residual_bp": 9.85670445169938,
       "noise_band_bp": 4.8354261588374445,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.1467158079218485
+      "top_position_share": 1.1467158079218507
     },
     {
       "day0": "2026-10-02",
@@ -186,11 +186,11 @@
     {
       "day0": "2026-10-05",
       "asof_date": "2026-10-06",
-      "residual_bp": 6.800418917526891,
+      "residual_bp": 6.800418917526894,
       "noise_band_bp": 4.648232267167782,
       "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 0.8698821157440997
+      "top_position_share": 0.8698821157440993
     },
     {
       "day0": "2026-10-06",
@@ -204,7 +204,7 @@
     {
       "day0": "2026-10-07",
       "asof_date": "2026-10-08",
-      "residual_bp": -6.7450278795717695,
+      "residual_bp": -6.74502787957177,
       "noise_band_bp": 5.6543619272755405,
       "status": "inconclusive",
       "top_position_id": "P008",
@@ -213,119 +213,128 @@
     {
       "day0": "2026-10-08",
       "asof_date": "2026-10-09",
-      "residual_bp": -4.203588907863858,
+      "residual_bp": -4.20358890786386,
       "noise_band_bp": 4.332413473199996,
       "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 0.6677944633405372
+      "top_position_share": 0.6677944633405368
     },
     {
       "day0": "2026-10-09",
       "asof_date": "2026-10-12",
-      "residual_bp": -7.3806395451150975,
+      "residual_bp": -7.380639545115082,
       "noise_band_bp": 3.6017774400903826,
       "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 1.0010917973342577
+      "top_position_share": 1.0010917973342597
     },
     {
       "day0": "2026-10-12",
       "asof_date": "2026-10-13",
-      "residual_bp": -11.967168827712179,
+      "residual_bp": -11.967168827712173,
       "noise_band_bp": 3.2224032750511715,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.975429708514987
+      "top_position_share": 0.9754297085149873
     },
     {
       "day0": "2026-10-13",
       "asof_date": "2026-10-14",
-      "residual_bp": -3.715462230233491,
-      "noise_band_bp": 6.789327918871458,
+      "residual_bp": -3.7154622302335207,
+      "noise_band_bp": 6.789327918871457,
       "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 0.7244661325974394
+      "top_position_share": 0.7244661325974336
     },
     {
       "day0": "2026-10-14",
       "asof_date": "2026-10-15",
-      "residual_bp": 12.591236937543998,
-      "noise_band_bp": 4.809421705966417,
+      "residual_bp": 12.591236937543979,
+      "noise_band_bp": 4.8094217059664155,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.9068429490609519
+      "top_position_share": 0.9068429490609533
     },
     {
       "day0": "2026-10-15",
       "asof_date": "2026-10-16",
-      "residual_bp": 3.0112624198287263,
+      "residual_bp": 3.0112624198287468,
       "noise_band_bp": 5.116417138715476,
       "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 1.3304567593050431
+      "top_position_share": 1.3304567593050343
     },
     {
       "day0": "2026-10-16",
       "asof_date": "2026-10-19",
-      "residual_bp": -19.077316751287043,
+      "residual_bp": -19.077316751287025,
       "noise_band_bp": 7.770584599240404,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 1.0883956000296597
+      "top_position_share": 1.0883956000296606
     },
     {
       "day0": "2026-10-19",
       "asof_date": "2026-10-20",
-      "residual_bp": 6.136646601712121,
+      "residual_bp": 6.136646601712126,
       "noise_band_bp": 3.3225039491105752,
       "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 0.8187133052017748
+      "top_position_share": 0.818713305201774
     },
     {
       "day0": "2026-10-20",
       "asof_date": "2026-10-21",
-      "residual_bp": 10.306370632553353,
+      "residual_bp": 10.306370632553387,
       "noise_band_bp": 5.847770903386003,
       "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 1.126103541496122
+      "top_position_share": 1.1261035414961182
     },
     {
       "day0": "2026-10-21",
       "asof_date": "2026-10-22",
-      "residual_bp": -1.0585185451054075,
+      "residual_bp": -1.0585185451054424,
       "noise_band_bp": 4.221120004617794,
       "status": "ok",
       "top_position_id": "P008",
-      "top_position_share": 1.249908108115546
+      "top_position_share": 1.2499081081155048
     },
     {
       "day0": "2026-10-22",
       "asof_date": "2026-10-26",
-      "residual_bp": -14.387314360225098,
+      "residual_bp": -14.387314360225117,
       "noise_band_bp": 4.624163191648823,
       "status": "alert",
       "top_position_id": "P008",
-      "top_position_share": 0.9294887982649452
+      "top_position_share": 0.929488798264944
     },
     {
       "day0": "2026-10-26",
       "asof_date": "2026-10-27",
-      "residual_bp": -3.986994292667143,
+      "residual_bp": -3.9869942926671413,
       "noise_band_bp": 5.125637625255481,
       "status": "inconclusive",
       "top_position_id": "P008",
-      "top_position_share": 1.0127854108134826
+      "top_position_share": 1.012785410813483
     },
     {
       "day0": "2026-10-27",
       "asof_date": "2026-10-28",
-      "residual_bp": -1.081346328573169,
-      "noise_band_bp": 5.559836838198252,
+      "residual_bp": 0.7016359815263967,
+      "noise_band_bp": 5.559662886000291,
+      "status": "inconclusive",
+      "top_position_id": "P008",
+      "top_position_share": 6.403040667145896
+    },
+    {
+      "day0": "2026-10-28",
+      "asof_date": "2026-10-29",
+      "residual_bp": -1.7273563067439597,
+      "noise_band_bp": 8.921068785167304,
       "status": "inconclusive",
       "top_position_id": "P002",
-      "top_position_share": 3.4785849594001776
+      "top_position_share": 2.9616948508611793
     }
   ],
   "improvement": {

@@ -259,8 +259,8 @@ to 11bp of NAV. Fitting SPX forwards from any trade in the session (Section 3.1)
 SPX options' artificial residuals: P003 and P007 fell from $758 and $334 to $87 and $39 a day on
 average. Guarding SVI wings past the last quote (Section 3.3) then removed the near-expiry AAPL
 call's: P004's summed absolute residual over 27 pairs fell from $37.6K to $2.0K. On the 16
-comparable pairs the residual is now 9.5bp; over all 27 stored pairs it is 8.9bp (median 6.8bp,
-worst 25bp), and the sum of each position's absolute residual is 10.5bp (1.8bp without P008).
+comparable pairs the residual is now 9.5bp; over all 28 stored pairs it is 8.6bp (median 6.8bp,
+worst 25bp), and the sum of each position's absolute residual is 10.4bp (1.9bp without P008).
 
 What remains: the explain's vol step is still one vega times the ATM move at the position's
 exposure dates. A parallel vol ladder, and vega by maturity bucket plus a skew sensitivity, were
@@ -493,7 +493,7 @@ than loosened to hide the platform difference.
 
 | Risk | Materiality | Mitigant / current state |
 |---|---|---|
-| P&L-explain residual | **Medium** — 8.9bp of NAV mean absolute residual over 27 real day pairs (median 6.8bp, worst 25bp), still above the 5bp threshold on average; almost all of what remains is P008 | Eight input and model causes found and fixed (Section 4), plus the SPX long-end forwards and the SVI wing guard; bucketed vega and skew measured and rejected |
+| P&L-explain residual | **Medium** — 8.6bp of NAV mean absolute residual over 28 real day pairs (median 6.8bp, worst 25bp), still above the 5bp threshold on average; almost all of what remains is P008 | Eight input and model causes found and fixed (Section 4), plus the SPX long-end forwards and the SVI wing guard; bucketed vega and skew measured and rejected |
 | Vol-shock stress approximation error | **Medium**, grows with shock size (~7-40% measured) | Documented and bounded; not eliminated; matters most for the largest stress-ladder shocks |
 | Residual monitoring alerts are logged, not paged | **Low** — daily alerts are visible in the log and dashboard but nobody is notified | Automated 5bp check with a noise band since 2026-09-10 / 2026-10; paging not built |
 | Two single names (JPM, XLE) have no real coverage | **Low** for this book (no positions assigned there), but blocks any future position in those names | Not currently mitigated; Step 8.3 (proxy modelling) would address this if built |

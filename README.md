@@ -983,8 +983,8 @@ vol waterfall from two real `MarketState`s; verified on the first real consecuti
 the automated pipeline produced (2026-08-31 -> 2026-09-01), where it found a genuine $178k
 residual, almost all in one position — see Step 13. Since 2026-10 every residual carries a Monte
 Carlo standard error (16 independently scrambled sub-runs) and alerts only when it exceeds the 5bp
-threshold by more than its noise (otherwise INCONCLUSIVE). Current state over 27 real day pairs:
-mean absolute residual 8.9bp of NAV (median day 6.8bp, worst 25bp). Since the SPX forward fix
+threshold by more than its noise (otherwise INCONCLUSIVE). Current state over 28 real day pairs:
+mean absolute residual 8.6bp of NAV (median day 6.8bp, worst 25bp). Since the SPX forward fix
 (2026-10-27) the SPX options' residuals no longer offset the autocallable's on some days, so the
 net book figure moved little (9.2 to 9.7bp on the same 26 pairs) while the sum of each position's
 absolute residual fell from 16.2 to 13.9bp (7.1 to 4.8bp without the autocallable). The spot step uses
@@ -1329,15 +1329,14 @@ numbers; if it still fails, the answer is kept but marked, and the daily log pri
 warning. The result (status, numbers checked, unsupported list, whether a retry ran) is stored on
 `ai_investigations` and shown on the site. Rerun on all 21 stored days: the first answer failed on
 6 (29%), the retry fixed 5, and 1 (5%) stayed flagged, a true positive ("the model explained only
--9,635.24", a number not in its data). Known limit: it checks numbers and units, not which
-quantity a number is attached to (the same answer calls a residual the "actual P&L" and passes).
+-9,635.24", a number not in its data). At first it checked numbers and units, not which
+quantity a number is attached to (the same answer calls a residual the "actual P&L" and passed;
+fixed 2026-10-30, below).
 A second full rerun on 2026-10-20 (after the position-lifecycle rebuild, 22 days): 1 retry, 0
 flagged; a third on 2026-10-25 (after the local-vol rebuild, 24 days): 19 verified, 4 flagged
 after the retry; a fourth on 2026-10-27 (after the SPX forward rebuild, 26 days): 25 verified
 (5 of them after the retry), 1 flagged; a fifth on 2026-10-29 (after the SVI wing rebuild, 27
-days): 27 verified (1 after the retry). Passing is not the same as right: on 2026-10-26 the
-answer calls a what-if reprice's -$548K the position's actual price change, which the check
-cannot catch. That run also showed leftover rows: a rerun that flagged
+days): 27 verified (1 after the retry). The fourth run also showed leftover rows: a rerun that flagged
 nothing, proposed nothing or made no tool call left the earlier run's rows for that day in place
 (the site featured a proposed change about a problem already fixed). Each run now clears its day's
 rows in those three tables first. The error rate varies from run to run, which is why the check runs on every
@@ -1345,6 +1344,23 @@ answer. That third run also found a gap: on 2026-10-02 the model wrote arithmeti
 (`23231.16 - 548.97`), parsing failed, and the answer went unchecked. Invalid JSON now uses the
 same single retry; an answer still not valid JSON is checked on its raw text and marked
 `unparsed`.
+
+**Numbers must be called what they are (2026-10-30).** Passing was not the same as right: on
+2026-10-26 the answer called a what-if reprice's -548,020.04 "the position's actual price change"
+and the what-if shocked delta "the explained change". Each number the model is given now carries
+the label it has in its input (actual, explained, residual, noise band, threshold, what-if
+result). Where the words just before a number in the answer name a quantity, the number must be
+that quantity in the data; a mismatch gets the same single retry, with a message saying what the
+number really is, and is stored as `mislabelled_numbers`. Re-scored offline on all 149 stored
+answers, it flagged 18 numbers in 13 answers the old check had passed, every one a real error on
+review: residuals and NAV called the actual P&L, residuals called the explained P&L, what-if
+results called actual or explained. The prototype's false alarms (threshold wording such as
+"noise wider than the 5bp threshold", "unexpected" read as "expected") were removed before it
+shipped. Rerun on all 28 days: 25 verified first time, 2 after the retry, 1 flagged (2026-10-09:
+P008's -1,237.70 called 27.2% of the -1,853.41 total; it is 66.8%). Known limit: it checks what a
+number is called, not the reasoning around it. The 2026-10-26 answer now describes its numbers
+correctly but still says the hypothetical 10% fall "led to" a price drop that explains the
+residual.
 
 **A real debugging finding along the way, not a cosmetic one.** The first three live runs against
 this exact breach pair all skipped tool use entirely — even with a "you MUST call the tool"
