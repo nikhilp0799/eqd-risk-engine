@@ -47,6 +47,8 @@ export function GroupedBars({
   format: formatName,
   height = 300,
   labels = true,
+  narrowLabels = true,
+  max,
 }: {
   data: Record<string, string | number>[];
   categoryKey: string;
@@ -56,12 +58,20 @@ export function GroupedBars({
   format: FormatName;
   height?: number;
   labels?: boolean;
+  /** False drops the cap labels on phone-width screens, where tightly grouped
+   * bars would overlap them; only for charts the page pairs with a table. */
+  narrowLabels?: boolean;
+  /** Upper bound for the axis when values cannot exceed it (e.g. 100 for shares in %). */
+  max?: number;
 }) {
   const format = FORMATTERS[formatName];
   const narrow = useNarrow();
   const values = data.flatMap((d) => series.map((s) => Number(d[s.key] ?? 0)));
   const maxAbs = Math.max(...values.map(Math.abs), 1e-9);
-  const { domain, ticks } = niceAxis(Math.min(0, ...values), Math.max(0, ...values));
+  const axis = niceAxis(Math.min(0, ...values), Math.max(0, ...values));
+  const domain: [number, number] =
+    max === undefined ? axis.domain : [axis.domain[0], Math.min(axis.domain[1], max)];
+  const ticks = axis.ticks.filter((t) => t <= domain[1]);
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 24, right: 8, left: 0, bottom: 0 }} barGap={2} barCategoryGap="24%">
@@ -80,7 +90,7 @@ export function GroupedBars({
         <Legend {...legendProps} />
         {series.map((s) => (
           <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color} maxBarSize={24} radius={[4, 4, 0, 0]} isAnimationActive={false}>
-            {labels && (
+            {labels && (narrowLabels || !narrow) && (
               <LabelList
                 dataKey={s.key}
                 position="top"

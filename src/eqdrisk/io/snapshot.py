@@ -30,6 +30,7 @@ from eqdrisk.io.schemas import (
     validate,
 )
 from eqdrisk.marketdata.calendar import last_n_trading_days
+from eqdrisk.marketdata.quality import DEFAULT_STALE_MINUTES, staleness_reference_ts
 
 NY_TZ = "America/New_York"
 
@@ -40,6 +41,14 @@ NY_TZ = "America/New_York"
 # a lost day can never be backfilled.
 RETRY_DELAYS_SECONDS: tuple[float, ...] = (5.0, 30.0)
 _sleep = time.sleep  # patched out in tests
+
+# Waits before re-fetching a chain whose feed looks frozen. On 2026-10-30 the
+# 16:30 pull got an SPX chain whose latest trade was 14:59 ET, so every quote
+# failed the 30-minute staleness filter and the day had no SPX surface; a
+# weekend re-pull has no bids, so such a day cannot be rebuilt later. How long
+# that lag lasted is unknown, so if it outlasts these waits the underlying is
+# left unwritten and a later re-run (without --force) can still fill it.
+FROZEN_FEED_DELAYS_SECONDS: tuple[float, ...] = (60.0, 300.0, 600.0)
 
 T = TypeVar("T")
 
@@ -163,6 +172,35 @@ def _snap_offset_minutes(
     return (asof_ts - canonical).total_seconds() / 60.0
 
 
+class FrozenFeedError(RuntimeError):
+    """The chain's latest trade is so old that every quote would fail the
+    staleness filter: the feed stopped updating, not the market."""
+
+
+def _frozen_feed(
+    raw_df: pd.DataFrame, asof: dt.date, asof_ts: pd.Timestamp, canonical_snap_time: dt.time
+) -> str | None:
+    """Why this chain looks frozen, or None if it does not. Frozen means its
+    latest trade is older than the staleness window measured from the same
+    reference `vol.implied` uses, so no quote could pass `classify_quotes`."""
+    if raw_df.empty or raw_df["last_trade_ts"].isna().all():
+        return None
+    latest = pd.to_datetime(raw_df["last_trade_ts"]).max().tz_convert(NY_TZ)
+    reference = staleness_reference_ts(asof_ts, asof, canonical_snap_time)
+    if (reference - latest).total_seconds() / 60.0 <= DEFAULT_STALE_MINUTES:
+        return None
+    return (
+        f"feed looks frozen, latest trade {latest.strftime('%Y-%m-%d %H:%M')} ET is more than "
+        f"{DEFAULT_STALE_MINUTES} min before {reference.strftime('%H:%M')} ET"
+    )
+
+
+def _write_raw(raw_df: pd.DataFrame, raw_root: Path, asof: dt.date, underlying: str) -> None:
+    raw_dir = raw_root / "chains" / f"asof_date={asof.isoformat()}" / f"underlying={underlying}"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    raw_df.to_parquet(raw_dir / "part-0.parquet", index=False)
+
+
 def _snapshot_chain(
     underlying: str,
     asof: dt.date,
@@ -170,16 +208,30 @@ def _snapshot_chain(
     raw_root: Path,
     chains_curated_root: Path,
     qc: QCReport,
+    canonical_snap_time: dt.time,
 ) -> None:
     raw_df = _with_retries(
         f"{underlying} option chain",
         lambda: sources.fetch_option_chain(underlying, asof_ts),
         qc.retries,
     )
+    for delay in (*FROZEN_FEED_DELAYS_SECONDS, None):
+        frozen = _frozen_feed(raw_df, asof, asof_ts, canonical_snap_time)
+        if frozen is None:
+            break
+        if delay is None:
+            _write_raw(raw_df, raw_root, asof, underlying)
+            raise FrozenFeedError(frozen)
+        qc.retries.append(f"{underlying} option chain: {frozen}, re-fetching in {delay:.0f}s")
+        _sleep(delay)
+        asof_ts = pd.Timestamp.now(tz=NY_TZ)
+        raw_df = _with_retries(
+            f"{underlying} option chain",
+            functools.partial(sources.fetch_option_chain, underlying, asof_ts),
+            qc.retries,
+        )
 
-    raw_dir = raw_root / "chains" / f"asof_date={asof.isoformat()}" / f"underlying={underlying}"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    raw_df.to_parquet(raw_dir / "part-0.parquet", index=False)
+    _write_raw(raw_df, raw_root, asof, underlying)
 
     prior_count = _prior_day_count(chains_curated_root, underlying, asof)
 
@@ -233,7 +285,15 @@ def run_snapshot(cfg: BaseConfig, asof: dt.date, force: bool = False) -> Snapsho
             qc.kept_existing.append(underlying)
             continue
         try:
-            _snapshot_chain(underlying, asof, asof_ts, raw_root, chains_curated_root, qc)
+            _snapshot_chain(
+                underlying,
+                asof,
+                asof_ts,
+                raw_root,
+                chains_curated_root,
+                qc,
+                cfg.canonical_snap_time,
+            )
         except Exception as exc:
             qc.failures[f"{underlying} option chain"] = _describe(exc)
             continue

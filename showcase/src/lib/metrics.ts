@@ -5,6 +5,7 @@ import aiAgentJson from "@/data/ai_agent.json";
 import deepHedgingJson from "@/data/deep_hedging.json";
 import robustnessJson from "@/data/deep_hedging_robustness.json";
 import pnlExplainJson from "@/data/pnl_explain.json";
+import volPcaJson from "@/data/vol_pca.json";
 import volSurfaceJson from "@/data/vol_surface.json";
 import { maturityLabel } from "@/lib/format";
 import type {
@@ -15,6 +16,7 @@ import type {
   RobustnessData,
   RobustnessRow,
   RobustnessScenario,
+  VolPcaData,
   VolSurfaceData,
 } from "@/lib/types";
 
@@ -23,6 +25,7 @@ export const deepHedging = deepHedgingJson as DeepHedgeData;
 export const robustness = robustnessJson as RobustnessData;
 export const pnlExplain = pnlExplainJson as PnlExplainData;
 export const volSurface = volSurfaceJson as VolSurfaceData;
+export const volPca = volPcaJson as VolPcaData;
 
 // ---- P&L explain -----------------------------------------------------------
 
@@ -227,4 +230,32 @@ export const pricing = {
       ? rmses[(rmses.length - 1) / 2]
       : (rmses[rmses.length / 2 - 1] + rmses[rmses.length / 2]) / 2,
   usedJointModel: volSurface.pillars.every((p) => p.model === "SSVI"),
+};
+
+// ---- Vol surface PCA -------------------------------------------------------
+
+export const VOL_PCA_NAMES: Record<string, string> = {
+  SPX: "S&P 500",
+  AAPL: "Apple",
+  NVDA: "NVIDIA",
+};
+
+const frontToOneYear = (n: VolPcaData["names"][number]) => {
+  const front = n.pc1_by_maturity[0];
+  const oneYear = n.pc1_by_maturity.find((m) => m.T === 1);
+  return oneYear ? front.loading / oneYear.loading : NaN;
+};
+const ratios = volPca.names.map(frontToOneYear).filter(Number.isFinite);
+
+export const volMoves = {
+  names: volPca.names.map((n) => ({
+    ...n,
+    label: VOL_PCA_NAMES[n.underlying] ?? n.underlying,
+    top3Pct: sum(n.explained_pct),
+  })),
+  minChanges: Math.min(...volPca.names.map((n) => n.n_changes)),
+  minTop3Pct: Math.min(...volPca.names.map((n) => sum(n.explained_pct))),
+  frontRatioLow: Math.min(...ratios),
+  frontRatioHigh: Math.max(...ratios),
+  windowDays: volPca.window_days,
 };

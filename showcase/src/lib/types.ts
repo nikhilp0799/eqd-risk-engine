@@ -176,3 +176,25 @@ export interface RobustnessData {
   history_independent: Record<string, number>;
   rows: RobustnessRow[];
 }
+
+/** Vol surface PCA for one name (`eqdrisk volpca`): how its implied-vol
+ * surface moves from one trading day to the next. */
+export interface VolPcaName {
+  underlying: string;
+  n_changes: number;
+  n_nodes: number;
+  first_change_date: string;
+  last_change_date: string;
+  /** Share of day-to-day variance explained by patterns 1-3, in %. */
+  explained_pct: number[];
+  /** Pattern 1 loading by maturity (mean over the included strikes). */
+  pc1_by_maturity: { T: number; loading: number }[];
+  /** Lowest |cosine| between a rolling window's pattern and the full sample's. */
+  lowest_window_match: Record<string, number>;
+}
+
+export interface VolPcaData {
+  asof_date: string;
+  window_days: number;
+  names: VolPcaName[];
+}

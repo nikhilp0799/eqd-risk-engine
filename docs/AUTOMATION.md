@@ -22,6 +22,15 @@ autocall observation in the next 7 days. If a due fixing is missing from the sto
 position is skipped with a reason rather than settled on a guess. Rolls are added by hand to
 `configs/portfolio.yaml` with an `active_from` date.
 
+**A frozen feed is re-fetched, not stored (since 2026-10-31).** On 2026-10-30 the 16:30 pull got
+an SPX chain whose latest trade was 14:59 ET (16:15 on a normal day), so every quote failed the
+30-minute staleness filter and the day had no SPX surface or P&L explain. A weekend re-pull could
+not rebuild it: it had Friday's trades but only 984 of 17,337 quotes still carried a bid. `ingest`
+now checks each chain's latest trade against the same staleness reference `iv` uses; if no quote
+could pass, it logs a retry and re-fetches after 1, 5 and 10 minutes. If the feed is still frozen
+the raw payload is kept but the curated chain is not written, so a later re-run the same evening
+(without `--force`) fetches that name again.
+
 **Re-running a past day is safe for the option chains (since 2026-10-14).** `eqdrisk ingest` keeps
 an existing chain snapshot for a date and fetches only the underlyings that are missing; pass
 `--force` to replace one on purpose. Before this, an after-hours re-run of the pipeline overwrote

@@ -322,6 +322,52 @@ RISK_FACTOR_SCHEMA = pa.schema(
 RISK_FACTOR_REQUIRED_NOT_NULL = ["asof_date", "underlying", "k", "T", "T_label", "w"]
 
 
+# Vol surface PCA (Step 8.2, `vol/pca.py`): one run per asof_date over every
+# stored day up to it. Changes are daily implied-vol moves in vol points.
+VOL_PCA_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("underlying", pa.string()),
+        ("pc", pa.int32()),  # 1-based, largest first
+        ("eigenvalue", pa.float64()),  # vol points squared
+        ("explained_share", pa.float64()),
+        ("n_changes", pa.int32()),
+        ("n_nodes", pa.int32()),
+        ("first_change_date", pa.date32()),
+        ("last_change_date", pa.date32()),
+    ]
+)
+VOL_PCA_REQUIRED_NOT_NULL = ["asof_date", "underlying", "pc", "eigenvalue", "explained_share"]
+
+VOL_PCA_LOADING_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("underlying", pa.string()),
+        ("pc", pa.int32()),
+        ("T_label", pa.string()),
+        ("T", pa.float64()),
+        ("k", pa.float64()),
+        ("loading", pa.float64()),
+        # Share of stored days the node lay inside quoted strikes (the inclusion test).
+        ("coverage", pa.float64()),
+    ]
+)
+VOL_PCA_LOADING_REQUIRED_NOT_NULL = ["asof_date", "underlying", "pc", "T_label", "k", "loading"]
+
+VOL_PCA_STABILITY_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("underlying", pa.string()),
+        ("window_end", pa.date32()),
+        ("pc", pa.int32()),
+        # |cos| between the window's and the full sample's loadings, 1 = same shape.
+        ("abs_cosine", pa.float64()),
+        ("explained_share", pa.float64()),
+    ]
+)
+VOL_PCA_STABILITY_REQUIRED_NOT_NULL = ["asof_date", "underlying", "window_end", "pc", "abs_cosine"]
+
+
 PNL_EXPLAIN_SCHEMA = pa.schema(
     [
         ("asof_date", pa.date32()),  # day1 — the date this explain run covers

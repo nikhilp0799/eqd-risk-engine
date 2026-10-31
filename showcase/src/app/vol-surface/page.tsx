@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import { GroupedBars } from "@/components/charts/GroupedBars";
 import { SensitivityLine } from "@/components/charts/SensitivityLine";
 import { SmileExplorer } from "@/components/charts/SmileExplorer";
 import { Card, DemoNote, Methodology, PageHeader, StatTile, Takeaway } from "@/components/ui";
-import { fmtDate, maturityLabel } from "@/lib/format";
-import { pricing, volSurface } from "@/lib/metrics";
+import { SERIES } from "@/lib/chartTheme";
+import { fmtDate, maturityLabel, pct } from "@/lib/format";
+import { pricing, volMoves, volSurface } from "@/lib/metrics";
 
 export const metadata: Metadata = {
   title: "Market-Consistent Pricing — EQD Risk Engine",
@@ -16,6 +18,13 @@ const ladderT = volSurface.pillars.find((p) => p.expiry === ladder.expiry)?.T;
 const delta = ladder.strike.map((strike, i) => ({ strike, value: ladder.delta_spot[i] }));
 // Stored vega is per 1.00 (100 vol points) change in volatility; shown per point.
 const vega = ladder.strike.map((strike, i) => ({ strike, value: ladder.vega[i] / 100 }));
+
+const patternBars = volMoves.names.map((n) => ({
+  name: n.label,
+  p1: n.explained_pct[0],
+  p2: n.explained_pct[1],
+  p3: n.explained_pct[2],
+}));
 
 export default function VolSurfacePage() {
   return (
@@ -76,6 +85,75 @@ export default function VolSurfacePage() {
         </div>
       </Card>
 
+      <Card
+        title="How the surface moves from day to day"
+        subtitle={`Each day's change across the surface, split into a few recurring patterns (principal components), over ${volMoves.minChanges} or more trading days of real history. For every name, three patterns account for at least ${pct(volMoves.minTop3Pct)} of the day-to-day movement.`}
+      >
+        <GroupedBars
+          data={patternBars}
+          categoryKey="name"
+          series={[
+            { key: "p1", label: "Pattern 1", color: SERIES[0] },
+            { key: "p2", label: "Pattern 2", color: SERIES[1] },
+            { key: "p3", label: "Pattern 3", color: SERIES[2] },
+          ]}
+          format="pct1"
+          max={100}
+          narrowLabels={false}
+        />
+        <div className="mt-6 flex flex-col gap-3 text-sm leading-relaxed text-ink-2">
+          <p>
+            <strong className="text-ink">Pattern 1</strong> is the whole surface rising or falling
+            together, with short-dated options moving about{" "}
+            {Math.round(volMoves.frontRatioLow)} to {Math.round(volMoves.frontRatioHigh)} times as
+            much as one-year options. Its shape holds in every {volMoves.windowDays}-day window of
+            the history.
+          </p>
+          <p>
+            <strong className="text-ink">Patterns 2 and 3</strong> are smaller: mostly short-dated
+            volatility moving against longer-dated and, for Apple and NVIDIA, downside strikes
+            moving against upside. Their shapes still shift from window to window, so they need more history before they
+            can be relied on.
+          </p>
+        </div>
+        <div className="mt-5 overflow-x-auto">
+          <table className="tabular w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-muted">
+                <th className="py-2 pr-4 font-medium">Underlying</th>
+                <th className="py-2 pr-4 text-right font-medium">Daily changes</th>
+                <th className="py-2 pr-4 text-right font-medium">Surface points</th>
+                <th className="py-2 pr-4 text-right font-medium">Pattern 1</th>
+                <th className="py-2 pr-4 text-right font-medium">Pattern 2</th>
+                <th className="py-2 pr-4 text-right font-medium">Pattern 3</th>
+                <th className="py-2 pr-4 text-right font-medium">Top three</th>
+                <th className="py-2 text-right font-medium">Pattern 1 shape match</th>
+              </tr>
+            </thead>
+            <tbody>
+              {volMoves.names.map((n) => (
+                <tr key={n.underlying} className="border-b border-border/60">
+                  <td className="py-2 pr-4 text-ink">{n.label}</td>
+                  <td className="py-2 pr-4 text-right">{n.n_changes}</td>
+                  <td className="py-2 pr-4 text-right">{n.n_nodes}</td>
+                  {n.explained_pct.map((x, i) => (
+                    <td key={i} className="py-2 pr-4 text-right">
+                      {pct(x, 1)}
+                    </td>
+                  ))}
+                  <td className="py-2 pr-4 text-right font-medium text-ink">{pct(n.top3Pct, 1)}</td>
+                  <td className="py-2 text-right">{n.lowest_window_match.pc1.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-2 text-xs text-muted">
+            Shape match: the lowest similarity (1 = identical) between pattern 1 fitted on any{" "}
+            {volMoves.windowDays}-day window and on the full history.
+          </p>
+        </div>
+      </Card>
+
       <Methodology>
         <p>
           <strong className="text-ink">Fitting.</strong> Quotes pass a quality filter (stale, crossed
@@ -84,6 +162,16 @@ export default function VolSurfacePage() {
           would be inconsistent across maturities (calendar arbitrage), the engine switches to a
           joint SSVI fit across all maturities.{" "}
           {pricing.usedJointModel && "On this date it did, which is why every maturity below shows SSVI."}
+        </p>
+        <p>
+          <strong className="text-ink">Surface movement.</strong> Each day the surface is read on a
+          fixed grid of strikes and maturities, and the patterns come from the day-to-day changes
+          in volatility at those points. Changes are measured in volatility points, because in
+          total variance the same move is about 24 times bigger at two years than at one month
+          and the long end would swamp everything else. Only points inside the quoted strikes on
+          at least 80% of days are used, since outside the quotes the surface is an extrapolation
+          that moves with the fit, not the market. Only changes between consecutive trading days
+          count.
         </p>
         <p>
           <strong className="text-ink">Validation.</strong> Black-76 prices and Greeks are
