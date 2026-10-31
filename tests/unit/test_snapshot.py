@@ -10,6 +10,7 @@ from eqdrisk.io.schemas import CHAIN_REQUIRED_NOT_NULL, CHAIN_SCHEMA, validate
 from eqdrisk.io.snapshot import (
     QCReport,
     _clean_chain,
+    _frozen_feed,
     _prior_day_count,
     _snap_offset_minutes,
     _with_retries,
@@ -207,3 +208,70 @@ def test_force_replaces_an_existing_snapshot(tmp_path, monkeypatch, make_chain_d
 
     assert result.qc.kept_existing == []
     assert set(result.qc.chain_rows) == {"SPX", "NVDA", "AAPL"}
+
+
+# --- frozen feed (2026-10-31): a chain whose latest trade is long before the close ---
+
+
+def _with_last_trade(df: pd.DataFrame, hour: int, minute: int) -> pd.DataFrame:
+    df = df.copy()
+    df["last_trade_ts"] = df["last_trade_ts"].map(lambda t: t.replace(hour=hour, minute=minute))
+    return df
+
+
+def test_frozen_feed_flags_a_chain_that_stopped_before_the_staleness_window(make_chain_df):
+    """The 2026-10-30 SPX pull: captured at 16:30, latest trade 14:59."""
+    asof = dt.date(2026, 10, 30)
+    capture = pd.Timestamp("2026-10-30 16:30", tz="America/New_York")
+    frozen = _with_last_trade(make_chain_df(asof, "SPX", 3), 14, 59)
+    why = _frozen_feed(frozen, asof, capture, dt.time(16, 0))
+    assert why is not None and "14:59" in why
+
+    normal = _with_last_trade(make_chain_df(asof, "SPX", 3), 15, 59)
+    assert _frozen_feed(normal, asof, capture, dt.time(16, 0)) is None
+
+
+def test_frozen_feed_measures_a_pre_market_run_against_the_prior_close(make_chain_df):
+    """Before the open, the prior session's last trades are current, not frozen."""
+    asof = dt.date(2026, 10, 30)
+    capture = pd.Timestamp("2026-10-30 07:00", tz="America/New_York")
+    chain = make_chain_df(dt.date(2026, 10, 29), "SPX", 3)
+    assert _frozen_feed(chain, asof, capture, dt.time(16, 0)) is None
+
+
+def test_a_frozen_chain_is_refetched_until_it_is_fresh(
+    tmp_path, monkeypatch, make_chain_df, no_sleep
+):
+    _fake_sources(monkeypatch, make_chain_df, failing=set())
+    pulls = iter([14, 14, 16])
+
+    def fetch_option_chain(underlying, asof_ts):
+        df = make_chain_df(dt.date(2026, 9, 15), underlying, 4)
+        return _with_last_trade(df, next(pulls), 0) if underlying == "SPX" else df
+
+    monkeypatch.setattr(snapshot_module.sources, "fetch_option_chain", fetch_option_chain)
+    result = run_snapshot(_cfg(tmp_path), dt.date(2026, 9, 15))
+
+    assert set(result.qc.chain_rows) == {"SPX", "NVDA", "AAPL"}
+    assert no_sleep == list(snapshot_module.FROZEN_FEED_DELAYS_SECONDS[:2])
+    assert sum("feed looks frozen" in r for r in result.qc.retries) == 2
+
+
+def test_a_chain_still_frozen_after_every_wait_is_left_for_a_rerun(
+    tmp_path, monkeypatch, make_chain_df, no_sleep
+):
+    _fake_sources(monkeypatch, make_chain_df, failing=set())
+
+    def fetch_option_chain(underlying, asof_ts):
+        df = make_chain_df(dt.date(2026, 9, 15), underlying, 4)
+        return _with_last_trade(df, 14, 59) if underlying == "SPX" else df
+
+    monkeypatch.setattr(snapshot_module.sources, "fetch_option_chain", fetch_option_chain)
+    result = run_snapshot(_cfg(tmp_path), dt.date(2026, 9, 15))
+
+    assert set(result.qc.chain_rows) == {"NVDA", "AAPL"}
+    assert "FrozenFeedError" in result.qc.failures["SPX option chain"]
+    assert no_sleep == list(snapshot_module.FROZEN_FEED_DELAYS_SECONDS)
+    day = "asof_date=2026-09-15"
+    assert (tmp_path / "raw" / "chains" / day / "underlying=SPX" / "part-0.parquet").exists()
+    assert not (tmp_path / "curated" / "chains" / day / "underlying=SPX").exists()

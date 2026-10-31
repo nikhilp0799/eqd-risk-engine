@@ -59,6 +59,7 @@ export function maturityLabel(T: number): string {
 export const FORMATTERS = {
   usdCompact,
   signedPct1: (x: number) => signedPct(x, 1),
+  pct1: (x: number) => pct(x, 1),
   fixed1: (x: number) => x.toFixed(1),
   fixed2: (x: number) => x.toFixed(2),
 } as const;

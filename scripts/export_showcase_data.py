@@ -35,6 +35,9 @@ DEEP_HEDGE_DATE = dt.date(2026, 9, 22)
 # Latest stored day (SPX keeps its long end daily since the 2026-10-27 forward fix).
 VOL_SURFACE_DATE = dt.date(2026, 10, 29)
 VOL_SURFACE_UNDERLYING = "SPX"
+# Vol surface PCA run over the whole stored history (`eqdrisk volpca`).
+VOL_PCA_DATE = dt.date(2026, 10, 30)
+VOL_PCA_UNDERLYINGS = ("SPX", "AAPL", "NVDA")
 # How the engine's explain was improved (follow-up section of
 # docs/incidents/2026-09-01_p008_autocallable_vega_residual.md). Fixed values: the
 # "before" figures come from the stored history before the input and model fixes,
@@ -106,6 +109,7 @@ IMPROVEMENT = {
 }
 
 K_GRID = np.linspace(-1.0, 1.0, 61)
+MIN_LADDER_STRIKES = 20
 
 
 def _read(table: str) -> pd.DataFrame:
@@ -280,10 +284,17 @@ def export_vol_surface() -> dict[str, Any]:
         (greeks_all["underlying"] == VOL_SURFACE_UNDERLYING)
         & (greeks_all["asof_date"] == VOL_SURFACE_DATE)
     ]
-    mid_expiry = surface.iloc[len(surface) // 2]["expiry"]
-    ladder_df = greeks_today[
-        (greeks_today["expiry"] == mid_expiry) & (greeks_today["cp"] == "C")
-    ].sort_values("strike")
+    # The middle calibrated expiry that also has a usable call ladder: on
+    # 2026-10-29 the plain middle one (2026-12-11) had no stored Greeks, and
+    # the site shipped empty delta/vega charts.
+    calls = greeks_today[greeks_today["cp"] == "C"]
+    counts = calls.groupby("expiry").size()
+    usable = surface[surface["expiry"].map(counts).fillna(0) >= MIN_LADDER_STRIKES]
+    if usable.empty:
+        raise ValueError(f"no expiry with {MIN_LADDER_STRIKES}+ call Greeks on {VOL_SURFACE_DATE}")
+    middle_T = surface["T"].iloc[len(surface) // 2]
+    mid_expiry = usable.loc[(usable["T"] - middle_T).abs().idxmin(), "expiry"]
+    ladder_df = calls[calls["expiry"] == mid_expiry].sort_values("strike")
     greeks_ladder = {
         "expiry": mid_expiry.isoformat(),
         "strike": list(ladder_df["strike"]),
@@ -302,6 +313,44 @@ def export_vol_surface() -> dict[str, Any]:
         "greeks_ladder": greeks_ladder,
     }
     _write("vol_surface", payload)
+    return payload
+
+
+def export_vol_pca() -> dict[str, Any]:
+    summary_all = _read("vol_pca")
+    loadings_all = _read("vol_pca_loadings")
+    stability_all = _read("vol_pca_stability")
+    names = []
+    for underlying in VOL_PCA_UNDERLYINGS:
+
+        def _today(df: pd.DataFrame, u: str = underlying) -> pd.DataFrame:
+            return df[(df["underlying"] == u) & (df["asof_date"] == VOL_PCA_DATE)]
+
+        summary = _today(summary_all).sort_values("pc")
+        if summary.empty:
+            raise ValueError(f"no vol_pca for {underlying} on {VOL_PCA_DATE}")
+        pc1 = _today(loadings_all)
+        pc1 = pc1[pc1["pc"] == 1]
+        by_maturity = pc1.groupby("T")["loading"].mean().sort_index()
+        stability = _today(stability_all)
+        lowest = stability.groupby("pc")["abs_cosine"].min()
+        first = summary.iloc[0]
+        names.append(
+            {
+                "underlying": underlying,
+                "n_changes": int(first["n_changes"]),
+                "n_nodes": int(first["n_nodes"]),
+                "first_change_date": first["first_change_date"],
+                "last_change_date": first["last_change_date"],
+                "explained_pct": [100.0 * float(x) for x in summary["explained_share"].iloc[:3]],
+                "pc1_by_maturity": [
+                    {"T": float(T), "loading": float(v)} for T, v in by_maturity.items()
+                ],
+                "lowest_window_match": {f"pc{int(pc)}": float(c) for pc, c in lowest.items()},
+            }
+        )
+    payload = {"asof_date": VOL_PCA_DATE, "window_days": 20, "names": names}
+    _write("vol_pca", payload)
     return payload
 
 
@@ -504,6 +553,7 @@ def main() -> None:
     export_deep_hedging()
     export_deep_hedging_robustness()
     export_vol_surface()
+    export_vol_pca()
     pnl_payload = export_pnl_explain()
     export_ai_agent(pnl_payload)
 

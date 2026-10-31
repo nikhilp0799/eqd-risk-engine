@@ -21,8 +21,8 @@ status.
 
 | Status | Steps |
 |---|---|
-| **Done** | 0–7 (data → curves → IV → calibration → pricing/Greeks → exotics → portfolio), 8.1 (risk-factor grid), 11.1 (historical replay stress), 11.2 (hypothetical stress grid), 12 (daily P&L explain), 13 (incident report), 14 (dashboard), 15 (model documentation), 16 (engineering polish) |
-| **Partial** | 8 (8.2 PCA / 8.3 proxy modelling need real multi-day history), 11 (11.3 conditional stress / 11.4 reverse stress need the same) |
+| **Done** | 0–7 (data → curves → IV → calibration → pricing/Greeks → exotics → portfolio), 8.1 (risk-factor grid), 8.2 (vol surface PCA), 11.1 (historical replay stress), 11.2 (hypothetical stress grid), 12 (daily P&L explain), 13 (incident report), 14 (dashboard), 15 (model documentation), 16 (engineering polish) |
+| **Partial** | 8 (8.3 proxy modelling needs more real history, and its VaR part needs Step 9), 11 (11.3 conditional stress / 11.4 reverse stress need the same) |
 | **Not started** | 9 (VaR) and 10 (backtesting) — blocked on the same real-history dependency as above |
 
 **Why some steps are deferred rather than skipped:** several of the acceptance criteria below (PCA
@@ -35,6 +35,10 @@ accumulating unattended.
 
 **Real findings so far, not just passing tests** — the project's own standard is honest numbers,
 not tuned-to-look-clean ones:
+- Vol surface PCA on real history (Step 8.2): three components explain 99.4% (SPX), 92.5% (AAPL)
+  and 95.5% (NVDA) of daily vol moves, but only after two corrections found on the data itself:
+  PCA on total variance was swamped by the 2y points, and unquoted extrapolated strikes produced a
+  fake second component. Only PC1 (level, front-weighted) is stable across rolling windows so far.
 - Black-76 price matches QuantLib to 1e-8; several Greeks match to 1e-6.
 - A genuine SPX calendar-arbitrage violation, found on real data, correctly triggered the SSVI
   fallback (Step 4).
@@ -771,7 +775,7 @@ Design intent — be able to explain each:
 
 ## Step 8 — Risk factors, PCA, and proxy modelling
 
-**Status: partially built.** 8.1 (the fixed risk-factor grid) is built and verified live. 8.2 (PCA) and 8.3 (proxy modelling) are deferred — both need a real, accumulating time series of daily Δw(k,T), which a single day's snapshot can't provide; see the status table above.
+**Status: partially built.** 8.1 (the fixed risk-factor grid) and 8.2 (PCA, run on 29-32 real daily changes per name, 2026-10-31) are built and verified live. 8.3 (proxy modelling) is deferred: a regression per grid node on ~30 changes would be rough, and its VaR-impact deliverable needs Step 9; see the status table above.
 
 ### 8.1 Building the risk-factor grid
 
@@ -794,6 +798,40 @@ Deliverables:
 - Scree plot and cumulative variance explained.
 - Loading heatmaps over the $(k,T)$ grid.
 - **Loading stability:** re-estimate on rolling windows and plot how the loadings drift. Factor instability is a real model risk and flagging it shows maturity.
+
+**Built (2026-10-31): `vol/pca.py`, `eqdrisk volpca --date X`, tables `vol_pca`, `vol_pca_loadings`,
+`vol_pca_stability`, shown on the site's Vol Surface page.** Two choices were forced by the real
+data rather than made up front (planning/vol_pca_plan.md):
+- **Vol points, not $\Delta w$.** $w = \sigma^2 T$, so the same vol move is about 24 times bigger
+  in $w$ at 2y than at 1m. PCA on $\Delta w$ put almost all of PC1 on the 2y downside wing. The
+  PCA runs on daily changes in implied vol; the stored grid stays in $w$.
+- **Only quoted grid points.** A node goes in only if it lies inside the quoted strikes of both
+  bracketing expiries on at least 80% of stored days (SPX 13 of 30 nodes, AAPL 15, NVDA 28).
+  Outside the quotes the surface is SVI extrapolation and moves with the fit, not the market: with
+  all 30 nodes, SPX's PC2 sat almost entirely on +10%/+20% strikes that are never quoted at 1m.
+
+Only changes between consecutive trading days count, so the carried surfaces of 2026-08-22 (a
+Saturday) and 2026-09-07 (Labor Day) and gaps in the history never show as one-day moves.
+
+| Name | Daily changes | Nodes | PC1 | PC2 | PC3 | PC1-3 | Lowest 20-day window match, PC1 / PC2 / PC3 |
+|---|---|---|---|---|---|---|---|
+| SPX | 29 | 13 | 94.7% | 3.7% | 1.0% | 99.4% | 0.99 / 0.72 / 0.49 |
+| AAPL | 32 | 15 | 75.6% | 10.1% | 6.8% | 92.5% | 0.97 / 0.61 / 0.01 |
+| NVDA | 32 | 28 | 67.3% | 23.2% | 5.0% | 95.5% | 0.94 / 0.93 / 0.66 |
+
+- **The >90% acceptance bar is met for all three names.**
+- **PC1 is a level move with a term structure built in.** Every loading has the same sign, and
+  short-dated vol moves about 3-4 times as much as 1y vol (mean loading at the shortest included
+  maturity over 1y: SPX 3.8x, AAPL 3.1x, NVDA 4.1x). Its shape is stable: in every 20-day window it
+  matches the full-sample PC1 to |cos| 0.94 or better.
+- **PC2 and PC3 do not follow the textbook order.** The README's table expects PC2 skew and PC3
+  term structure. Here PC2 is mostly front against back (SPX and AAPL: 1m ATM against the 1y
+  downside; NVDA: the 1m put wing against the 2y), and a downside-against-upside skew shape shows
+  up as PC3 for AAPL and NVDA. SPX's PC3 has no clean reading.
+- **Only PC1 is reliable yet.** PC2's shape drops to 0.61-0.72 in some windows for SPX and AAPL.
+  AAPL's PC3 (6.8%) and PC4 (3.8%) are close enough in size to swap places between windows, hence
+  the 0.01. That is a sample-size limit (~30 changes), not a model result. SPX's 94.7% PC1 is
+  probably also flattered by its node set, which is ATM and downside only, with no 2y.
 
 ### 8.3 Proxy modelling — the JD-specific piece
 

@@ -3,9 +3,10 @@
 **Document type:** model development document (SR 11-7 style)
 **Model owner:** Nikhil Pandey
 **Scope of this document:** Steps 1-14 of the engine as built and verified against real live
-market data through 2026-09-05. Steps 8.2/8.3 (PCA/proxy risk factors), 9/10 (VaR and backtesting),
-and 11.3/11.4 (conditional and reverse stress) are explicitly out of scope for this version — they
-are not yet built, for reasons given in Section 4.
+market data through 2026-09-05, plus Step 8.2 (vol surface PCA, added 2026-10-31 on the stored
+history to 2026-10-30). Steps 8.3 (proxy risk factors), 9/10 (VaR and backtesting), and 11.3/11.4
+(conditional and reverse stress) are explicitly out of scope for this version — they are not yet
+built, for reasons given in Section 4.
 
 ---
 
@@ -25,7 +26,7 @@ underlyings (SPX, AAPL, NVDA, JPM, XLE). It performs five functions:
 5. Runs hypothetical and historical stress scenarios against the book.
 
 **What this model does not do**, by design, not oversight: it does not compute VaR or Expected
-Shortfall (Section 4), it does not backtest a VaR series, it does not run PCA-based or
+Shortfall (Section 4), it does not backtest a VaR series, it does not run
 econometric-proxy risk factors, and it does not support conditional or reverse stress testing. All
 four are blocked on the same root cause — insufficient real historical depth — and are discussed
 honestly in Section 4 rather than approximated with a token or vacuous version.
@@ -192,8 +193,20 @@ count once the correction is applied — see Section 7).
 The only risk-factor representation currently built is a **fixed vol grid**: total implied variance
 $w(k,T)$ evaluated at a fixed $(k,T)$ grid from each day's calibrated surface, requiring no forward
 curve at all (a deliberately simpler, more robust representation than a moneyness grid that would
-depend on that day's own forward). PCA-based risk factors (8.2) and econometric proxy models for
-sparse names (8.3) are specified in the original plan but not built — see Section 4.
+depend on that day's own forward). Econometric proxy models for sparse names (8.3) are specified in
+the original plan but not built — see Section 4.
+
+**PCA of daily vol moves (Step 8.2, `vol/pca.py`).** Run per name over all stored days, on daily
+changes in implied vol (vol points, $\sigma = \sqrt{w/T}$) between consecutive trading days only,
+at grid nodes inside the quoted strikes of both bracketing expiries on at least 80% of days. Vol
+points rather than $\Delta w$, because $\Delta w$ scales with $T$ and put almost all of PC1 on the 2y
+row; quoted nodes only, because extrapolated nodes move with the SVI fit, not the market, and with
+them SPX's PC2 sat on never-quoted upside strikes. On the history to 2026-10-30 (29-32 changes per
+name) PC1-3 explain 99.4% (SPX, 13 nodes), 92.5% (AAPL, 15) and 95.5% (NVDA, 28). PC1 is a
+same-sign level move, 3-4 times larger at 1m than at 1y, and stable across every 20-day window
+(|cos| >= 0.94). PC2 and PC3 are not: PC2's lowest window match is 0.61-0.72 for SPX and AAPL, and
+AAPL's PC3 and PC4 swap between windows. These components are not yet used for risk (no VaR
+exists); they are a measured description of how the surfaces move.
 
 ### 3.5 P&L explain methodology
 
@@ -301,10 +314,11 @@ recalibration step per cell).
 an oversight: the acceptance criteria for these steps (a 250-1000 day real-history window, a
 regulatory-convention size) require real, accumulating daily calibrated-surface history that a
 free-tier, single-snapshot-per-day pipeline can only build up one real trading day at a time — as
-of this document, roughly 5-9 real trading days exist. Building a token or vacuous VaR against
+of 2026-10-30, 41 stored surface days exist (29-32 consecutive-day changes per name), enough for
+the Step 8.2 PCA but far short of a VaR window. Building a token or vacuous VaR against
 insufficient history was explicitly rejected in favor of building Step 11's history-independent
 stress-testing parts instead (a documented order deviation from the original step sequence). The
-same root cause blocks 8.2 (PCA risk factors), 8.3 (proxy modelling for sparse names), and 11.3/11.4
+same root cause blocks 8.3 (proxy modelling for sparse names) and 11.3/11.4
 (conditional and reverse stress, which need a real historical beta/covariance estimate).
 
 **The residual monitor is automated but simple.** Every daily run checks the total and
@@ -520,7 +534,7 @@ of it not yet implemented (marked accordingly):
 4. **VaR exception tracking (Kupiec/Christoffersen/traffic-light/PLA)** — *not applicable*, since no
    VaR series exists yet.
 5. **Real-history depth tracking** — a simple count of real trading days accumulated so far,
-   since several steps' eventual activation (8.2/8.3/11.3/11.4 at tens-to-hundreds of days, 9/10 at
+   since several steps' eventual activation (8.3/11.3/11.4 at tens-to-hundreds of days, 9/10 at
    250-1,000) is gated purely on this growing. *Implemented*: the dashboard's VaR/Backtest tabs
    already report this count honestly rather than hiding behind a generic "not available" message.
 6. **Automation health** — whether the daily `launchd` job actually ran and succeeded.

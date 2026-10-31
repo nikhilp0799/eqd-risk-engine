@@ -162,6 +162,24 @@ def riskfactors(
 
 
 @app.command()
+def volpca(
+    date: str = typer.Option(..., help="Use stored history up to this date, YYYY-MM-DD"),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """PCA of daily implied-vol changes on the risk-factor grid, per underlying,
+    with rolling-window stability of the loadings (Step 8.2).
+
+    Not in the daily pipeline: it reads the whole stored history.
+    """
+    from eqdrisk.vol.pca import run_vol_pca
+
+    cfg = BaseConfig.from_yaml(config)
+    asof = dt.date.fromisoformat(date)
+    result = run_vol_pca(cfg, asof)
+    typer.echo(result.render())
+
+
+@app.command()
 def historicalreplay(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     portfolio_path: str = typer.Option(
