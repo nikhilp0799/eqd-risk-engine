@@ -38,6 +38,11 @@ VOL_SURFACE_UNDERLYING = "SPX"
 # Vol surface PCA run over the whole stored history (`eqdrisk volpca`).
 VOL_PCA_DATE = dt.date(2026, 10, 30)
 VOL_PCA_UNDERLYINGS = ("SPX", "AAPL", "NVDA")
+# Latest full VaR run (`eqdrisk var`); the time series covers every stored day.
+VAR_DATE = dt.date(2026, 10, 29)
+VAR_WINDOW = 500
+VAR_HISTOGRAM_BINS = 30
+VAR_HISTOGRAM_TOP_QUANTILE = 0.99
 # How the engine's explain was improved (follow-up section of
 # docs/incidents/2026-09-01_p008_autocallable_vega_residual.md). Fixed values: the
 # "before" figures come from the stored history before the input and model fixes,
@@ -354,6 +359,173 @@ def export_vol_pca() -> dict[str, Any]:
     return payload
 
 
+def export_var() -> dict[str, Any]:
+    summary = _read("var_summary")
+    summary["asof_date"] = pd.to_datetime(summary["asof_date"]).dt.date
+    s = summary[summary["asof_date"] == VAR_DATE]
+    if s.empty or not (s["horizon_days"] == 10).any():
+        raise ValueError(f"no full VaR run stored for {VAR_DATE}")
+
+    def pick(measure: str, method: str, horizon: int = 1, conf: float = 0.99, **kw: Any) -> float:
+        sel = (
+            (s["measure"] == measure)
+            & (s["method"] == method)
+            & (s["horizon_days"] == horizon)
+            & (s["confidence"].round(4) == conf)
+            & (s["window_days"] == kw.get("window", VAR_WINDOW))
+            & (s["factors"] == kw.get("factors", "all"))
+            & (s["positions"] == kw.get("positions", "book"))
+        )
+        rows = s.loc[sel, "value"]
+        if len(rows) != 1:
+            raise ValueError(f"expected one {measure}/{method}/{horizon}d/{conf}/{kw} row")
+        return float(rows.iloc[0])
+
+    runtime = s[s["measure"] == "runtime_seconds"].set_index("method")
+    es_lh = float(s.loc[s["measure"] == "ES_LH", "value"].iloc[0])
+
+    scen = _read("var_scenarios")
+    scen["asof_date"] = pd.to_datetime(scen["asof_date"]).dt.date
+    scen["scenario_date"] = pd.to_datetime(scen["scenario_date"]).dt.date
+    one = scen[(scen["asof_date"] == VAR_DATE) & (scen["horizon_days"] == 1)]
+    one = one[one["factors"] == "all"]
+    window_dates = sorted(one["scenario_date"].unique())[-VAR_WINDOW:]
+    one = one[one["scenario_date"].isin(window_dates)]
+    book = one.groupby("scenario_date")[["pnl_full", "pnl_taylor"]].sum()
+    var_full = pick("VaR", "full")
+    # Range cut at the 99th percentile: a few large gains (vol spikes, good for the
+    # long variance swap) would otherwise squeeze the loss side into a sliver.
+    hist_top = float(np.quantile(book["pnl_full"], VAR_HISTOGRAM_TOP_QUANTILE))
+    shown = book["pnl_full"][book["pnl_full"] <= hist_top]
+    counts, edges = np.histogram(shown, bins=VAR_HISTOGRAM_BINS)
+
+    labels = _position_labels()
+    positions = []
+    for pid, g in one.groupby("position_id"):
+        rms_full = float(np.sqrt((g["pnl_full"] ** 2).mean()))
+        if rms_full < 1.0:
+            continue  # settled: no market risk left
+        slope = float(np.polyfit(g["pnl_full"], g["pnl_taylor"], 1)[0])
+        gap = g["pnl_taylor"] - g["pnl_full"]
+        worst_gap = g.loc[gap.abs().idxmax()]
+        positions.append(
+            {
+                "id": pid,
+                "label": labels.get(pid, pid),
+                "rms_full": rms_full,
+                "rms_gap": float(np.sqrt((gap**2).mean())),
+                "taylor_capture": slope,
+                "max_gap": {
+                    "date": str(worst_gap["scenario_date"]),
+                    "full": float(worst_gap["pnl_full"]),
+                    "taylor": float(worst_gap["pnl_taylor"]),
+                },
+            }
+        )
+    positions.sort(key=lambda p: -p["rms_full"])
+    worst = book.sort_values("pnl_full").head(5)
+
+    series = summary[
+        (summary["measure"] == "VaR")
+        & (summary["horizon_days"] == 1)
+        & (summary["window_days"] == VAR_WINDOW)
+        & (summary["confidence"].round(4) == 0.99)
+        & (summary["factors"] == "all")
+        & (summary["positions"] == "book")
+        & (summary["asof_date"] <= VAR_DATE)
+    ].pivot_table(index="asof_date", columns="method", values="value")
+
+    betas = _read("proxy_betas")
+    betas["asof_date"] = pd.to_datetime(betas["asof_date"]).dt.date
+    b = betas[betas["asof_date"] == VAR_DATE]
+    proxy_names = []
+    for u in VOL_PCA_UNDERLYINGS:
+        bu = b[b["underlying"] == u]
+        atm = bu[(bu["k"] == 0.0) & (bu["T_label"] == "1m")]
+        proxy_names.append(
+            {
+                "underlying": u,
+                "label": UNDERLYING_NAMES[u],
+                "index": str(bu["index"].iloc[0]),
+                "n_changes": int(bu["n_changes"].iloc[0]),
+                "n_nodes": len(bu),
+                "r2_median": float(bu["r2"].median()),
+                "atm_1m_beta": float(atm["beta"].iloc[0]) if len(atm) else None,
+                "atm_1m_r2": float(atm["r2"].iloc[0]) if len(atm) else None,
+            }
+        )
+    errors = _read("proxy_errors")
+    errors["asof_date"] = pd.to_datetime(errors["asof_date"]).dt.date
+    e = errors[errors["asof_date"] == VAR_DATE]
+    by_day = e.groupby("change_date")[["pnl_true", "pnl_proxy"]].sum()
+    err = by_day["pnl_proxy"] - by_day["pnl_true"]
+    err_by_position = (
+        e.assign(err=e["pnl_proxy"] - e["pnl_true"])
+        .groupby("position_id")["err"]
+        .apply(lambda x: float(np.sqrt((x**2).mean())))
+    )
+    worst_err_day = err.abs().idxmax()
+
+    payload = {
+        "asof_date": VAR_DATE.isoformat(),
+        "window_days": VAR_WINDOW,
+        "n_scenarios": len(book),
+        "first_scenario_date": str(window_dates[0]),
+        "var1": {"full": var_full, "taylor": pick("VaR", "taylor")},
+        "es1": {"full": pick("ES", "full"), "taylor": pick("ES", "taylor")},
+        "var1_ex_varswap": pick("VaR", "full", positions="book_ex_varswap"),
+        "var10": {
+            "overlapping": pick("VaR", "full", 10),
+            "sqrt10": pick("VaR", "sqrt10_full", 10),
+        },
+        "windows": [
+            {
+                "window": w,
+                "var_full": pick("VaR", "full", window=w),
+                "var_taylor": pick("VaR", "taylor", window=w),
+            }
+            for w in (250, 500, 1000)
+        ],
+        "es10": {
+            f: pick("ES", "full", 10, 0.975, factors=f)
+            for f in ("all", "spot", "vol", "single_name_vol", "LH10", "LH20", "LH60")
+        },
+        "es10_lh_adjusted": es_lh,
+        "runtime": {
+            "full_seconds": float(runtime.loc["full", "value"]),
+            "taylor_seconds": float(runtime.loc["taylor", "value"]),
+        },
+        "histogram": [
+            {"lo": float(lo), "hi": float(hi), "count": int(c)}
+            for lo, hi, c in zip(edges[:-1], edges[1:], counts, strict=True)
+        ],
+        "histogram_hidden": {"count": int((book["pnl_full"] > hist_top).sum()), "above": hist_top},
+        "worst_days": [
+            {"date": str(d), "full": float(r["pnl_full"]), "taylor": float(r["pnl_taylor"])}
+            for d, r in worst.iterrows()
+        ],
+        "positions": positions,
+        "series": [
+            {"date": str(d), "full": float(r["full"]), "taylor": float(r["taylor"])}
+            for d, r in series.iterrows()
+        ],
+        "proxy": {
+            "names": proxy_names,
+            "n_days": len(by_day),
+            "true_sd": float(by_day["pnl_true"].std()),
+            "rms_error": float(np.sqrt((err**2).mean())),
+            "varswap_rms_error": float(err_by_position.get("P006", 0.0)),
+            "worst_day": {
+                "date": str(worst_err_day),
+                "true": float(by_day.loc[worst_err_day, "pnl_true"]),
+                "proxy": float(by_day.loc[worst_err_day, "pnl_proxy"]),
+            },
+        },
+    }
+    _write("var", payload)
+    return payload
+
+
 def export_pnl_explain() -> dict[str, Any]:
     steps_all = _read("pnl_explain")
     by_pos_all = _read("pnl_explain_by_position")
@@ -554,6 +726,7 @@ def main() -> None:
     export_deep_hedging_robustness()
     export_vol_surface()
     export_vol_pca()
+    export_var()
     pnl_payload = export_pnl_explain()
     export_ai_agent(pnl_payload)
 

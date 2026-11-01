@@ -198,3 +198,58 @@ export interface VolPcaData {
   window_days: number;
   names: VolPcaName[];
 }
+
+export interface VarPosition {
+  id: string;
+  label: string;
+  /** Root-mean-square 1-day P&L over the scenarios, full revaluation. */
+  rms_full: number;
+  /** Root-mean-square gap, Greeks shortcut minus full revaluation. */
+  rms_gap: number;
+  /** Slope of shortcut P&L on full-revaluation P&L: 1 = captures it all. */
+  taylor_capture: number;
+  /** The replayed day with the largest shortcut error for this position. */
+  max_gap: { date: string; full: number; taylor: number };
+}
+
+export interface VarProxyName {
+  underlying: string;
+  label: string;
+  index: string;
+  n_changes: number;
+  n_nodes: number;
+  r2_median: number;
+  atm_1m_beta: number | null;
+  atm_1m_r2: number | null;
+}
+
+export interface VarData {
+  asof_date: string;
+  window_days: number;
+  n_scenarios: number;
+  first_scenario_date: string;
+  var1: { full: number; taylor: number };
+  es1: { full: number; taylor: number };
+  var1_ex_varswap: number;
+  var10: { overlapping: number; sqrt10: number };
+  windows: { window: number; var_full: number; var_taylor: number }[];
+  /** 10-day ES 97.5% by which factors moved (all / spot / vol / single_name_vol) and
+   * by liquidity-horizon bucket (LH10 / LH20 / LH60). */
+  es10: Record<string, number>;
+  es10_lh_adjusted: number;
+  runtime: { full_seconds: number; taylor_seconds: number };
+  histogram: { lo: number; hi: number; count: number }[];
+  /** Replayed days with gains beyond the histogram's range, left out of it. */
+  histogram_hidden: { count: number; above: number };
+  worst_days: { date: string; full: number; taylor: number }[];
+  positions: VarPosition[];
+  series: { date: string; full: number; taylor: number }[];
+  proxy: {
+    names: VarProxyName[];
+    n_days: number;
+    true_sd: number;
+    rms_error: number;
+    varswap_rms_error: number;
+    worst_day: { date: string; true: number; proxy: number };
+  };
+}

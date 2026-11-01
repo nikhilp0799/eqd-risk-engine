@@ -5,13 +5,18 @@ import { STATUS_LABELS, hedging, pnl, pnlExplain, pricing } from "@/lib/metrics"
 
 // Not derived from exported data: the repo's own test count at the time of the
 // last site update (`pytest --collect-only`).
-const TEST_COUNT = "1,924";
+const TEST_COUNT = "1,949";
 
 const CAPABILITIES = [
   {
     href: "/pnl-explain",
     title: "Daily P&L Explain",
     body: "Every morning, see what made or lost money, split into time decay, rates, stock moves and volatility. Anything the numbers can't account for is flagged.",
+  },
+  {
+    href: "/market-risk",
+    title: "Market Risk",
+    body: "How much the book could lose on a bad day: years of real market moves replayed on today's positions, every position fully repriced, and checked against the faster shortcut most systems use.",
   },
   {
     href: "/ai-agent",
@@ -167,7 +172,7 @@ export default function Home() {
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-ink">What it does</h2>
           <p className="mt-2 max-w-2xl text-ink-2">
-            Four views of the same book, each one open with real output.
+            Five views of the same book, each one open with real output.
           </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">

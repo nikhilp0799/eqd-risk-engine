@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 const LINKS = [
   { href: "/pnl-explain", label: "P&L Explain" },
+  { href: "/market-risk", label: "Market Risk" },
   { href: "/ai-agent", label: "AI Risk Analyst" },
   { href: "/deep-hedging", label: "Hedging" },
   { href: "/vol-surface", label: "Pricing" },

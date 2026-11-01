@@ -43,12 +43,14 @@ import dataclasses
 import datetime as dt
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from scipy.interpolate import CubicSpline
 
 from eqdrisk.config import BaseConfig
 from eqdrisk.io import store
@@ -75,7 +77,13 @@ from eqdrisk.pricing.blackscholes import compute_greeks
 from eqdrisk.pricing.varswap import fair_variance_strike_from_w_func
 from eqdrisk.stress.shock import MarketShock, shock_local_vol_grid, shocked_spot, shocked_w
 from eqdrisk.vol.implied import EXTREME_K_MULTIPLE
-from eqdrisk.vol.local_vol import LocalVolGrid, build_local_vol_grid, local_vol_pillars
+from eqdrisk.vol.local_vol import (
+    LocalVolGrid,
+    build_local_vol_grid,
+    local_variance_at,
+    local_vol_pillars,
+    moved_grid,
+)
 
 EXPIRY_BUCKETS = [
     (0.25, "0-3m"),
@@ -133,7 +141,16 @@ class MCSettings:
     # Exotic theta by one-day revaluation (same seed): the time step used to
     # explain nothing for MC exotics. About one extra reprice per mark.
     exotic_theta: bool = True
+    # False prices MC exotics without their bumped Greeks (left at zero): VaR's
+    # hundreds of scenario revaluations need prices only, at ~1/10 the cost.
+    greeks: bool = True
 
+
+# Variance swap base slice (MarketState.w_slice): exact points, and their span
+# as a multiple of the unshocked replication range, wide enough for a scenario
+# that triples ATM vol.
+VARSWAP_SLICE_POINTS = 241
+VARSWAP_SLICE_SPAN = 3.0
 
 # Spot bump for vanillas' closed-form sticky-moneyness delta/gamma.
 VANILLA_SM_BUMP_FRAC = 0.01
@@ -231,6 +248,8 @@ class PositionMark:
     # observation dates, otherwise its maturity. The P&L explain measures the
     # day's vol move there. None = [T].
     vol_times: list[float] | None = None
+    # Variance swaps: today's fair strike (vol points), which VaR revalues against.
+    fair_strike: float | None = None
 
     @property
     def expiry_bucket(self) -> str:
@@ -315,6 +334,39 @@ class MarketState:
     surface: dict[str, pd.DataFrame]
     forward_curve: dict[str, ForwardCurve]
     grids: dict[str, LocalVolGrid]
+    # Unshocked total variance along k at one maturity, per (underlying, T), for
+    # variance swap replication: built once, then reused by every shocked
+    # revaluation (VaR runs hundreds) instead of re-interpolating the surface in
+    # T at each of the strip's strikes.
+    # Points only: scipy's CubicSpline does not pickle, and VaR ships the state
+    # to worker processes.
+    w_slices: dict[tuple[str, float], tuple[np.ndarray, np.ndarray]] = field(default_factory=dict)
+
+    def w_slice(self, underlying: str, T: float) -> Callable[[np.ndarray], np.ndarray]:
+        """Unshocked w(k) at maturity T: exact at VARSWAP_SLICE_POINTS strikes
+        spanning VARSWAP_SLICE_SPAN times the replication range, cubic between,
+        exact again outside the span."""
+        surface = self.surface[underlying]
+        key = (underlying, T)
+        if key not in self.w_slices:
+            atm = local_variance_at(surface, 0.0, T)
+            if atm is None:
+                raise ValueError(f"not enough calibrated expiries to price at T={T:.3f}")
+            k_max = VARSWAP_SLICE_SPAN * EXTREME_K_MULTIPLE * float(np.sqrt(atm.w))
+            ks = np.linspace(-k_max, k_max, VARSWAP_SLICE_POINTS)
+            w = np.array([shocked_w(surface, float(k), T, MarketShock()) for k in ks])
+            self.w_slices[key] = (ks, w)
+        ks, w_points = self.w_slices[key]
+        spline = CubicSpline(ks, w_points)
+
+        def w_func(k: np.ndarray) -> np.ndarray:
+            k = np.atleast_1d(np.asarray(k, dtype=float))
+            out = np.asarray(spline(k), dtype=float)
+            for i in np.flatnonzero((k < ks[0]) | (k > ks[-1])):
+                out[i] = shocked_w(surface, float(k[i]), T, MarketShock())
+            return out
+
+        return w_func
 
 
 def build_grids_for_state(
@@ -505,7 +557,7 @@ def mark_with_state(
                     p,
                     asof,
                     cfg,
-                    state.surface[u],
+                    partial(state.w_slice, u),
                     state.forward_curve[u],
                     state.curve,
                     position_shock,
@@ -653,19 +705,22 @@ def _mark_varswap(
     p: VarSwapPosition,
     asof: dt.date,
     cfg: BaseConfig,
-    surface: pd.DataFrame,
+    w_slice: Callable[[float], Callable[[np.ndarray], np.ndarray]],
     fwd_curve: ForwardCurve,
     curve: Curve,
     shock: MarketShock,
 ) -> PositionMark:
+    """`w_slice(T)`: the unshocked w(k) at maturity T (`MarketState.w_slice`)."""
     T = year_fraction(asof, p.expiry, cfg.daycount)
     forward = fwd_curve.forward(T) * (1 + shock.spot_shock_pct)
     discount_factor = curve.discount_factor(T)
+    base_w = w_slice(T)
 
     def w_func(k: np.ndarray) -> np.ndarray:
-        return np.array([shocked_w(surface, float(kk), T, shock) for kk in np.atleast_1d(k)])
+        k = np.atleast_1d(np.asarray(k, dtype=float))
+        return base_w(k) * shock.w_multiplier_array(k, np.asarray(T))
 
-    atm_iv = float(np.sqrt(max(shocked_w(surface, 0.0, T, shock), 1e-12) / T))
+    atm_iv = float(np.sqrt(max(float(w_func(np.array([0.0]))[0]), 1e-12) / T))
     k_cap = EXTREME_K_MULTIPLE * atm_iv * np.sqrt(T)
     fair_var = fair_variance_strike_from_w_func(w_func, forward, T, discount_factor, -k_cap, k_cap)
     fair_strike_pct = float(np.sqrt(max(fair_var, 0.0)) * 100)
@@ -680,6 +735,7 @@ def _mark_varswap(
         vega=p.vega_notional,
         k=None,
         note=f"fair_strike={fair_strike_pct:.2f}% (marked as a fresh swap at its own fair strike)",
+        fair_strike=fair_strike_pct,
     )
 
 
@@ -704,14 +760,21 @@ def _mark_barrier(
     mc_settings: MCSettings,
 ) -> PositionMark:
     T = year_fraction(asof, p.expiry, cfg.daycount)
-    spot = shocked_spot(spot, shock)
+    base_spot, spot = spot, shocked_spot(spot, shock)
     forward = fwd_curve.forward(T) * (1 + shock.spot_shock_pct)
     r = curve.zero_rate(T)
     q = _implied_q(spot, forward, r, T)
-    grid = shock_local_vol_grid(grid, fwd_curve, shock)
+    # Sticky moneyness, as the vanillas and the P&L explain: the vol shock is set
+    # in log-moneyness, then the grid moves with spot.
+    grid = moved_grid(shock_local_vol_grid(grid, fwd_curve, shock), spot, base_spot)
     T_next = year_fraction(asof + dt.timedelta(days=1), p.expiry, cfg.daycount)
 
     def greeks_fn(n_paths: int, seed: int) -> SimpleNamespace:
+        if not mc_settings.greeks:
+            sim = simulate_down_and_in_put(
+                spot, p.barrier, T, grid, r, q, n_paths, mc_settings.barrier_n_steps, seed
+            )
+            return SimpleNamespace(price=sim.price_and_stderr(p.strike, float(np.exp(-r * T)))[0])
         g = down_and_in_put_greeks(
             spot,
             p.strike,
@@ -776,11 +839,13 @@ def _mark_autocall(
     spot, re-issuing the note at the money every day."""
     status = status or lifecycle.PositionStatus()
     T = year_fraction(asof, p.expiry, cfg.daycount)
-    spot = shocked_spot(spot, shock)
+    base_spot, spot = spot, shocked_spot(spot, shock)
     forward = fwd_curve.forward(T) * (1 + shock.spot_shock_pct)
     r = curve.zero_rate(T)
     q = _implied_q(spot, forward, r, T)
-    grid = shock_local_vol_grid(grid, fwd_curve, shock)
+    # Sticky moneyness, as the vanillas and the P&L explain: the vol shock is set
+    # in log-moneyness, then the grid moves with spot.
+    grid = moved_grid(shock_local_vol_grid(grid, fwd_curve, shock), spot, base_spot)
 
     obs_times = _quarterly_obs_times(asof, p.expiry, cfg.daycount)
     spec = AutocallableSpec(
@@ -799,6 +864,12 @@ def _mark_autocall(
     )
 
     def greeks_fn(n_paths: int, seed: int) -> SimpleNamespace:
+        if not mc_settings.greeks:
+            return SimpleNamespace(
+                price=price_autocallable(
+                    spec, spot, grid, r, q, n_paths, mc_settings.autocall_n_steps_per_period, seed
+                )[0]
+            )
         g = autocallable_greeks(
             spec,
             spot,

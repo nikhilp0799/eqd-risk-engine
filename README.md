@@ -8,11 +8,11 @@ Built to mirror the daily workflow of an equity derivatives risk quant: *the num
 
 ---
 
-## Current build status (updated 2026-09-22)
+## Current build status (updated 2026-11-01)
 
 **This README doubles as the original build plan (kept intentionally — it explains *why* each
-step matters and what "done" looks like), but a lot of it is no longer just a plan.** Steps 1–7,
-8.1, 11.1, 11.2, and 12 through 16 are built, tested, and verified against real live market data.
+step matters and what "done" looks like), but a lot of it is no longer just a plan.** Steps 1–9,
+11.1, 11.2, and 12 through 16 are built, tested, and verified against real live market data.
 Beyond the original 16 steps, two extensions are also built and verified live: a daily AI
 investigation agent (local, free, Ollama-served model, genuinely agentic via real tool use) and a
 deep-hedging module (PyTorch neural-network hedging policies vs. existing Greeks-based baselines)
@@ -21,9 +21,9 @@ status.
 
 | Status | Steps |
 |---|---|
-| **Done** | 0–7 (data → curves → IV → calibration → pricing/Greeks → exotics → portfolio), 8.1 (risk-factor grid), 8.2 (vol surface PCA), 11.1 (historical replay stress), 11.2 (hypothetical stress grid), 12 (daily P&L explain), 13 (incident report), 14 (dashboard), 15 (model documentation), 16 (engineering polish) |
-| **Partial** | 8 (8.3 proxy modelling needs more real history, and its VaR part needs Step 9), 11 (11.3 conditional stress / 11.4 reverse stress need the same) |
-| **Not started** | 9 (VaR) and 10 (backtesting) — blocked on the same real-history dependency as above |
+| **Done** | 0–7 (data → curves → IV → calibration → pricing/Greeks → exotics → portfolio), 8 (risk-factor grid, vol surface PCA, vol proxy regression), 9 (VaR and ES, on proxy history: see Step 9), 11.1 (historical replay stress), 11.2 (hypothetical stress grid), 12 (daily P&L explain), 13 (incident report), 14 (dashboard), 15 (model documentation), 16 (engineering polish) |
+| **Partial** | 11 (11.3 conditional stress / 11.4 reverse stress need a historical factor covariance estimate) |
+| **Not started** | 10 (backtesting) — needs ~250 days of daily VaR against the P&L that followed; the daily VaR record started 2026-10-29 |
 
 **Why some steps are deferred rather than skipped:** several of the acceptance criteria below (PCA
 on real vol-surface changes, a 250–1000 day VaR window, a conditional-stress beta estimated from
@@ -39,6 +39,12 @@ not tuned-to-look-clean ones:
   and 95.5% (NVDA) of daily vol moves, but only after two corrections found on the data itself:
   PCA on total variance was swamped by the 2y points, and unquoted extrapolated strikes produced a
   fake second component. Only PC1 (level, front-weighted) is stable across rolling windows so far.
+- VaR on the real book (Step 9): 1-day 99% $362K by full revaluation, $269K by the Greeks
+  shortcut, 26% low, mostly the variance swap, whose value the shortcut reads off ATM vol while
+  the downside of the smile moves more. Scaling 1-day VaR by sqrt(10) overstates the 10-day
+  figure by 52% against real overlapping 10-day moves. The scenarios rest on years of spot and
+  vol-index history mapped onto the surface through per-node betas fitted on the stored days; what
+  the index leaves out is measured in dollars ($79K a day RMS against a $163K daily swing).
 - Black-76 price matches QuantLib to 1e-8; several Greeks match to 1e-6.
 - A genuine SPX calendar-arbitrage violation, found on real data, correctly triggered the SSVI
   fallback (Step 4).
@@ -775,7 +781,7 @@ Design intent — be able to explain each:
 
 ## Step 8 — Risk factors, PCA, and proxy modelling
 
-**Status: partially built.** 8.1 (the fixed risk-factor grid) and 8.2 (PCA, run on 29-32 real daily changes per name, 2026-10-31) are built and verified live. 8.3 (proxy modelling) is deferred: a regression per grid node on ~30 changes would be rough, and its VaR-impact deliverable needs Step 9; see the status table above.
+**Status: built, verified live.** 8.1 (the fixed risk-factor grid), 8.2 (PCA, run on 29-32 real daily changes per name, 2026-10-31) and 8.3 (each name's surface on its own vol index, 2026-11-01, as the vol model behind Step 9's VaR). The earnings-day failure of the proxy is not shown yet: the one earnings move in the stored history (NVDA, 2026-08-26) fell in a week with no stored surfaces.
 
 ### 8.1 Building the risk-factor grid
 
@@ -849,6 +855,39 @@ What to report — the error analysis is the whole point:
 - **VaR impact**: compute portfolio VaR using true single-name surfaces vs. proxied surfaces. The difference *is* the cost of the proxy, expressed in the unit risk managers care about. Almost no candidate does this.
 - Idiosyncratic event failure: proxies break on earnings. Show it — plot proxy residuals around an earnings date and note that event-driven vol requires separate treatment.
 
+**Built (2026-11-01): `risk/proxy.py`, table `proxy_betas` (per node: beta, R², fitted on stored
+days up to each VaR date) and `proxy_errors`, written by `eqdrisk var` (planning/step9_var_plan.md).**
+The README's model regresses single-name nodes on SPX nodes. That needs SPX surfaces on every past
+day, which is exactly what is missing for VaR. So each name, SPX included, is regressed on its own
+published vol index instead, which has free daily history going back decades (FRED): SPX on VIX,
+AAPL on VXAPL (Apple's own 30-day implied vol, the README's "idiosyncratic factor"), NVDA on VXN
+(Nasdaq-100, the "sector proxy": NVDA has no index of its own). Each name's own index explained more
+than VIX did (median node R² 0.30 vs 0.27 for AAPL, 0.30 vs 0.22 for NVDA in the first test).
+Adding 3-month VIX for SPX raised R² by at most 0.05: its daily changes are 0.99 correlated with
+VIX's. Same data rules as 8.2: vol-point changes, nodes inside quoted strikes on 80% of days,
+consecutive trading days.
+
+| Name | Index | Changes | Nodes | Median R² | 1m ATM beta / R² | R² range |
+|---|---|---|---|---|---|---|
+| SPX | VIX | 29 | 13 | 0.65 | 0.52 / 0.88 | 0.34 (1y, -30%) to 0.88 (1m ATM) |
+| AAPL | VXAPL | 31 | 15 | 0.37 | 0.66 / 0.65 | 0.03 to 0.68 |
+| NVDA | VXN | 31 | 28 | 0.31 | 0.55 / 0.55 | 0.00 to 0.55 |
+
+- **The degradation pattern the README predicts is there.** R² is highest at short-dated ATM and
+  falls toward the wings and long maturities (SPX 0.88 at 1m ATM, 0.34-0.48 at 1y).
+- **Betas fall with maturity and rise into the downside**, the shape 8.2's PC1 showed: SPX 1m ATM
+  0.52 vol points per VIX point, 1y ATM 0.09; 1m at -10% 0.69. The 1m ATM beta is ~0.5, not ~1,
+  because VIX is a variance-swap level that includes the wings.
+- **Proxy error in dollars.** Today's book replayed on each stored day's real spot moves, once with
+  that day's real per-node vol changes and once with the index-implied ones: over 29 days the proxy
+  misses $79K a day (RMS) against a typical daily swing of $163K. Almost all of it ($78K) is the
+  SPX variance swap, whose value depends on the whole smile the index only partly explains; the
+  worst day, 2026-09-10, was +$402K real against +$130K proxied. The intercept is fitted but not
+  applied in VaR: it is the sample's average daily vol drift.
+- **Single-name R² is low (median ~0.3-0.4)**: more than half of AAPL and NVDA surface moves are not
+  explained by an index. For this book that matters less than it sounds: the single-name vol
+  exposure is a 10-day ES of $82K against $712K for the whole book (Step 9).
+
 **Acceptance for Step 8:**
 - PC1–PC3 explain > 90% of surface variance.
 - Loadings are economically interpretable and plotted.
@@ -859,7 +898,7 @@ What to report — the error analysis is the whole point:
 
 ## Step 9 — VaR and Expected Shortfall
 
-**Status: not started.** Needs a 250–1000 day historical window the project's now-automated daily pull is building toward — see the status table above.
+**Status: built, verified live (2026-11-01), on proxy history.** The scenario window is real (500 trading days of spot and vol-index moves, 250 and 1,000 for comparison); the vol part of each scenario is the Step 8.3 proxy, because calibrated surfaces exist only for the days the pipeline has run. The VaR time series covers those days only, not 250. Runs daily (`eqdrisk var`, last stage of the daily run). Results below the spec.
 
 ### 9.1 Historical simulation
 
@@ -907,11 +946,69 @@ $$ \text{ES} = \sqrt{\left(\text{ES}^{(1)}\right)^2 + \sum_{j\ge2}\left(\text{ES
 - ES decomposition by factor group.
 - Full-reval VaR for the whole book runs in < 60 seconds.
 
+**Built (2026-11-01): `risk/var.py`, `eqdrisk var --date X`, `eqdrisk varbackfill`, tables
+`var_summary` and `var_scenarios`, the dashboard's VaR tab and the site's Market Risk page**
+(planning/step9_var_plan.md). A scenario is one past trading day: each name's own return, and its
+vol index's relative change rescaled to today's index level, through the 8.3 betas onto every grid
+node of today's surface, interpolated between nodes and held flat beyond them. Rates and dividends
+stay at today's values. Full revaluation reprices every position, Monte Carlo exotics price-only
+with one seed for base and scenarios so MC noise cancels (P008's scenario P&L varied $0.4-3.8K
+across seeds on moves of $30-530K). The Taylor method uses the day's marked sticky-moneyness delta
+and gamma, vega, vanna and volga, with the vol move read ATM at each position's own maturities (the
+P&L explain's convention). Carry is left out of both: a scenario is an instantaneous move.
+
+Book of 2026-10-29, 500-day window (losses as positive dollars):
+
+| | Full revaluation | Taylor |
+|---|---|---|
+| 1-day 99% VaR | $361,884 | $269,142 |
+| 1-day 99% ES | $412,831 | $308,584 |
+| 1-day 99% VaR without the variance swap | $231,507 | $234,798 |
+| 1-day 99% VaR, 250 / 1,000-day window | $358,465 / $343,006 | $269,142 / $257,464 |
+| 10-day 99% VaR, overlapping 10-day moves | $752,244 | $610,631 |
+| 10-day 99% VaR, sqrt(10) x 1-day | $1,144,377 | $851,101 |
+| 10-day 97.5% ES | $711,649 | $583,635 |
+| 500 scenarios, wall time | 48.7 s | 0.2 s |
+
+- **Taylor understates 1-day VaR by 26%, and it is one position.** Without the SPX variance swap
+  the two methods agree within 1.4%. Its Taylor P&L is 74% of its full-revaluation P&L on
+  average (regression slope over the 500 scenarios): the Taylor term reads the ATM vol move, but
+  the swap is priced off the whole smile, and the downside moves more than ATM (SPX 1m beta 0.69
+  at -10% against 0.52 ATM). The worst scenario, 2025-04-09 (SPX +9.5%, VIX -36%), loses
+  $457K by full revaluation and $227K by Taylor: the swap -$793K vs -$628K, and the NVDA
+  autocallable +$350K vs +$415K on an 18.7% NVDA rally, where its capped payoff bends away from
+  the Taylor parabola. Ranking of scenario losses still agrees closely (Spearman 0.985 at book
+  level), which is what the Step 10 PLA test will measure.
+- **sqrt(10) overstates the 10-day VaR by 52%.** Over these 500 days, 10-day moves are smaller than
+  sqrt(10) times daily ones, most of all in the tail: the 1% quantile of 10-day VIX changes is
+  -38% against -57% for the scaled daily one, -6.4% against -8.5% for SPX. The worst single days
+  (April 2025) partly reversed within two weeks. Square-root scaling assumes independent days; in a
+  steadily trending sell-off it can understate instead.
+- **ES by factor group (10-day, 97.5%):** spot only $521,861, vol only $804,873, all together
+  $711,649. Vol alone costs more than everything together: on the worst vol days the spot moves
+  partly offset it. Single-name vol alone is $81,854. Level, skew and term structure are not split
+  out: under a one-index proxy they move together by construction.
+- **Liquidity horizons:** single-name vol at 20 days, the exotics' vol at 60 days, everything else
+  at 10. ES at LH >= 20: $85,763, at LH >= 60: $85,551; the cascade lifts the 10-day ES from
+  $711,649 to $736,937.
+- **Window:** 1,000 days gives a lower VaR than 500 ($343K vs $362K): the 500-day window holds
+  April 2025 at a larger share of the tail.
+- **Acceptance:** two methods compared and the gap explained, ES decomposed by factor group, and the
+  500-scenario full revaluation inside 60 s (48.7 s on a 4+4-core laptop; it varied with other load
+  on the machine). The VaR time series covers the stored days, not 250 of them.
+
+**Also changed on the way.** Under a spot shock the stress engine moved the vanillas' vol with
+moneyness but kept the exotics' local-vol grid fixed by strike; the P&L explain and the Greeks have
+used sticky moneyness since 2026-10-21. The exotics now move their grid with spot too, so VaR and
+stress apply one convention. On the 2026-10-29 book it makes the historical-replay losses 5-14%
+smaller (COVID crash -$2.81M -> -$2.53M, mostly the autocallable). The variance swap, marked daily as
+a fresh swap with zero P&L by construction, is struck at the VaR date's fair strike inside VaR.
+
 ---
 
 ## Step 10 — Backtesting the VaR model
 
-**Status: not started.** Depends entirely on Step 9's output.
+**Status: not started.** Needs about 250 days of daily VaR against the P&L that followed. The daily VaR record started on 2026-10-29 (backfilled 1-day VaRs exist for the stored days before it, each using only data up to its own date).
 
 A VaR number without a backtest is an opinion. This section is what makes it a model.
 
@@ -1152,8 +1249,9 @@ market-implied equivalent.
 six tabs, every number read from a stored curated artifact — no live pricing/calibration in the UI.
 Building this honestly required extending Step 11's stress modules and P&L explain with real
 persistence they didn't have before (both used to only render in-memory results via the CLI);
-VaR/Backtest tabs show an honest "not yet built, pending real history" placeholder rather than
-being hidden.
+the VaR tab has shown real VaR since 2026-11-01 (time series, full vs Taylor, window
+sensitivity, ES by factor group and liquidity horizon, proxy R² and error); the Backtest tab still
+shows how many VaR days exist against the ~250 it needs.
 
 Streamlit, six tabs:
 
@@ -1240,7 +1338,7 @@ reasoning documented at each of those steps.
 | Full SPX surface calibration | < 5 s | **0.22 s** (real 2026-09-04 data) | Yes |
 | Autocall MC, single price (100k paths) | < 10 s | **0.86 s** (JIT warm) | Yes |
 | Book full revaluation (9 positions) | < 3 s | **23.4 s** (real 2026-09-04 data, after both fixes below) | **No — ~7.8x over, down from ~42x** |
-| 500-scenario full-reval VaR | < 60 s | not applicable | No VaR exists (Steps 9/10 out of scope) |
+| 500-scenario full-reval VaR | < 60 s | **48.7 s** (2026-10-29 book, 8 worker processes; measured 2026-11-01) | Yes, varies with machine load |
 | Full daily pipeline | < 5 min | **287.4 s** (`make reproduce DATE=2026-09-09`, measured after fix #1; not re-verified after fix #2, see below) | **Yes — down from 404.4s** |
 
 **A first cut at explaining the book-reval/full-pipeline misses was wrong, and the correction is

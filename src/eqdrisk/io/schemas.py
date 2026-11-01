@@ -367,6 +367,81 @@ VOL_PCA_STABILITY_SCHEMA = pa.schema(
 )
 VOL_PCA_STABILITY_REQUIRED_NOT_NULL = ["asof_date", "underlying", "window_end", "pc", "abs_cosine"]
 
+# Vol proxy regression (README 8.3, risk/proxy.py): per node, vol-point change on
+# the name's own vol-index change, fitted on stored days up to asof_date.
+PROXY_BETA_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("underlying", pa.string()),
+        ("index", pa.string()),  # VIX / VXAPL / VXN
+        ("T_label", pa.string()),
+        ("T", pa.float64()),
+        ("k", pa.float64()),
+        ("alpha", pa.float64()),  # vol points per day, not applied in VaR
+        ("beta", pa.float64()),  # vol points per index point
+        ("r2", pa.float64()),
+        ("n_changes", pa.int32()),
+        ("coverage", pa.float64()),
+    ]
+)
+PROXY_BETA_REQUIRED_NOT_NULL = ["asof_date", "underlying", "index", "T_label", "k", "beta", "r2"]
+
+# Proxy error in dollars: today's book under each stored day's real spot move and
+# either its real per-node vol change or the index-implied one.
+PROXY_ERROR_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("change_date", pa.date32()),
+        ("position_id", pa.string()),
+        ("underlying", pa.string()),
+        ("pnl_true", pa.float64()),
+        ("pnl_proxy", pa.float64()),
+    ]
+)
+PROXY_ERROR_REQUIRED_NOT_NULL = ["asof_date", "change_date", "position_id", "pnl_true", "pnl_proxy"]
+
+# VaR / ES (README Step 9, risk/var.py), long format: one row per number.
+VAR_SUMMARY_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("measure", pa.string()),  # VaR / ES / ES_LH / runtime_seconds
+        # full / taylor; sqrt10_full / sqrt10_taylor = 1-day x sqrt(10)
+        ("method", pa.string()),
+        ("horizon_days", pa.int32()),
+        ("window_days", pa.int32()),
+        ("confidence", pa.float64()),
+        # all / spot / vol / single_name_vol: which factors moved; LH10 / LH20 / LH60
+        # for the liquidity-horizon cascade
+        ("factors", pa.string()),
+        ("positions", pa.string()),  # book / book_ex_varswap
+        ("value", pa.float64()),  # dollars, a loss as a positive number
+        ("n_scenarios", pa.int32()),
+    ]
+)
+VAR_SUMMARY_REQUIRED_NOT_NULL = ["asof_date", "measure", "method", "factors", "positions", "value"]
+
+VAR_SCENARIO_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("horizon_days", pa.int32()),
+        ("factors", pa.string()),
+        ("scenario_date", pa.date32()),  # last day of the past move replayed
+        ("position_id", pa.string()),
+        ("underlying", pa.string()),
+        ("pnl_full", pa.float64()),
+        ("pnl_taylor", pa.float64()),
+    ]
+)
+VAR_SCENARIO_REQUIRED_NOT_NULL = [
+    "asof_date",
+    "horizon_days",
+    "factors",
+    "scenario_date",
+    "position_id",
+    "pnl_full",
+    "pnl_taylor",
+]
+
 
 PNL_EXPLAIN_SCHEMA = pa.schema(
     [

@@ -12,9 +12,8 @@ def mocked_sources(monkeypatch):
     synthetic/canned data, so `eqdrisk run` has zero real network dependency
     regardless of the machine it runs on. Two independent things are patched:
 
-    1. `io.sources` — confirmed, by reading `io/snapshot.py` (the only caller),
-       to be exactly these five functions, all only ever invoked from
-       `run_snapshot` (the `ingest` stage).
+    1. `io.sources` — the five functions `run_snapshot` (the `ingest` stage)
+       calls, and the yfinance vol-index fallback the `var` stage calls.
     2. `agent.ollama_client` — the `ai_investigate` stage calls a REAL local
        Ollama server if one happens to be reachable (`is_available()` isn't
        mocked away, this makes the test's outcome depend on whether Ollama is
@@ -35,6 +34,7 @@ def mocked_sources(monkeypatch):
     monkeypatch.setattr(sources, "fetch_underlying_ohlc", lambda *a, **k: build_synthetic_ohlc())
     monkeypatch.setattr(sources, "fetch_rates", lambda *a, **k: build_synthetic_rates())
     monkeypatch.setattr(sources, "fetch_vol_indices", lambda *a, **k: pd.DataFrame())
+    monkeypatch.setattr(sources, "fetch_vol_index_closes_yf", lambda *a, **k: pd.DataFrame())
 
     monkeypatch.setattr(ollama_client, "is_available", lambda *a, **k: True)
     monkeypatch.setattr(

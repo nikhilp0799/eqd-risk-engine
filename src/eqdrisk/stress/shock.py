@@ -46,6 +46,57 @@ from eqdrisk.marketdata.forward import ForwardCurve
 from eqdrisk.vol.local_vol import LocalVolGrid, local_variance_at
 
 TERM_REFERENCE_T = 1.0  # 1y: shocks front-load vol shorter than this, per README 11.2
+MIN_SHOCKED_VOL_POINTS = 1.0  # a vol-point shock never takes a node's implied vol below this
+
+
+@dataclass
+class NodeVolShock:
+    """A vol move given per grid node (README 9.1's per-node factor moves): vol
+    points added to the implied vol at each (k, T) on a rectangular grid,
+    interpolated bilinearly between nodes and held flat beyond them.
+
+    `multiplier` is the same move as a total-variance multiplier,
+    ((iv + dsigma) / iv)^2 against the base day's implied vol at each node, so it
+    plugs into `MarketShock.w_multiplier` and with it every pricer the other
+    shocks already reach, vanillas and local-vol exotics alike."""
+
+    t_values: np.ndarray  # ascending, years
+    k_values: np.ndarray  # ascending
+    dsigma: np.ndarray  # (len(t_values), len(k_values)), vol points
+    multiplier: np.ndarray  # same shape
+
+    @classmethod
+    def from_vol_points(
+        cls, t_values: np.ndarray, k_values: np.ndarray, base_iv: np.ndarray, dsigma: np.ndarray
+    ) -> NodeVolShock:
+        """`base_iv`: the base day's implied vol (vol points) at each node."""
+        shocked = np.maximum(base_iv + dsigma, MIN_SHOCKED_VOL_POINTS)
+        return cls(
+            t_values=np.asarray(t_values, dtype=float),
+            k_values=np.asarray(k_values, dtype=float),
+            dsigma=shocked - base_iv,
+            multiplier=(shocked / base_iv) ** 2,
+        )
+
+    def _interp(self, field: np.ndarray, k: np.ndarray, T: np.ndarray) -> np.ndarray:
+        """Bilinear in (k, T), flat beyond the outermost nodes; broadcasts."""
+        k, T = np.broadcast_arrays(
+            np.clip(k, self.k_values[0], self.k_values[-1]),
+            np.clip(T, self.t_values[0], self.t_values[-1]),
+        )
+        kf, tf = k.ravel(), T.ravel()
+        rows = np.stack([np.interp(kf, self.k_values, f) for f in field])  # (n_T, n)
+        j = np.clip(np.searchsorted(self.t_values, tf, side="right") - 1, 0, len(self.t_values) - 2)
+        t_lo, t_hi = self.t_values[j], self.t_values[j + 1]
+        weight = (tf - t_lo) / (t_hi - t_lo)
+        n = np.arange(kf.size)
+        return (rows[j, n] * (1 - weight) + rows[j + 1, n] * weight).reshape(k.shape)
+
+    def dsigma_at(self, k: float, T: float) -> float:
+        return float(self._interp(self.dsigma, np.asarray(k), np.asarray(T)))
+
+    def multiplier_at(self, k: np.ndarray, T: np.ndarray) -> np.ndarray:
+        return self._interp(self.multiplier, k, T)
 
 
 @dataclass
@@ -57,6 +108,7 @@ class MarketShock:
     vol_shock_pct: float = 0.0  # e.g. +0.25 for a 25% relative parallel vol increase
     skew_shock: float = 0.0  # additional multiplicative tilt vs. |k| (steepening)
     term_shock: float = 0.0  # additional tilt front-loaded below TERM_REFERENCE_T
+    node_vol: NodeVolShock | None = None  # per-node vol-point move (VaR scenarios)
 
     @property
     def is_noop(self) -> bool:
@@ -65,13 +117,19 @@ class MarketShock:
             and self.vol_shock_pct == 0.0
             and self.skew_shock == 0.0
             and self.term_shock == 0.0
+            and self.node_vol is None
         )
 
     def w_multiplier(self, k: float, T: float) -> float:
+        return float(self.w_multiplier_array(np.asarray(k), np.asarray(T)))
+
+    def w_multiplier_array(self, k: np.ndarray, T: np.ndarray) -> np.ndarray:
+        """`w_multiplier` over arrays of k and T (broadcast together)."""
         vol_mult = (1 + self.vol_shock_pct) ** 2
-        skew_mult = 1 + self.skew_shock * abs(k)
-        term_mult = 1 + self.term_shock * max(0.0, (TERM_REFERENCE_T - T) / TERM_REFERENCE_T)
-        return vol_mult * skew_mult * term_mult
+        skew_mult = 1 + self.skew_shock * np.abs(k)
+        term_mult = 1 + self.term_shock * np.maximum(0.0, (TERM_REFERENCE_T - T) / TERM_REFERENCE_T)
+        node_mult = self.node_vol.multiplier_at(k, T) if self.node_vol is not None else 1.0
+        return np.asarray(vol_mult * skew_mult * term_mult * node_mult)
 
 
 def shocked_spot(spot: float, shock: MarketShock) -> float:
@@ -96,14 +154,10 @@ def shock_local_vol_grid(
     parallel vol shock (see module docstring for the measured error size)."""
     if shock.is_noop:
         return grid
-    sigma_loc = np.empty_like(grid.sigma_loc)
-    for ti, t in enumerate(grid.t_grid):
-        t_eff = max(t, 1e-6)
-        forward_t = forward_curve.forward(t_eff)
-        for si, s in enumerate(grid.s_grid):
-            k = float(np.log(s / forward_t))
-            multiplier = shock.w_multiplier(k, t_eff)
-            sigma_loc[ti, si] = grid.sigma_loc[ti, si] * np.sqrt(multiplier)
+    t_eff = np.maximum(grid.t_grid, 1e-6)
+    forward_t = np.array([forward_curve.forward(float(t)) for t in t_eff])
+    k = np.log(grid.s_grid[None, :] / forward_t[:, None])
+    sigma_loc = grid.sigma_loc * np.sqrt(shock.w_multiplier_array(k, t_eff[:, None]))
     return LocalVolGrid(
         s_grid=grid.s_grid, t_grid=grid.t_grid, sigma_loc=sigma_loc, n_floored=grid.n_floored
     )
