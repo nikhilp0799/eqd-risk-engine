@@ -103,5 +103,10 @@ print(day0.isoformat() if day0 else '')
         fi
     fi
 
+    # VaR last: a few minutes of scenario revaluations, nothing above needs it.
+    # Its daily record is what the Step 10 backtest will test against real P&L.
+    echo "--- var ---"
+    "$EQDRISK" var --date "$TODAY" || echo "VAR FAILED"
+
     echo "=== Done: $(date) ==="
 } >> "$LOG_FILE" 2>&1

@@ -221,6 +221,49 @@ def hypotheticalgrid(
 
 
 @app.command()
+def var(
+    date: str = typer.Option(..., help="VaR date, YYYY-MM-DD"),
+    portfolio_path: str = typer.Option(
+        "configs/portfolio.yaml", "--portfolio", help="Path to portfolio config"
+    ),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Historical-simulation VaR and ES on the day's book (Step 9): 1-day and
+    10-day, full revaluation against the Greeks (Taylor) method, ES 97.5% by
+    factor group and liquidity horizon, plus the vol proxy's betas and its error
+    in dollars (Step 8.3)."""
+    from eqdrisk.risk.var import run_var
+
+    cfg = BaseConfig.from_yaml(config)
+    result = run_var(cfg, dt.date.fromisoformat(date), portfolio_path)
+    typer.echo(result.render())
+
+
+@app.command()
+def varbackfill(
+    start: str = typer.Option(..., help="First date, YYYY-MM-DD"),
+    end: str = typer.Option(..., help="Last date, YYYY-MM-DD"),
+    portfolio_path: str = typer.Option(
+        "configs/portfolio.yaml", "--portfolio", help="Path to portfolio config"
+    ),
+    force: bool = typer.Option(False, help="Recompute days that already have a VaR"),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """1-day 99% VaR, full and Taylor, on each stored day in [start, end] without
+    one: the VaR time series (Step 9)."""
+    from eqdrisk.risk.var import run_var_backfill
+
+    cfg = BaseConfig.from_yaml(config)
+    results = run_var_backfill(
+        cfg, dt.date.fromisoformat(start), dt.date.fromisoformat(end), portfolio_path, force
+    )
+    if not results:
+        typer.echo("Nothing to backfill.")
+    for result in results:
+        typer.echo(result.render())
+
+
+@app.command()
 def explainpnl(
     day0: str = typer.Option(..., help="Prior date, YYYY-MM-DD"),
     day1: str = typer.Option(..., help="Current date, YYYY-MM-DD"),
@@ -356,16 +399,6 @@ def deephedge_robustness(
     )
     typer.echo(f"Swings reduction vs benchmark (%, mean of seeds), policies trained {asof}:")
     typer.echo(summary.to_string())
-
-
-@app.command()
-def var(
-    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
-    method: str = typer.Option("both", help="full-reval | taylor | both"),
-    confidence: float = typer.Option(0.99),
-) -> None:
-    """Compute VaR / Expected Shortfall."""
-    raise NotImplementedError("Step 9 not yet implemented")
 
 
 @app.command()

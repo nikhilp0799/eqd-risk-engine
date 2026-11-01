@@ -31,6 +31,16 @@ could pass, it logs a retry and re-fetches after 1, 5 and 10 minutes. If the fee
 the raw payload is kept but the curated chain is not written, so a later re-run the same evening
 (without `--force`) fetches that name again.
 
+**VaR runs last, every day (since 2026-11-01).** After the AI investigation, `eqdrisk var` computes
+the day's VaR and ES (README Step 9, `risk/var.py`): about 3,000 scenario revaluations across a
+process pool, a few minutes. It needs the day's SPX, AAPL and NVDA surfaces and at least 20 stored
+consecutive-day changes per name for the vol proxy, and refuses (logged as `SKIPPED _all_`) rather
+than computing a VaR that leaves a name's vol risk out. It fetches spot history from yfinance and
+vol-index history from FRED; FRED posts a close the next day, so the same evening's VIX, VXAPL and
+VXN close comes from yfinance. Each day's stored VaR is the record the Step 10 backtest will test
+against the P&L that followed. `eqdrisk varbackfill --start X --end Y` fills days without one (1-day
+VaR only) and leaves days that have one alone.
+
 **Re-running a past day is safe for the option chains (since 2026-10-14).** `eqdrisk ingest` keeps
 an existing chain snapshot for a date and fetches only the underlyings that are missing; pass
 `--force` to replace one on purpose. Before this, an after-hours re-run of the pipeline overwrote

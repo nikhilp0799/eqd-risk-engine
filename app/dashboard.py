@@ -48,15 +48,6 @@ def read_table(table: str, curated: str) -> pd.DataFrame:
     return store.query("SELECT * FROM t", views={"t": str(root)}).to_pandas()
 
 
-def n_history_days(cfg: BaseConfig) -> int:
-    """Real trading days of calibrated vol-surface history available so far —
-    the honest denominator for the VaR/backtest 'pending real history' tabs."""
-    df = read_table("vol_surface", cfg.paths.curated)
-    if df.empty:
-        return 0
-    return int(df["asof_date"].nunique())
-
-
 def reconstruct_curve(row: pd.Series, k_grid: pd.Series | list[float]) -> list[float]:
     """Evaluate the ALREADY-calibrated SVI/SSVI parameters (stored in this
     `vol_surface` row) at `k_grid` — a pure function of stored numbers, not a
@@ -234,22 +225,153 @@ def render_exposure_tab(cfg: BaseConfig) -> None:
 
 
 def render_var_tab(cfg: BaseConfig) -> None:
-    days = n_history_days(cfg)
-    st.warning(
-        "Step 9 (VaR / Expected Shortfall) is not yet built — it needs a "
-        f"{VAR_ACCEPTANCE_DAYS}-1000 day real history window (a regulatory-convention "
-        "size, not arbitrary) of daily calibrated vol surfaces to compute full-reval and "
-        f"Taylor VaR against. Currently available: {days} real trading day(s) of calibrated "
-        "history, accumulating one real day at a time via the automated daily pipeline."
+    summary_all = read_table("var_summary", cfg.paths.curated)
+    if summary_all.empty:
+        st.info("No var_summary data yet — run `eqdrisk var --date ...`.")
+        return
+    summary_all["asof_date"] = pd.to_datetime(summary_all["asof_date"]).dt.date
+    full_days = sorted(
+        summary_all.loc[summary_all["horizon_days"] == 10, "asof_date"].unique(), reverse=True
     )
+    if not full_days:
+        st.info("Only backfilled 1-day VaRs so far; run `eqdrisk var --date ...` for a full one.")
+        return
+    asof = st.selectbox("VaR date", full_days, key="var_date")
+    s = summary_all[summary_all["asof_date"] == asof]
+
+    def pick(
+        measure: str, method: str, horizon: int = 1, conf: float = 0.99, **kw: object
+    ) -> float:
+        sel = (
+            (s["measure"] == measure)
+            & (s["method"] == method)
+            & (s["horizon_days"] == horizon)
+            & (s["confidence"].round(4) == conf)
+            & (s["window_days"] == kw.get("window", 500))
+            & (s["factors"] == kw.get("factors", "all"))
+            & (s["positions"] == kw.get("positions", "book"))
+        )
+        rows = s.loc[sel, "value"]
+        return float(rows.iloc[0]) if len(rows) else float("nan")
+
+    st.caption(
+        "Historical simulation on today's book: each past day's spot returns and vol-index "
+        "moves (VIX / VXAPL / VXN) mapped onto the surface through the Step 8.3 proxy betas. "
+        "Losses shown as positive dollars."
+    )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("1-day 99% VaR, full reval", f"${pick('VaR', 'full'):,.0f}")
+    c2.metric("1-day 99% VaR, Taylor", f"${pick('VaR', 'taylor'):,.0f}")
+    c3.metric("10-day 99% VaR, overlapping", f"${pick('VaR', 'full', 10):,.0f}")
+    c4.metric("10-day 99% VaR, sqrt(10) x 1-day", f"${pick('VaR', 'sqrt10_full', 10):,.0f}")
+
+    st.subheader("1-day 99% VaR through time (500-day window)")
+    ts = summary_all[
+        (summary_all["measure"] == "VaR")
+        & (summary_all["horizon_days"] == 1)
+        & (summary_all["window_days"] == 500)
+        & (summary_all["confidence"].round(4) == 0.99)
+        & (summary_all["factors"] == "all")
+        & (summary_all["positions"] == "book")
+    ].pivot_table(index="asof_date", columns="method", values="value")
+    fig = go.Figure()
+    for method in ("full", "taylor"):
+        if method in ts:
+            fig.add_trace(go.Scatter(x=ts.index, y=ts[method], mode="lines+markers", name=method))
+    fig.update_layout(yaxis_title="VaR ($)", height=360, margin=dict(l=0, r=0, t=20, b=0))
+    st.plotly_chart(fig, width="stretch")
+
+    st.subheader("Window sensitivity, 1-day")
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "window (days)": w,
+                    "VaR 99% full": pick("VaR", "full", window=w),
+                    "VaR 99% Taylor": pick("VaR", "taylor", window=w),
+                    "ES 97.5% full": pick("ES", "full", conf=0.975, window=w),
+                }
+                for w in (250, 500, 1000)
+            ]
+        ),
+        hide_index=True,
+    )
+
+    st.subheader("10-day ES 97.5% by factor group and liquidity horizon")
+    groups = [("all", "all factors"), ("spot", "spot only"), ("vol", "vol only")]
+    groups += [("single_name_vol", "single-name vol only")]
+    groups += [("LH10", "LH >= 10 days"), ("LH20", "LH >= 20 days"), ("LH60", "LH >= 60 days")]
+    rows = [
+        {"factors": label, "ES": pick("ES", "full", 10, 0.975, factors=f)} for f, label in groups
+    ]
+    lh = s.loc[s["measure"] == "ES_LH", "value"]
+    if len(lh):
+        rows.append({"factors": "liquidity-horizon adjusted ES", "ES": float(lh.iloc[0])})
+    st.dataframe(pd.DataFrame(rows), hide_index=True)
+
+    scen = read_table("var_scenarios", cfg.paths.curated)
+    if not scen.empty:
+        scen["asof_date"] = pd.to_datetime(scen["asof_date"]).dt.date
+        one = scen[
+            (scen["asof_date"] == asof) & (scen["horizon_days"] == 1) & (scen["factors"] == "all")
+        ]
+        last = sorted(one["scenario_date"].unique())[-500:]
+        one = one[one["scenario_date"].isin(last)]
+        st.subheader("Full revaluation vs Taylor, per scenario (1-day, book)")
+        book = one.groupby("scenario_date")[["pnl_full", "pnl_taylor"]].sum()
+        fig = go.Figure(
+            go.Scatter(x=book["pnl_full"], y=book["pnl_taylor"], mode="markers", name="scenario")
+        )
+        lim = float(book.abs().to_numpy().max())
+        fig.add_trace(go.Scatter(x=[-lim, lim], y=[-lim, lim], mode="lines", name="equal"))
+        fig.update_layout(
+            xaxis_title="full revaluation P&L ($)",
+            yaxis_title="Taylor P&L ($)",
+            height=420,
+            margin=dict(l=0, r=0, t=20, b=0),
+        )
+        st.plotly_chart(fig, width="stretch")
+        gap = one.assign(gap=one["pnl_taylor"] - one["pnl_full"]).groupby("position_id")
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "RMS P&L, full": gap["pnl_full"].apply(lambda x: (x**2).mean() ** 0.5),
+                    "RMS Taylor gap": gap["gap"].apply(lambda x: (x**2).mean() ** 0.5),
+                }
+            ).reset_index(),
+            hide_index=True,
+        )
+
+    betas = read_table("proxy_betas", cfg.paths.curated)
+    if not betas.empty:
+        betas["asof_date"] = pd.to_datetime(betas["asof_date"]).dt.date
+        b = betas[betas["asof_date"] == asof]
+        st.subheader("Vol proxy (Step 8.3): R^2 per grid node")
+        underlying = st.selectbox("Underlying", sorted(b["underlying"].unique()), key="proxy_u")
+        bu = b[b["underlying"] == underlying]
+        st.caption(
+            f"Daily vol-point change regressed on the {bu['index'].iloc[0]} change, "
+            f"{int(bu['n_changes'].iloc[0])} stored days; nodes inside quoted strikes only."
+        )
+        st.dataframe(bu.pivot_table(index="T_label", columns="k", values="r2").round(2))
+    errors = read_table("proxy_errors", cfg.paths.curated)
+    if not errors.empty:
+        errors["asof_date"] = pd.to_datetime(errors["asof_date"]).dt.date
+        e = errors[errors["asof_date"] == asof]
+        day = e.groupby("change_date")[["pnl_true", "pnl_proxy"]].sum()
+        if not day.empty:
+            st.subheader("Proxy error in dollars, today's book on each stored day's move")
+            day["error"] = day["pnl_proxy"] - day["pnl_true"]
+            st.dataframe(day.reset_index())
 
 
 def render_backtest_tab(cfg: BaseConfig) -> None:
-    days = n_history_days(cfg)
+    summary = read_table("var_summary", cfg.paths.curated)
+    days = int(summary["asof_date"].nunique()) if not summary.empty else 0
     st.warning(
         "Step 10 (VaR backtesting: Kupiec, Christoffersen, traffic light, PLA) is not yet "
-        "built — it needs Step 9's VaR series to exist first, over the same real multi-year "
-        f"window. Currently available: {days} real trading day(s) of calibrated history."
+        f"built — it needs about {VAR_ACCEPTANCE_DAYS} days of VaR forecasts against the "
+        f"real P&L that followed. Days with a stored VaR so far: {days}."
     )
 
 

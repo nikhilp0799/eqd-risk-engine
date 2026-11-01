@@ -118,6 +118,7 @@ def run_daily_pipeline(
     from eqdrisk.pricing.engine import run_pricing
     from eqdrisk.pricing.pnl_explain import PnLExplainResult, run_pnl_explain
     from eqdrisk.pricing.varswap_engine import run_varswap
+    from eqdrisk.risk.var import run_var
     from eqdrisk.vol.implied import run_iv_extraction
     from eqdrisk.vol.risk_factors import run_risk_factor_grid
     from eqdrisk.vol.surface import run_surface_calibration
@@ -160,6 +161,9 @@ def run_daily_pipeline(
             "ai_investigate",
             lambda: run_daily_investigation(cfg, pnl_result, portfolio_path, project_root),
         )
+
+    # Last: a few minutes of scenario revaluations, and nothing above needs it.
+    _stage("var", lambda: run_var(cfg, asof, portfolio_path))
 
     finished_at = dt.datetime.now(dt.UTC)
     write_manifest(cfg, asof, config_path, portfolio_path, started_at, finished_at, project_root)

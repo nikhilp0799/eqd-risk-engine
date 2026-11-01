@@ -134,14 +134,20 @@ def fetch_rates(start: dt.date, end: dt.date) -> pd.DataFrame:
     return long.reset_index(drop=True)
 
 
-FRED_VOL_INDEX_SERIES = {"VIX": "VIXCLS"}
+# VIX: SPX 30d. VXAPL: Apple's own 30d implied vol. VXN: Nasdaq-100 30d, the
+# nearest free index for NVDA (which has none of its own). The last two drive the
+# single-name vol moves in VaR (risk/proxy.py).
+FRED_VOL_INDEX_SERIES = {"VIX": "VIXCLS", "VXAPL": "VXAPLCLS", "VXN": "VXNCLS"}
+# FRED posts a close the next day; the daily run needs the same evening's.
+YF_VOL_INDEX_TICKERS = {"VIX": "^VIX", "VXAPL": "^VXAPL", "VXN": "^VXN"}
 # VVIX/SKEW have no free FRED series under any name we could find (VVIXCLS, VVIX both 404)
 # — documented gap, not pursued further given they're secondary benchmarks per the README.
 
 
 def fetch_vol_indices(start: dt.date, end: dt.date) -> pd.DataFrame:
-    """VIX close from FRED, long-format (asof_date, index, value) — independent calibration
-    benchmark for the 30d ATM vol cross-check (Step 4)."""
+    """Vol-index closes from FRED, long-format (asof_date, index, value): VIX is the
+    independent calibration benchmark for the 30d ATM vol cross-check (Step 4); all
+    three drive VaR's vol moves (risk/proxy.py)."""
     df = web.DataReader(list(FRED_VOL_INDEX_SERIES.values()), "fred", start=start, end=end)
     df = df.rename(columns={v: k for k, v in FRED_VOL_INDEX_SERIES.items()})
     long = df.reset_index().melt(id_vars="DATE", var_name="index", value_name="value")
@@ -149,6 +155,30 @@ def fetch_vol_indices(start: dt.date, end: dt.date) -> pd.DataFrame:
     long["asof_date"] = pd.to_datetime(long["asof_date"]).dt.date
     long["source"] = "FRED"
     return long.reset_index(drop=True)
+
+
+def fetch_vol_index_closes_yf(names: list[str], start: dt.date, end: dt.date) -> pd.DataFrame:
+    """Vol-index closes from yfinance over [start, end), same long format as
+    `fetch_vol_indices`. Same-day fallback only: yfinance serves ^VXAPL as the
+    latest close alone, not a history."""
+    frames = []
+    for name in names:
+        hist = yf.Ticker(YF_VOL_INDEX_TICKERS[name]).history(start=start, end=end)
+        if hist.empty:
+            continue
+        frames.append(
+            pd.DataFrame(
+                {
+                    "asof_date": pd.to_datetime(hist.index).date,
+                    "index": name,
+                    "value": hist["Close"].to_numpy(dtype=float),
+                    "source": "yfinance",
+                }
+            )
+        )
+    if not frames:
+        return pd.DataFrame(columns=["asof_date", "index", "value", "source"])
+    return pd.concat(frames, ignore_index=True)
 
 
 def fetch_dividends(underlying: str) -> pd.DataFrame:

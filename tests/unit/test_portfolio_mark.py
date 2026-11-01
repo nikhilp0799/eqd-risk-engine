@@ -1,4 +1,6 @@
+import dataclasses
 import datetime as dt
+import pickle
 
 import numpy as np
 import pandas as pd
@@ -19,6 +21,7 @@ from eqdrisk.io.schemas import (
     VOL_SURFACE_SCHEMA,
     validate,
 )
+from eqdrisk.marketdata.calendar import year_fraction
 from eqdrisk.portfolio.mark import (
     _expiry_bucket,
     _moneyness_bucket,
@@ -27,7 +30,12 @@ from eqdrisk.portfolio.mark import (
     mark_portfolio,
 )
 from eqdrisk.portfolio.schema import Portfolio
+from eqdrisk.pricing.barrier_mc import simulate_down_and_in_put
 from eqdrisk.pricing.blackscholes import call_price
+from eqdrisk.pricing.varswap import fair_variance_strike_from_w_func
+from eqdrisk.stress.shock import MarketShock, shocked_w
+from eqdrisk.vol.implied import EXTREME_K_MULTIPLE
+from eqdrisk.vol.local_vol import moved_grid
 from eqdrisk.vol.svi import SVIParams
 
 ASOF = dt.date(2026, 8, 20)
@@ -463,3 +471,125 @@ def test_vanilla_sticky_moneyness_delta_includes_the_skew_term(tmp_path):
     assert m.delta_sm is not None and m.gamma_sm is not None
     assert m.delta_sm != pytest.approx(m.delta, rel=1e-3)
     assert m.gamma_sm > 0
+
+
+def _exotic_book(tmp_path) -> tuple[BaseConfig, Portfolio, mark_module.MarketState]:
+    _write_curve(tmp_path)
+    _write_underlying(tmp_path)
+    _write_forwards(tmp_path)
+    _write_surface(tmp_path)
+    path = _write_portfolio_yaml(
+        tmp_path,
+        [
+            {
+                "id": "B1",
+                "type": "barrier",
+                "underlying": UNDERLYING,
+                "sub": "down_and_in_put",
+                "strike": 105.0,
+                "barrier": 85.0,
+                "expiry": PILLAR_EXPIRIES[1].isoformat(),
+                "qty": -5,
+            },
+            {
+                "id": "A1",
+                "type": "autocall",
+                "underlying": UNDERLYING,
+                "notional": 1_000_000,
+                "autocall_barrier": 1.00,
+                "coupon_barrier": 0.75,
+                "put_barrier": 0.65,
+                "coupon": 0.02,
+                "obs": "quarterly",
+                "expiry": PILLAR_EXPIRIES[1].isoformat(),
+                # Above spot so the note stays live at the first fixing.
+                "initial_level": 1.2 * SPOT,
+            },
+        ],
+    )
+    cfg = _cfg(tmp_path)
+    portfolio = Portfolio.from_yaml(path)
+    state = load_market_state(cfg, ASOF, portfolio)
+    assert state is not None
+    return cfg, portfolio, state
+
+
+CHEAP_MC = mark_module.MCSettings(
+    n_paths=2_000, barrier_n_steps=8, autocall_n_steps_per_period=2, n_batches=1
+)
+
+
+def test_price_only_mc_gives_the_same_price_as_the_greeks_run(tmp_path):
+    cfg, portfolio, state = _exotic_book(tmp_path)
+    with_greeks = mark_module.mark_with_state(cfg, ASOF, portfolio, state, None, CHEAP_MC)
+    price_only = mark_module.mark_with_state(
+        cfg, ASOF, portfolio, state, None, dataclasses.replace(CHEAP_MC, greeks=False)
+    )
+    for a, b in zip(with_greeks.marks, price_only.marks, strict=True):
+        assert b.price == pytest.approx(a.price, rel=1e-12)
+        assert a.vega != 0.0 and b.vega == 0.0
+
+
+def test_spot_shock_moves_the_exotics_local_vol_grid_with_spot(tmp_path):
+    """Sticky moneyness, as the vanillas: under a spot shock the barrier is
+    priced on the grid re-anchored at the shocked spot, not the original one."""
+    cfg, portfolio, state = _exotic_book(tmp_path)
+    shock = MarketShock(spot_shock_pct=-0.10)
+    mark = next(
+        m
+        for m in mark_module.mark_with_state(cfg, ASOF, portfolio, state, shock, CHEAP_MC).marks
+        if m.position_id == "B1"
+    )
+    T = year_fraction(ASOF, PILLAR_EXPIRIES[1], cfg.daycount)
+    spot = SPOT * 0.9
+    r = state.curve.zero_rate(T)
+    forward = state.forward_curve[UNDERLYING].forward(T) * 0.9
+    q = r - np.log(forward / spot) / T
+
+    def barrier_price(grid) -> float:
+        sim = simulate_down_and_in_put(spot, 85.0, T, grid, r, q, 2_000, 8, CHEAP_MC.seed)
+        return -5 * sim.price_and_stderr(105.0, float(np.exp(-r * T)))[0]
+
+    grid = state.grids[UNDERLYING]
+    assert mark.price == pytest.approx(barrier_price(moved_grid(grid, spot, SPOT)), rel=1e-12)
+    assert mark.price != pytest.approx(barrier_price(grid), rel=1e-6)
+
+
+def test_varswap_fair_strike_from_the_cached_slice_matches_the_exact_strip(tmp_path):
+    _write_curve(tmp_path)
+    _write_underlying(tmp_path)
+    _write_forwards(tmp_path)
+    _write_surface(tmp_path)
+    path = _write_portfolio_yaml(
+        tmp_path,
+        [
+            {
+                "id": "V1",
+                "type": "varswap",
+                "underlying": UNDERLYING,
+                "expiry": (ASOF + dt.timedelta(days=120)).isoformat(),
+                "vega_notional": 1000,
+            }
+        ],
+    )
+    cfg = _cfg(tmp_path)
+    portfolio = Portfolio.from_yaml(path)
+    state = load_market_state(cfg, ASOF, portfolio)
+    assert state is not None
+    T = year_fraction(ASOF, ASOF + dt.timedelta(days=120), cfg.daycount)
+    for shock in (MarketShock(), MarketShock(spot_shock_pct=-0.05, vol_shock_pct=0.4)):
+        mark = mark_module.mark_with_state(cfg, ASOF, portfolio, state, shock).marks[0]
+        surface = state.surface[UNDERLYING]
+        forward = state.forward_curve[UNDERLYING].forward(T) * (1 + shock.spot_shock_pct)
+        atm = np.sqrt(shocked_w(surface, 0.0, T, shock) / T)
+        k_cap = EXTREME_K_MULTIPLE * atm * np.sqrt(T)
+        exact = fair_variance_strike_from_w_func(
+            lambda k, s=shock, f=surface: np.array([shocked_w(f, float(x), T, s) for x in k]),
+            forward,
+            T,
+            state.curve.discount_factor(T),
+            -k_cap,
+            k_cap,
+        )
+        assert mark.fair_strike == pytest.approx(np.sqrt(exact) * 100, abs=1e-4)
+    pickle.loads(pickle.dumps(state))  # VaR ships the state, slice cache included, to workers

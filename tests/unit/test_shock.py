@@ -3,7 +3,14 @@ import pandas as pd
 import pytest
 
 from eqdrisk.marketdata.forward import ForwardCurve
-from eqdrisk.stress.shock import MarketShock, shock_local_vol_grid, shocked_spot, shocked_w
+from eqdrisk.stress.shock import (
+    MIN_SHOCKED_VOL_POINTS,
+    MarketShock,
+    NodeVolShock,
+    shock_local_vol_grid,
+    shocked_spot,
+    shocked_w,
+)
 from eqdrisk.vol.local_vol import build_local_vol_grid, local_variance_at
 
 
@@ -141,3 +148,58 @@ def test_approximation_error_shrinks_for_smaller_shocks():
         errs.append(rel_err.max())
 
     assert errs[0] < errs[1]
+
+
+def _node_shock(base_iv: float = 20.0) -> NodeVolShock:
+    t_values = np.array([0.25, 1.0])
+    k_values = np.array([-0.1, 0.0, 0.1])
+    dsigma = np.array([[3.0, 2.0, 1.0], [1.0, 0.5, 0.0]])
+    return NodeVolShock.from_vol_points(t_values, k_values, np.full_like(dsigma, base_iv), dsigma)
+
+
+def test_node_vol_shock_is_exact_at_nodes_bilinear_between_and_flat_beyond():
+    shock = _node_shock()
+    assert shock.dsigma_at(-0.1, 0.25) == pytest.approx(3.0)
+    assert shock.dsigma_at(0.05, 0.25) == pytest.approx(1.5)
+    assert shock.dsigma_at(0.0, 0.625) == pytest.approx(1.25)
+    assert shock.dsigma_at(-0.5, 0.01) == pytest.approx(3.0)  # beyond both edges
+    assert shock.dsigma_at(0.5, 5.0) == pytest.approx(0.0)
+    assert float(shock.multiplier_at(np.asarray(-0.1), np.asarray(0.25))) == pytest.approx(
+        (23.0 / 20.0) ** 2
+    )
+
+
+def test_node_vol_shock_never_takes_vol_below_the_floor():
+    shock = NodeVolShock.from_vol_points(
+        np.array([0.25, 1.0]), np.array([0.0, 0.1]), np.full((2, 2), 5.0), np.full((2, 2), -9.0)
+    )
+    assert shock.dsigma_at(0.0, 0.5) == pytest.approx(MIN_SHOCKED_VOL_POINTS - 5.0)
+
+
+def test_node_vol_shock_moves_surface_vol_by_its_vol_points_at_a_node():
+    surface = _svi_surface([0.25, 0.5, 1.0])
+    k, T = -0.1, 0.5
+    base_iv = np.sqrt(local_variance_at(surface, k, T).w / T) * 100
+    node = NodeVolShock.from_vol_points(
+        np.array([0.25, 0.5, 1.0]),
+        np.array([-0.1, 0.0]),
+        np.full((3, 2), base_iv),
+        np.full((3, 2), 2.5),
+    )
+    shocked = shocked_w(surface, k, T, MarketShock(node_vol=node))
+    assert np.sqrt(shocked / T) * 100 == pytest.approx(base_iv + 2.5)
+
+
+def test_vectorised_grid_shock_matches_the_pointwise_multiplier():
+    surface = _svi_surface([0.25, 0.5, 1.0])
+    fc = ForwardCurve(
+        pillar_T=np.array([0.25, 1.0]), pillar_log_forward=np.log(np.array([100.5, 102.0]))
+    )
+    grid = build_local_vol_grid(surface, fc, np.linspace(60, 140, 12), np.linspace(0.05, 1.0, 6))
+    shock = MarketShock(vol_shock_pct=0.1, skew_shock=0.2, term_shock=0.3, node_vol=_node_shock())
+    shocked = shock_local_vol_grid(grid, fc, shock)
+    for ti, t in enumerate(grid.t_grid):
+        for si, s in enumerate(grid.s_grid):
+            k = float(np.log(s / fc.forward(max(t, 1e-6))))
+            expected = grid.sigma_loc[ti, si] * np.sqrt(shock.w_multiplier(k, max(t, 1e-6)))
+            assert shocked.sigma_loc[ti, si] == pytest.approx(expected, rel=1e-12)

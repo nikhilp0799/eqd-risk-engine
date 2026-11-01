@@ -5,6 +5,7 @@ import aiAgentJson from "@/data/ai_agent.json";
 import deepHedgingJson from "@/data/deep_hedging.json";
 import robustnessJson from "@/data/deep_hedging_robustness.json";
 import pnlExplainJson from "@/data/pnl_explain.json";
+import varJson from "@/data/var.json";
 import volPcaJson from "@/data/vol_pca.json";
 import volSurfaceJson from "@/data/vol_surface.json";
 import { maturityLabel } from "@/lib/format";
@@ -16,6 +17,7 @@ import type {
   RobustnessData,
   RobustnessRow,
   RobustnessScenario,
+  VarData,
   VolPcaData,
   VolSurfaceData,
 } from "@/lib/types";
@@ -26,6 +28,7 @@ export const robustness = robustnessJson as RobustnessData;
 export const pnlExplain = pnlExplainJson as PnlExplainData;
 export const volSurface = volSurfaceJson as VolSurfaceData;
 export const volPca = volPcaJson as VolPcaData;
+export const varData = varJson as VarData;
 
 // ---- P&L explain -----------------------------------------------------------
 
@@ -258,4 +261,31 @@ export const volMoves = {
   frontRatioLow: Math.min(...ratios),
   frontRatioHigh: Math.max(...ratios),
   windowDays: volPca.window_days,
+};
+
+// ---- Market risk (VaR) -------------------------------------------------------
+
+const varswap = varData.positions.find((p) => p.label.includes("variance swap"));
+const autocall = varData.positions.find((p) => p.label.includes("autocallable"));
+
+export const marketRisk = {
+  var1: varData.var1.full,
+  var1Shortcut: varData.var1.taylor,
+  /** How far the Greeks shortcut's VaR falls short of full revaluation, in %. */
+  shortcutShortfallPct: (1 - varData.var1.taylor / varData.var1.full) * 100,
+  es1: varData.es1.full,
+  var1ExVarswap: varData.var1_ex_varswap,
+  var10: varData.var10.overlapping,
+  var10Sqrt: varData.var10.sqrt10,
+  sqrt10OverPct: (varData.var10.sqrt10 / varData.var10.overlapping - 1) * 100,
+  runtimeSeconds: varData.runtime.full_seconds,
+  /** Shortcut P&L per dollar of full-revaluation P&L, in %. */
+  varswapCapturePct: varswap ? varswap.taylor_capture * 100 : NaN,
+  autocallCapturePct: autocall ? autocall.taylor_capture * 100 : NaN,
+  autocallMaxGap: autocall?.max_gap,
+  /** How many times faster the shortcut runs than full revaluation. */
+  speedup: varData.runtime.full_seconds / varData.runtime.taylor_seconds,
+  worstDay: varData.worst_days[0],
+  seriesDays: varData.series.length,
+  proxyNames: varData.proxy.names.map((n) => ({ ...n, label: VOL_PCA_NAMES[n.underlying] ?? n.underlying })),
 };
