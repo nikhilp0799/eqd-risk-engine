@@ -30,7 +30,13 @@ from eqdrisk.io.schemas import (
     HYPOTHETICAL_GRID_SCHEMA,
     validate,
 )
-from eqdrisk.portfolio.mark import MCSettings, load_market_state, mark_with_state
+from eqdrisk.portfolio.mark import (
+    MCSettings,
+    PortfolioMarkResult,
+    load_market_state,
+    mark_with_state,
+    revaluation_pnl,
+)
 from eqdrisk.portfolio.schema import Portfolio
 from eqdrisk.stress.shock import MarketShock
 
@@ -64,6 +70,7 @@ class GridCellResult:
     vol_shock_pct: float
     value: float
     pnl: float
+    varswap_pnl: float = 0.0  # the variance swap's part of `pnl`
 
 
 @dataclass
@@ -73,6 +80,8 @@ class HypotheticalGridResult:
     cells: list[GridCellResult] = field(default_factory=list)
     skew_scenario_pnl: float | None = None
     term_scenario_pnl: float | None = None
+    skew_varswap_pnl: float | None = None
+    term_varswap_pnl: float | None = None
     skipped: dict[str, str] = field(default_factory=dict)
 
     def pnl_matrix(self) -> pd.DataFrame:
@@ -116,32 +125,35 @@ def run_hypothetical_grid(
         result.skipped["_all_"] = "no curated rates available"
         return result
 
-    base_value = mark_with_state(
-        cfg, asof, portfolio, state, mc_settings=GRID_MC_SETTINGS
-    ).total_value()
+    base = mark_with_state(cfg, asof, portfolio, state, mc_settings=GRID_MC_SETTINGS)
+    base_value = base.total_value()
+    varswap_ids = {m.position_id for m in base.marks if m.type == "varswap"}
     result = HypotheticalGridResult(asof=asof, base_value=base_value)
+
+    def pnl_under(shock: MarketShock) -> tuple[float, float]:
+        """(book P&L, the variance swap's part of it)."""
+        shocked: PortfolioMarkResult = mark_with_state(
+            cfg, asof, portfolio, state, shock=shock, mc_settings=GRID_MC_SETTINGS
+        )
+        by_position = revaluation_pnl(base, shocked)
+        varswap = sum(v for k, v in by_position.items() if k in varswap_ids)
+        return sum(by_position.values()), varswap
 
     for spot_shock_pct in SPOT_LADDER:
         for vol_shock_pct in VOL_LADDER:
-            shock = MarketShock(spot_shock_pct=spot_shock_pct, vol_shock_pct=vol_shock_pct)
-            value = mark_with_state(
-                cfg, asof, portfolio, state, shock=shock, mc_settings=GRID_MC_SETTINGS
-            ).total_value()
+            pnl, varswap = pnl_under(
+                MarketShock(spot_shock_pct=spot_shock_pct, vol_shock_pct=vol_shock_pct)
+            )
             result.cells.append(
-                GridCellResult(spot_shock_pct, vol_shock_pct, value, value - base_value)
+                GridCellResult(spot_shock_pct, vol_shock_pct, base_value + pnl, pnl, varswap)
             )
 
-    skew_shock = MarketShock(skew_shock=SKEW_STEEPENING_SHOCK)
-    skew_value = mark_with_state(
-        cfg, asof, portfolio, state, shock=skew_shock, mc_settings=GRID_MC_SETTINGS
-    ).total_value()
-    result.skew_scenario_pnl = skew_value - base_value
-
-    term_shock = MarketShock(term_shock=TERM_INVERSION_SHOCK)
-    term_value = mark_with_state(
-        cfg, asof, portfolio, state, shock=term_shock, mc_settings=GRID_MC_SETTINGS
-    ).total_value()
-    result.term_scenario_pnl = term_value - base_value
+    result.skew_scenario_pnl, result.skew_varswap_pnl = pnl_under(
+        MarketShock(skew_shock=SKEW_STEEPENING_SHOCK)
+    )
+    result.term_scenario_pnl, result.term_varswap_pnl = pnl_under(
+        MarketShock(term_shock=TERM_INVERSION_SHOCK)
+    )
 
     _persist(result, Path(cfg.paths.curated))
     return result
@@ -158,6 +170,7 @@ def _persist(result: HypotheticalGridResult, curated_root: Path) -> None:
             "vol_shock_pct": c.vol_shock_pct,
             "base_value": result.base_value,
             "pnl": c.pnl,
+            "varswap_pnl": c.varswap_pnl,
         }
         for c in result.cells
     ]
@@ -170,6 +183,7 @@ def _persist(result: HypotheticalGridResult, curated_root: Path) -> None:
                 "vol_shock_pct": None,
                 "base_value": result.base_value,
                 "pnl": result.skew_scenario_pnl,
+                "varswap_pnl": result.skew_varswap_pnl,
             }
         )
     if result.term_scenario_pnl is not None:
@@ -181,6 +195,7 @@ def _persist(result: HypotheticalGridResult, curated_root: Path) -> None:
                 "vol_shock_pct": None,
                 "base_value": result.base_value,
                 "pnl": result.term_scenario_pnl,
+                "varswap_pnl": result.term_varswap_pnl,
             }
         )
     table = validate(

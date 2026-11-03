@@ -526,6 +526,71 @@ def export_var() -> dict[str, Any]:
     return payload
 
 
+def export_stress() -> dict[str, Any]:
+    """Conditional and reverse stress (Steps 11.3/11.4) on the VaR date's book."""
+
+    def on_date(table: str) -> pd.DataFrame:
+        df = _read(table)
+        df["asof_date"] = pd.to_datetime(df["asof_date"]).dt.date
+        out = df[df["asof_date"] == VAR_DATE]
+        if out.empty:
+            raise ValueError(f"no {table} rows for {VAR_DATE}")
+        return out
+
+    cond = on_date("conditional_stress")
+    conditional = []
+    for shock, g in cond.groupby("spot_shock_pct"):
+        row: dict[str, Any] = {"spx_shock": float(shock)}
+        for variant, gv in g.groupby("variant"):
+            row[f"{variant}_book"] = float(gv["pnl"].sum())
+            row[f"{variant}_ex_varswap"] = float(gv.loc[gv["type"] != "varswap", "pnl"].sum())
+        conditional.append(row)
+    conditional.sort(key=lambda r: -r["spx_shock"])
+    moves = on_date("conditional_stress_moves")
+    at20 = moves[np.isclose(moves["spot_shock_pct"], -0.20)]
+    key_moves = {
+        f"{factor} | {variant}": float(v)
+        for (factor, variant), v in at20.set_index(["factor", "variant"])["move"].items()
+    }
+    betas = on_date("crash_betas").set_index("factor")
+
+    rev = on_date("reverse_stress").sort_values("target_loss")
+    detail = on_date("reverse_stress_detail")
+    labels = _position_labels()
+    reverse = []
+    for _, r in rev.iterrows():
+        d = detail[np.isclose(detail["target_loss"], r["target_loss"])]
+        positions = d[d["kind"] == "position_pnl"].sort_values("value")
+        reverse.append(
+            {
+                "target_loss": float(r["target_loss"]),
+                "pnl": float(r["pnl"]),
+                "mahalanobis": float(r["mahalanobis"]),
+                "probability": float(r["probability"]),
+                "converged": bool(r["converged"]),
+                "moves": {
+                    n: float(v)
+                    for n, v in d.loc[d["kind"] == "factor_move", ["name", "value"]].values
+                },
+                "top_positions": [
+                    {"label": labels.get(n, n), "pnl": float(v)}
+                    for n, v in positions[["name", "value"]].head(2).values
+                ],
+            }
+        )
+    payload = {
+        "asof_date": VAR_DATE.isoformat(),
+        "conditional": conditional,
+        "moves_at_minus_20": key_moves,
+        "crash_betas": {
+            f: {"beta": float(b["beta"]), "alpha": float(b["alpha"])} for f, b in betas.iterrows()
+        },
+        "reverse": reverse,
+    }
+    _write("stress", payload)
+    return payload
+
+
 def export_pnl_explain() -> dict[str, Any]:
     steps_all = _read("pnl_explain")
     by_pos_all = _read("pnl_explain_by_position")
@@ -727,6 +792,7 @@ def main() -> None:
     export_vol_surface()
     export_vol_pca()
     export_var()
+    export_stress()
     pnl_payload = export_pnl_explain()
     export_ai_agent(pnl_payload)
 

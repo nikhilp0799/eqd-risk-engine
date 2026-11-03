@@ -11,8 +11,8 @@ Built to mirror the daily workflow of an equity derivatives risk quant: *the num
 ## Current build status (updated 2026-11-01)
 
 **This README doubles as the original build plan (kept intentionally — it explains *why* each
-step matters and what "done" looks like), but a lot of it is no longer just a plan.** Steps 1–9,
-11.1, 11.2, and 12 through 16 are built, tested, and verified against real live market data.
+step matters and what "done" looks like), but a lot of it is no longer just a plan.** Steps 1–9
+and 11–16 are built, tested, and verified against real live market data; Step 10 waits on history.
 Beyond the original 16 steps, two extensions are also built and verified live: a daily AI
 investigation agent (local, free, Ollama-served model, genuinely agentic via real tool use) and a
 deep-hedging module (PyTorch neural-network hedging policies vs. existing Greeks-based baselines)
@@ -21,8 +21,7 @@ status.
 
 | Status | Steps |
 |---|---|
-| **Done** | 0–7 (data → curves → IV → calibration → pricing/Greeks → exotics → portfolio), 8 (risk-factor grid, vol surface PCA, vol proxy regression), 9 (VaR and ES, on proxy history: see Step 9), 11.1 (historical replay stress), 11.2 (hypothetical stress grid), 12 (daily P&L explain), 13 (incident report), 14 (dashboard), 15 (model documentation), 16 (engineering polish) |
-| **Partial** | 11 (11.3 conditional stress / 11.4 reverse stress need a historical factor covariance estimate) |
+| **Done** | 0–7 (data → curves → IV → calibration → pricing/Greeks → exotics → portfolio), 8 (risk-factor grid, vol surface PCA, vol proxy regression), 9 (VaR and ES, on proxy history: see Step 9), 11 (historical replay, hypothetical grid, conditional and reverse stress), 12 (daily P&L explain), 13 (incident report), 14 (dashboard), 15 (model documentation), 16 (engineering polish) |
 | **Not started** | 10 (backtesting) — needs ~250 days of daily VaR against the P&L that followed; the daily VaR record started 2026-10-29 |
 
 **Why some steps are deferred rather than skipped:** several of the acceptance criteria below (PCA
@@ -53,8 +52,14 @@ not tuned-to-look-clean ones:
   ~0.1 SE at the same coarse step count (Step 6).
 - A live historical-replay stress test against five real episodes (Volmageddon, the COVID crash,
   the 2022 rate shock, the 2024 yen carry unwind) using REAL pulled spot/VIX moves — the COVID
-  scenario showed an 82%-of-book loss on the 2026-08-28 book, and 62% (-$2.56M) on the book of
-  2026-10-22, after the autocallable was priced against its real issue level (Step 11.1).
+  scenario showed an 82%-of-book loss on the 2026-08-28 book, and 60% (-$2.53M without the variance
+  swap) on the book of 2026-10-29, after the autocallable was priced against its real issue level
+  (Step 11.1).
+- Conditional stress (Step 11.3): at SPX -20%, moving the rest of the market as it has in past
+  sell-offs gives a loss of $806K without the variance swap, against $1.41M for the naive parallel
+  vol bump, which lifts 1y vol 23 points where history moves it about 2. Reverse stress (11.4): the
+  most plausible 10-day move losing $1M is VIX -31% with NVDA -12%, a vol collapse rather than a
+  crash, because the long variance swap and the short-vol NVDA note offset each other in sell-offs.
 - Two real bugs were caught by testing a claim rather than assuming it: a wall-clock staleness bug
   that could zero out all quote coverage depending on time of day (Step 4), and a documented
   "exact" stress-shock math claim that turned out to be off by up to ~40% once actually tested
@@ -1049,7 +1054,17 @@ Write the backtest report the way a validator would want to read it: state the t
 
 ## Step 11 — Stress testing and reverse stress testing
 
-**Status: partially built.** 11.1 (historical replay, using real pulled spot/VIX moves from five named episodes) and 11.2 (the hypothetical spot×vol grid) are built and verified live. 11.3 (conditional stress) and 11.4 (reverse stress) are deferred — both need a real historical factor covariance/beta estimate; see the status table above.
+**Status: built, verified live.** 11.1 (historical replay, using real pulled spot/VIX moves from five named episodes), 11.2 (the hypothetical spot×vol grid), and since 2026-11-02 11.3 (conditional stress) and 11.4 (reverse stress), both on 16 years of free spot and vol-index history (results after 11.4 below).
+
+**Since 2026-11-02 every stress test counts the SPX variance swap** (struck at the day's fair strike,
+as in VaR), and the stored tables carry its part separately (`varswap_pnl`). That turns 11.1 and
+11.2 upside down: under their parallel vol bump sized off VIX's ratio, the long $250K-per-point swap
+gains enormously (COVID replay +$128.7M for the swap alone). Those swap figures are not credible: the
+bump lifts 1-2y vol by VIX's full relative move, where history moves it a few points (11.3 below).
+Without the swap, on the 2026-10-29 book: COVID crash -$2.53M, COVID single day -$0.86M, yen carry
+unwind -$0.82M, 2022 rate shock -$0.55M, Volmageddon -$0.50M; the grid's worst cell (spot -30%,
+vol +50%) -$1.28M. Running 11.1's episodes through the 8.3 index-to-surface mapping instead of the
+parallel bump is the obvious next fix.
 
 **Latest results (book of 2026-10-22, value $4.16M; re-run after the position lifecycle and the
 autocallable's issue-date fix, 2026-10-20).** Historical replay: COVID crash -$2.56M (62% of book),
@@ -1108,6 +1123,74 @@ Report:
 - All three tiers implemented and reported.
 - Conditional vs. naive stress difference quantified.
 - Reverse stress returns an interpretable, plausibility-ranked shock.
+
+**Built (2026-11-02): `stress/conditional.py` and `stress/reverse.py`, `eqdrisk conditionalstress`
+and `eqdrisk reversestress`, tables `conditional_stress`, `conditional_stress_moves`,
+`crash_betas`, `reverse_stress`, `reverse_stress_detail`, the dashboard's Stress tab and the
+site's Market Risk page** (planning/step11_3_4_conditional_reverse_stress_plan.md). Not in the
+daily run.
+
+**11.3, the co-movement.** The README's per-node regression on spot needs surfaces through past
+crashes, which do not exist here. The chain instead: each other factor's 10-day log move (AAPL,
+NVDA, VIX, VXAPL, VXN) regressed with an intercept on SPX's over the sell-off periods since
+2010-06-01 (worst 10% of SPX 10-day moves, 412 periods), then each vol index onto the surface by the
+8.3 node betas, so skew and term structure come from those. Choices forced by the data:
+- **Sell-offs, not all days:** vol reacts more in them (1-day VIX beta -8.6 in sell-offs, -4.0 in
+  rallies, last 1,000 days).
+- **10-day moves since 2010, not daily:** a -20% shock is 3-4x the worst day of recent years, and
+  daily fits extrapolate badly (VIX at SPX -20%: +215% linear, +450% log). 10-day moves reach real
+  crash sizes (worst -23%).
+- **Checked on real episodes:** COVID 2020 (SPX -34%), VIX +328% actual against +364% fitted;
+  the 2022 grind (-25%) +102% against +206%; April 2025 (-19%) +243% against +129%. A fair average;
+  the speed of a sell-off matters. A down/up-beta fit without intercept overshot badly (COVID VIX
+  +748%) and was rejected.
+
+At SPX -20% the fit gives AAPL -17.5%, NVDA -22.1%, VIX +140%, VXAPL +98%, VXN +99%; on the SPX
+surface +12.5 vol points at 1m ATM, +16.7 at 1m -10%, +2.2 at 1y ATM. Book of 2026-10-29, P&L
+without the variance swap:
+
+| SPX | Conditional | Naive (11.1's parallel bump) | Conditional, crash-regime long end |
+|---|---|---|---|
+| -5% | -$265,091 | -$347,438 | -$271,663 |
+| -10% | -$428,264 | -$664,495 | -$439,906 |
+| -20% | -$806,496 | -$1,411,151 | -$829,613 |
+| -30% | -$1,230,062 | -$2,303,111 | -$1,257,827 |
+
+- **The naive stress overstates the loss by 31-87%**, not understates it as the README expects for
+  a book with short downside puts. This book's largest vol exposure is the long-dated NVDA
+  autocallable (short vol), and the naive bump lifts 1y vol by VIX's +140% relative (+23 points on
+  SPX 1y ATM) where history moves it about 2. P008 alone is -$818K conditional against -$1,475K naive.
+- **The long end is understated, but it hardly matters here.** In 10-day sell-offs 3-month VIX rises
+  0.75 points per VIX point; the 8.3 betas (fitted on calm days) give 0.57. Scaling every node beta
+  beyond 1m by that ratio of ratios moves the -20% loss from -$806K to -$830K.
+- **With the variance swap the book gains in every crash:** +$4.47M at SPX -20% conditional (the
+  swap +$5.27M). It is the book's defining exposure.
+
+**11.4, reverse stress.** Factors: the 10-day log moves of SPX, AAPL, NVDA, VIX, VXAPL, VXN;
+plausibility = squared Mahalanobis distance under their covariance over all 10-day periods since
+2010 (zero mean); loss by full revaluation, variance swap included. SLSQP from three directions (the
+linearised answer, the historical sell-off and its opposite), each first scaled to the target;
+vol-index levels kept inside their 2010-2026 range. Book of 2026-10-29:
+
+| Loss | Most plausible 10-day move | d | One-sided normal probability | Biggest losers |
+|---|---|---|---|---|
+| $0.5M | SPX +1.7%, NVDA -2.9%, VIX -18.7%, VXN -14.5% | 1.39 | 8.2% (about every 6 months) | variance swap -$442K |
+| $1M | SPX +2.2%, NVDA -12.1%, VIX -30.8%, VXN -23.6% | 3.21 | 0.07% | swap -$695K, NVDA note -$306K |
+| $2M | SPX -0.1%, NVDA -33.7%, VIX -38.1%, VXN -28.9% | 6.97 | ~1e-12 | NVDA note -$1.17M, swap -$838K |
+
+- **The danger is a vol collapse, not a crash.** Every solution has vol falling (PC1 of the
+  covariance, 76% of its variance, is a vol-level factor: loadings 0.49-0.65 on the three indices,
+  negative on the spots; the solutions sit at -0.9 to -1.8 sigma on it). The larger losses add an
+  NVDA-specific fall (PC3, 6% of variance, NVDA loading 0.94: -2.6 sigma at $1M, -6.5 at $2M), which
+  hits the note. In an ordinary sell-off the long swap and the short-vol note offset each other, so
+  losing big needs the rare combination of falling vol and a falling NVDA.
+- **The normal approximation understates fat tails**, so the probabilities rank the scenarios more
+  than they price them. The $2M solution is far outside history.
+- **Convergence:** SLSQP's own test rarely passes here, because Monte Carlo noise (~$1K) keeps the
+  loss constraint from settling; a solve counts as converged when the distance stops improving
+  (150 iterations gave d = 3.2035 against 3.2076 after 40, for the $1M target), and its point is
+  then scaled along its direction to lose exactly the target. A 10-day run of all three targets
+  takes about 4 minutes.
 
 ---
 
@@ -1322,14 +1405,18 @@ eqdrisk portfolio   --date 2026-08-11 --portfolio configs/portfolio.yaml
 eqdrisk explainpnl  --day0 2026-08-10 --day1 2026-08-11
 eqdrisk historicalreplay  --date 2026-08-11
 eqdrisk hypotheticalgrid  --date 2026-08-11
+eqdrisk conditionalstress --date 2026-08-11
+eqdrisk reversestress     --date 2026-08-11
+eqdrisk var         --date 2026-08-11
 eqdrisk run         --date 2026-08-11        # full daily pipeline
 eqdrisk dashboard
 ```
 
-`var`/`backtest`/`stress`/`reverse`/`explain` remain the README's original stub names (raising
-`NotImplementedError`) since Steps 9-11 built new, more specifically-scoped commands instead of
-overloading those signatures (`historicalreplay`/`hypotheticalgrid`/`explainpnl` above) — same
-reasoning documented at each of those steps.
+`backtest`/`stress`/`reverse`/`explain` remain the README's original stub names (raising
+`NotImplementedError`) since Steps 11-12 built new, more specifically-scoped commands instead of
+overloading those signatures (`historicalreplay`/`hypotheticalgrid`/`conditionalstress`/
+`reversestress`/`explainpnl` above) — same reasoning documented at each of those steps. `var` was
+a stub too until Step 9 replaced it (2026-11-01).
 
 ### Performance targets — measured, not estimated (2026-09-12, real data)
 

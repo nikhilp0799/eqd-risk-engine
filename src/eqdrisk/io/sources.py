@@ -137,9 +137,11 @@ def fetch_rates(start: dt.date, end: dt.date) -> pd.DataFrame:
 # VIX: SPX 30d. VXAPL: Apple's own 30d implied vol. VXN: Nasdaq-100 30d, the
 # nearest free index for NVDA (which has none of its own). The last two drive the
 # single-name vol moves in VaR (risk/proxy.py).
-FRED_VOL_INDEX_SERIES = {"VIX": "VIXCLS", "VXAPL": "VXAPLCLS", "VXN": "VXNCLS"}
+# VXV (3-month SPX vol) is the crash-regime term-structure check in conditional
+# stress (stress/conditional.py).
+FRED_VOL_INDEX_SERIES = {"VIX": "VIXCLS", "VXAPL": "VXAPLCLS", "VXN": "VXNCLS", "VXV": "VXVCLS"}
 # FRED posts a close the next day; the daily run needs the same evening's.
-YF_VOL_INDEX_TICKERS = {"VIX": "^VIX", "VXAPL": "^VXAPL", "VXN": "^VXN"}
+YF_VOL_INDEX_TICKERS = {"VIX": "^VIX", "VXAPL": "^VXAPL", "VXN": "^VXN", "VXV": "^VIX3M"}
 # VVIX/SKEW have no free FRED series under any name we could find (VVIXCLS, VVIX both 404)
 # — documented gap, not pursued further given they're secondary benchmarks per the README.
 

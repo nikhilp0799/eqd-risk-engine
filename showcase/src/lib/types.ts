@@ -253,3 +253,34 @@ export interface VarData {
     worst_day: { date: string; true: number; proxy: number };
   };
 }
+
+export interface ConditionalStressRow {
+  spx_shock: number;
+  conditional_book: number;
+  conditional_ex_varswap: number;
+  naive_book: number;
+  naive_ex_varswap: number;
+  conditional_long_end_book: number;
+  conditional_long_end_ex_varswap: number;
+}
+
+export interface ReverseStressRow {
+  target_loss: number;
+  pnl: number;
+  mahalanobis: number;
+  /** One-sided normal probability per 10-day period. */
+  probability: number;
+  converged: boolean;
+  /** Relative 10-day moves by factor (SPX, AAPL, NVDA, VIX, VXAPL, VXN). */
+  moves: Record<string, number>;
+  top_positions: { label: string; pnl: number }[];
+}
+
+export interface StressData {
+  asof_date: string;
+  conditional: ConditionalStressRow[];
+  /** "<factor> | <variant>" at SPX -20%: relative moves, or vol points for "... (points)". */
+  moves_at_minus_20: Record<string, number>;
+  crash_betas: Record<string, { beta: number; alpha: number }>;
+  reverse: ReverseStressRow[];
+}

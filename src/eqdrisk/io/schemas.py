@@ -495,6 +495,8 @@ HISTORICAL_REPLAY_SCHEMA = pa.schema(
         ("base_value", pa.float64()),
         ("shocked_value", pa.float64()),
         ("pnl", pa.float64()),
+        # The variance swap's part of `pnl` (counted in stress since 2026-11-02).
+        ("varswap_pnl", pa.float64()),
     ]
 )
 HISTORICAL_REPLAY_REQUIRED_NOT_NULL = [
@@ -514,10 +516,87 @@ HYPOTHETICAL_GRID_SCHEMA = pa.schema(
         ("vol_shock_pct", pa.float64()),  # null for the two standalone scenarios
         ("base_value", pa.float64()),
         ("pnl", pa.float64()),
+        # The variance swap's part of `pnl` (counted in stress since 2026-11-02).
+        ("varswap_pnl", pa.float64()),
     ]
 )
 HYPOTHETICAL_GRID_REQUIRED_NOT_NULL = ["asof_date", "scenario", "base_value", "pnl"]
 
+
+# Conditional stress (README 11.3, stress/conditional.py).
+CONDITIONAL_STRESS_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("spot_shock_pct", pa.float64()),  # the SPX shock
+        ("variant", pa.string()),  # conditional / naive / conditional_long_end
+        ("position_id", pa.string()),
+        ("underlying", pa.string()),
+        ("type", pa.string()),
+        ("pnl", pa.float64()),
+    ]
+)
+CONDITIONAL_STRESS_REQUIRED_NOT_NULL = [
+    "asof_date",
+    "spot_shock_pct",
+    "variant",
+    "position_id",
+    "pnl",
+]
+
+CONDITIONAL_STRESS_MOVE_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("spot_shock_pct", pa.float64()),
+        ("variant", pa.string()),
+        # "<name> spot" and vol indices as relative moves; "<name> vol <T> k=<k>
+        # (points)" as vol-point moves at a surface node
+        ("factor", pa.string()),
+        ("move", pa.float64()),
+    ]
+)
+CONDITIONAL_STRESS_MOVE_REQUIRED_NOT_NULL = ["asof_date", "spot_shock_pct", "variant", "factor"]
+
+CRASH_BETA_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("factor", pa.string()),
+        ("beta", pa.float64()),  # log move per SPX log move, over sell-off periods
+        ("alpha", pa.float64()),
+        ("r2", pa.float64()),
+        ("n_periods", pa.int32()),
+        ("horizon_days", pa.int32()),
+        ("sell_off_quantile", pa.float64()),
+    ]
+)
+CRASH_BETA_REQUIRED_NOT_NULL = ["asof_date", "factor", "beta"]
+
+# Reverse stress (README 11.4, stress/reverse.py): one row per loss target.
+REVERSE_STRESS_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("target_loss", pa.float64()),  # dollars, positive
+        ("pnl", pa.float64()),  # book P&L at the solution
+        ("mahalanobis", pa.float64()),
+        # One-sided normal probability of a 10-day move at least this far along the
+        # solution's direction.
+        ("probability", pa.float64()),
+        ("start", pa.string()),  # the starting direction that gave the best solution
+        ("converged", pa.bool_()),
+        ("n_starts", pa.int32()),
+    ]
+)
+REVERSE_STRESS_REQUIRED_NOT_NULL = ["asof_date", "target_loss", "pnl", "mahalanobis"]
+
+REVERSE_STRESS_DETAIL_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("target_loss", pa.float64()),
+        ("kind", pa.string()),  # factor_move / pc_sigma / position_pnl
+        ("name", pa.string()),
+        ("value", pa.float64()),
+    ]
+)
+REVERSE_STRESS_DETAIL_REQUIRED_NOT_NULL = ["asof_date", "target_loss", "kind", "name", "value"]
 
 AI_INVESTIGATION_SCHEMA = pa.schema(
     [
