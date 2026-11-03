@@ -221,6 +221,37 @@ def hypotheticalgrid(
 
 
 @app.command()
+def conditionalstress(
+    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
+    portfolio_path: str = typer.Option(
+        "configs/portfolio.yaml", "--portfolio", help="Path to portfolio config"
+    ),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """SPX shocks of -5/-10/-20/-30% with the rest of the market moving as in past
+    sell-offs, against the naive parallel-vol version (Step 11.3)."""
+    from eqdrisk.stress.conditional import run_conditional_stress
+
+    cfg = BaseConfig.from_yaml(config)
+    typer.echo(run_conditional_stress(cfg, dt.date.fromisoformat(date), portfolio_path).render())
+
+
+@app.command()
+def reversestress(
+    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
+    portfolio_path: str = typer.Option(
+        "configs/portfolio.yaml", "--portfolio", help="Path to portfolio config"
+    ),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """The most plausible 10-day market move losing $0.5M, $1M and $2M (Step 11.4)."""
+    from eqdrisk.stress.reverse import run_reverse_stress
+
+    cfg = BaseConfig.from_yaml(config)
+    typer.echo(run_reverse_stress(cfg, dt.date.fromisoformat(date), portfolio_path).render())
+
+
+@app.command()
 def var(
     date: str = typer.Option(..., help="VaR date, YYYY-MM-DD"),
     portfolio_path: str = typer.Option(

@@ -375,7 +375,21 @@ def render_backtest_tab(cfg: BaseConfig) -> None:
     )
 
 
+def _without_varswap(df: pd.DataFrame, exclude: bool) -> pd.DataFrame:
+    """`pnl` less the variance swap's part (stored since 2026-11-02; older rows
+    were computed with the swap at zero P&L already)."""
+    if not exclude or "varswap_pnl" not in df:
+        return df
+    return df.assign(pnl=df["pnl"] - df["varswap_pnl"].fillna(0.0))
+
+
 def render_stress_tab(cfg: BaseConfig) -> None:
+    exclude = st.checkbox(
+        "Leave out the S&P 500 variance swap",
+        key="stress_ex_varswap",
+        help="Counted in every stress test since 2026-11-02, as in VaR: struck at the day's "
+        "fair strike, so a vol move changes its value.",
+    )
     st.subheader("Hypothetical spot x vol stress grid (Step 11.2)")
     grid_all = read_table("hypothetical_grid", cfg.paths.curated)
     if grid_all.empty:
@@ -383,7 +397,7 @@ def render_stress_tab(cfg: BaseConfig) -> None:
     else:
         dates = sorted(grid_all["asof_date"].unique(), reverse=True)
         asof = st.selectbox("As-of date", dates, key="grid_date")
-        day_df = grid_all[grid_all["asof_date"] == asof]
+        day_df = _without_varswap(grid_all[grid_all["asof_date"] == asof], exclude)
         cells = day_df[day_df["scenario"] == "grid"]
         if not cells.empty:
             matrix = cells.pivot(index="spot_shock_pct", columns="vol_shock_pct", values="pnl")
@@ -411,16 +425,86 @@ def render_stress_tab(cfg: BaseConfig) -> None:
     replay_all = read_table("historical_replay", cfg.paths.curated)
     if replay_all.empty:
         st.info("No historical_replay data yet — run `eqdrisk historicalreplay --date ...`.")
+    else:
+        dates = sorted(replay_all["asof_date"].unique(), reverse=True)
+        asof = st.selectbox("As-of date", dates, key="replay_date")
+        day_df = _without_varswap(replay_all[replay_all["asof_date"] == asof], exclude)
+        day_df = day_df.sort_values("pnl")
+        fig = go.Figure(go.Bar(x=day_df["episode_name"], y=day_df["pnl"]))
+        fig.update_layout(yaxis_title="P&L ($)", height=400, margin=dict(l=0, r=0, t=20, b=0))
+        st.plotly_chart(fig, width="stretch")
+        st.dataframe(
+            day_df[["episode_name", "episode_description", "base_value", "pnl"]],
+            hide_index=True,
+        )
+
+    st.subheader("Conditional stress: SPX shocks with history's co-movement (Step 11.3)")
+    cond_all = read_table("conditional_stress", cfg.paths.curated)
+    if cond_all.empty:
+        st.info("No conditional_stress data yet — run `eqdrisk conditionalstress --date ...`.")
+    else:
+        dates = sorted(cond_all["asof_date"].unique(), reverse=True)
+        asof = st.selectbox("As-of date", dates, key="cond_date")
+        day_df = cond_all[cond_all["asof_date"] == asof]
+        if exclude:
+            day_df = day_df[day_df["type"] != "varswap"]
+        book = day_df.pivot_table(
+            index="spot_shock_pct", columns="variant", values="pnl", aggfunc="sum"
+        ).sort_index(ascending=False)
+        fig = go.Figure(
+            [
+                go.Bar(x=[f"{i:+.0%}" for i in book.index], y=book[v], name=v)
+                for v in ("conditional", "naive", "conditional_long_end")
+                if v in book
+            ]
+        )
+        fig.update_layout(
+            xaxis_title="SPX shock",
+            yaxis_title="P&L ($)",
+            barmode="group",
+            height=380,
+            margin=dict(l=0, r=0, t=20, b=0),
+        )
+        st.plotly_chart(fig, width="stretch")
+        st.caption(
+            "Conditional: other names and vol indices move as in past 10-day sell-offs, mapped "
+            "onto each surface by the Step 8.3 betas. Naive: every name moves like SPX and every "
+            "vol by VIX's relative move. Long end: node betas beyond 1m scaled to the "
+            "crash-regime term structure."
+        )
+        moves = read_table("conditional_stress_moves", cfg.paths.curated)
+        if not moves.empty:
+            m = moves[moves["asof_date"] == asof]
+            shock = st.selectbox(
+                "SPX shock", sorted(m["spot_shock_pct"].unique()), key="cond_shock"
+            )
+            st.dataframe(
+                m[m["spot_shock_pct"] == shock]
+                .pivot_table(index="factor", columns="variant", values="move")
+                .round(3),
+            )
+
+    st.subheader("Reverse stress: the most plausible 10-day move losing $X (Step 11.4)")
+    rev_all = read_table("reverse_stress", cfg.paths.curated)
+    if rev_all.empty:
+        st.info("No reverse_stress data yet — run `eqdrisk reversestress --date ...`.")
         return
-    dates = sorted(replay_all["asof_date"].unique(), reverse=True)
-    asof = st.selectbox("As-of date", dates, key="replay_date")
-    day_df = replay_all[replay_all["asof_date"] == asof].sort_values("pnl")
-    fig = go.Figure(go.Bar(x=day_df["episode_name"], y=day_df["pnl"]))
-    fig.update_layout(yaxis_title="P&L ($)", height=400, margin=dict(l=0, r=0, t=20, b=0))
-    st.plotly_chart(fig, width="stretch")
+    dates = sorted(rev_all["asof_date"].unique(), reverse=True)
+    asof = st.selectbox("As-of date", dates, key="rev_date")
+    rev = rev_all[rev_all["asof_date"] == asof].sort_values("target_loss")
+    detail = read_table("reverse_stress_detail", cfg.paths.curated)
+    detail = detail[detail["asof_date"] == asof]
+    moves = detail[detail["kind"] == "factor_move"].pivot_table(
+        index="target_loss", columns="name", values="value"
+    )
     st.dataframe(
-        day_df[["episode_name", "episode_description", "base_value", "shocked_value", "pnl"]],
-        hide_index=True,
+        rev[["target_loss", "pnl", "mahalanobis", "probability", "start", "converged"]]
+        .set_index("target_loss")
+        .join(moves.round(3)),
+    )
+    st.caption(
+        "Mahalanobis distance under the covariance of all 10-day moves since 2010; probability "
+        "= one-sided normal tail at that distance. Factor moves are relative, over 10 days."
     )
 
 

@@ -20,7 +20,7 @@ from eqdrisk.io.schemas import (
     HISTORICAL_REPLAY_SCHEMA,
     validate,
 )
-from eqdrisk.portfolio.mark import load_market_state, mark_with_state
+from eqdrisk.portfolio.mark import load_market_state, mark_with_state, revaluation_pnl
 from eqdrisk.portfolio.schema import Portfolio
 from eqdrisk.stress.historical_scenarios import EPISODES, HistoricalEpisode, compute_episode_shocks
 from eqdrisk.stress.shock import MarketShock
@@ -32,6 +32,7 @@ class EpisodeResult:
     shocks: dict[str, MarketShock]
     shocked_value: float
     pnl: float
+    varswap_pnl: float = 0.0  # the variance swap's part of `pnl`
 
 
 @dataclass
@@ -48,7 +49,10 @@ class HistoricalReplayResult:
         ]
         for er in self.episodes:
             lines.append(f"  {er.episode.name} ({er.episode.description}):")
-            lines.append(f"    P&L: {er.pnl:+,.2f}  (shocked value {er.shocked_value:,.2f})")
+            lines.append(
+                f"    P&L: {er.pnl:+,.2f}  (shocked value {er.shocked_value:,.2f}; "
+                f"variance swap {er.varswap_pnl:+,.2f})"
+            )
             for u, shock in sorted(er.shocks.items()):
                 lines.append(
                     f"      {u}: spot {shock.spot_shock_pct:+.1%}, vol {shock.vol_shock_pct:+.1%}"
@@ -69,7 +73,9 @@ def run_historical_replay(
         return result
 
     underlyings = sorted({p.underlying for p in portfolio.positions})
-    base_value = mark_with_state(cfg, asof, portfolio, state).total_value()
+    base = mark_with_state(cfg, asof, portfolio, state)
+    base_value = base.total_value()
+    varswap_ids = {m.position_id for m in base.marks if m.type == "varswap"}
     result = HistoricalReplayResult(asof=asof, base_value=base_value)
 
     for episode in EPISODES:
@@ -84,13 +90,16 @@ def run_historical_replay(
             result.skipped[episode.name] = "no real historical data recovered for any underlying"
             continue
 
-        shocked_value = mark_with_state(cfg, asof, portfolio, state, shock=shocks).total_value()
+        shocked = mark_with_state(cfg, asof, portfolio, state, shock=shocks)
+        by_position = revaluation_pnl(base, shocked)
+        pnl = sum(by_position.values())
         result.episodes.append(
             EpisodeResult(
                 episode=episode,
                 shocks=shocks,
-                shocked_value=shocked_value,
-                pnl=shocked_value - base_value,
+                shocked_value=base_value + pnl,
+                pnl=pnl,
+                varswap_pnl=sum(v for k, v in by_position.items() if k in varswap_ids),
             )
         )
 
@@ -109,6 +118,7 @@ def _persist(result: HistoricalReplayResult, curated_root: Path) -> None:
             "base_value": result.base_value,
             "shocked_value": er.shocked_value,
             "pnl": er.pnl,
+            "varswap_pnl": er.varswap_pnl,
         }
         for er in result.episodes
     ]

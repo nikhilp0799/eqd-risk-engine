@@ -360,3 +360,75 @@ def test_run_var_refuses_when_a_name_has_no_vol_proxy(tmp_path, monkeypatch):
     result = run_var(cfg, ASOF, str(portfolio), levels=levels, max_workers=1)
     assert "SPX" in result.skipped["_all_"]
     assert result.summary.empty
+
+
+def test_run_conditional_stress_end_to_end(tmp_path, monkeypatch):
+    from eqdrisk.stress.conditional import SPOT_SHOCKS, VARIANTS, run_conditional_stress
+
+    _write_market(tmp_path)
+    portfolio = tmp_path / "portfolio.yaml"
+    portfolio.write_text(
+        yaml.dump(
+            {
+                "positions": [
+                    {"id": "E1", "type": "equity", "underlying": "SPX", "qty": -10},
+                    {
+                        "id": "S1",
+                        "type": "varswap",
+                        "underlying": "SPX",
+                        "expiry": PILLARS[1][1].isoformat(),
+                        "vega_notional": 100,
+                    },
+                ]
+            }
+        )
+    )
+    cfg = BaseConfig(
+        run_date=ASOF,
+        universe=Universe(index=["SPX"], single_names=[]),
+        paths=Paths(raw=str(tmp_path / "raw"), curated=str(tmp_path)),
+        calendar="NYSE",
+        daycount="ACT/365F",
+    )
+    days = pd.bdate_range(end=ASOF, periods=300).date
+    spx = np.cumsum(np.random.default_rng(2).normal(0, 0.012, 300))
+    spx -= spx[-1]
+    levels = pd.DataFrame(
+        {
+            "SPX": SPOT * np.exp(spx),
+            "VIX": 20.0 * np.exp(-4.0 * spx),
+            "VXV": 15.0 * np.exp(-4.0 * spx) + 4.0,
+        },
+        index=pd.Index(days, name="asof_date"),
+    )
+    beta = np.tile(np.array([0.5, 0.3, 0.2, 0.1, 0.05])[:, None], (1, N_K))
+    fit = ProxyFit(
+        underlying="SPX",
+        index="VIX",
+        nodes=[],
+        coverage=pd.Series(dtype=float),
+        changes=pd.DataFrame(),
+        index_change=pd.Series(dtype=float),
+        alpha=np.array([]),
+        beta=np.array([]),
+        r2=np.array([]),
+    )
+    monkeypatch.setattr(fit, "beta_field", lambda: beta)
+    monkeypatch.setattr(var_module, "fit_proxies", lambda *a, **k: ({"SPX": fit}, {}))
+    monkeypatch.setattr(var_module, "base_iv_grid", lambda *a, **k: np.full((N_T, N_K), 20.0))
+
+    result = run_conditional_stress(cfg, ASOF, str(portfolio), levels=levels, max_workers=1)
+    assert not result.skipped, result.skipped
+    assert len(result.pnl) == len(SPOT_SHOCKS) * len(VARIANTS) * 2
+    eq = result.pnl[result.pnl["position_id"] == "E1"]
+    np.testing.assert_allclose(eq["pnl"], -10 * SPOT * eq["spot_shock_pct"], rtol=1e-12)
+    # A long variance swap gains as the SPX falls and VIX rises.
+    swap = result.pnl[
+        (result.pnl["position_id"] == "S1") & (result.pnl["variant"] == "conditional")
+    ]
+    assert (swap["pnl"] > 0).all()
+    assert result.term_ratio_calm == pytest.approx(0.6)
+    vix = result.betas.set_index("factor").loc["VIX"]
+    assert vix["beta"] == pytest.approx(-4.0, abs=1e-6)
+    for table in ("conditional_stress", "conditional_stress_moves", "crash_betas"):
+        assert (tmp_path / table).exists()

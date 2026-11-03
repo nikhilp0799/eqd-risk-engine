@@ -1,0 +1,191 @@
+{
+  "asof_date": "2026-10-29",
+  "conditional": [
+    {
+      "spx_shock": -0.05,
+      "conditional_book": 665223.3657742324,
+      "conditional_ex_varswap": -265090.9379697156,
+      "conditional_long_end_book": 725349.4800559935,
+      "conditional_long_end_ex_varswap": -271663.151400715,
+      "naive_book": 1966584.5552795404,
+      "naive_ex_varswap": -347438.1473089872
+    },
+    {
+      "spx_shock": -0.1,
+      "conditional_book": 1406806.5105928227,
+      "conditional_ex_varswap": -428263.5357986762,
+      "conditional_long_end_book": 1533891.610975978,
+      "conditional_long_end_ex_varswap": -439906.3206932109,
+      "naive_book": 4547167.199161054,
+      "naive_ex_varswap": -664495.1491001185
+    },
+    {
+      "spx_shock": -0.2,
+      "conditional_book": 4465017.018159553,
+      "conditional_ex_varswap": -806495.8783041337,
+      "conditional_long_end_book": 4899987.693986144,
+      "conditional_long_end_ex_varswap": -829613.2540443537,
+      "naive_book": 19693316.817889594,
+      "naive_ex_varswap": -1411151.22214992
+    },
+    {
+      "spx_shock": -0.3,
+      "conditional_book": 13319572.379769096,
+      "conditional_ex_varswap": -1230061.7480520078,
+      "conditional_long_end_book": 14846652.828437688,
+      "conditional_long_end_ex_varswap": -1257826.686427272,
+      "naive_book": 86989021.89324667,
+      "naive_ex_varswap": -2303111.37937751
+    }
+  ],
+  "moves_at_minus_20": {
+    "AAPL spot | conditional": -0.1751450454629784,
+    "VXAPL | conditional": 0.9754439361903386,
+    "AAPL vol 1m k=+0.0 (points) | conditional": 17.743902383915326,
+    "AAPL vol 1m k=-0.1 (points) | conditional": 17.743902383915323,
+    "AAPL vol 1y k=+0.0 (points) | conditional": 3.3262153438951465,
+    "NVDA spot | conditional": -0.22076868687203266,
+    "VXN | conditional": 0.9922213716320266,
+    "NVDA vol 1m k=+0.0 (points) | conditional": 13.682150787465751,
+    "NVDA vol 1m k=-0.1 (points) | conditional": 15.398234654061397,
+    "NVDA vol 1y k=+0.0 (points) | conditional": 3.5374997051965806,
+    "SPX spot | conditional": -0.2,
+    "VIX | conditional": 1.4041418625580049,
+    "SPX vol 1m k=+0.0 (points) | conditional": 12.465676116099472,
+    "SPX vol 1m k=-0.1 (points) | conditional": 16.739267965544585,
+    "SPX vol 1y k=+0.0 (points) | conditional": 2.185636586226085,
+    "AAPL spot | naive": -0.2,
+    "VXAPL | naive": 1.4041418625580049,
+    "AAPL vol 1m k=+0.0 (points) | naive": 37.29096517246376,
+    "AAPL vol 1m k=-0.1 (points) | naive": 42.85717484757037,
+    "AAPL vol 1y k=+0.0 (points) | naive": 37.860270798784505,
+    "NVDA spot | naive": -0.2,
+    "VXN | naive": 1.4041418625580049,
+    "NVDA vol 1m k=+0.0 (points) | naive": 53.23146635986185,
+    "NVDA vol 1m k=-0.1 (points) | naive": 58.17635937182675,
+    "NVDA vol 1y k=+0.0 (points) | naive": 54.948350452946784,
+    "SPX spot | naive": -0.2,
+    "VIX | naive": 1.4041418625580049,
+    "SPX vol 1m k=+0.0 (points) | naive": 19.4012350900306,
+    "SPX vol 1m k=-0.1 (points) | naive": 34.10346989672145,
+    "SPX vol 1y k=+0.0 (points) | naive": 23.365607415435996,
+    "AAPL spot | conditional_long_end": -0.1751450454629784,
+    "VXAPL | conditional_long_end": 0.9754439361903386,
+    "AAPL vol 1m k=+0.0 (points) | conditional_long_end": 17.743902383915326,
+    "AAPL vol 1m k=-0.1 (points) | conditional_long_end": 17.743902383915323,
+    "AAPL vol 1y k=+0.0 (points) | conditional_long_end": 4.357589849581316,
+    "NVDA spot | conditional_long_end": -0.22076868687203266,
+    "VXN | conditional_long_end": 0.9922213716320266,
+    "NVDA vol 1m k=+0.0 (points) | conditional_long_end": 13.682150787465751,
+    "NVDA vol 1m k=-0.1 (points) | conditional_long_end": 15.398234654061397,
+    "NVDA vol 1y k=+0.0 (points) | conditional_long_end": 4.634388100143241,
+    "SPX spot | conditional_long_end": -0.2,
+    "VIX | conditional_long_end": 1.4041418625580049,
+    "SPX vol 1m k=+0.0 (points) | conditional_long_end": 12.465676116099472,
+    "SPX vol 1m k=-0.1 (points) | conditional_long_end": 16.739267965544585,
+    "SPX vol 1y k=+0.0 (points) | conditional_long_end": 2.8633467224221256
+  },
+  "crash_betas": {
+    "AAPL": {
+      "beta": 0.7901895331140919,
+      "alpha": -0.016222022156319665
+    },
+    "NVDA": {
+      "beta": 0.9489545518527007,
+      "alpha": -0.037694252472536646
+    },
+    "VXAPL": {
+      "beta": -2.9451654549694375,
+      "alpha": 0.023598472082418828
+    },
+    "VXN": {
+      "beta": -2.6758678484686484,
+      "alpha": 0.09214762877044277
+    },
+    "VIX": {
+      "beta": -3.43674673171314,
+      "alpha": 0.11030515529732696
+    },
+    "VXV points per VIX point": {
+      "beta": 0.7473976371353951,
+      "alpha": 0.0
+    }
+  },
+  "reverse": [
+    {
+      "target_loss": 500000.0,
+      "pnl": -500015.9698979532,
+      "mahalanobis": 1.3925781249999998,
+      "probability": 0.08187370086948997,
+      "converged": true,
+      "moves": {
+        "AAPL": 0.01234822896865678,
+        "NVDA": -0.028752896242984615,
+        "SPX": 0.016697732477735365,
+        "VXAPL": -0.0939098445136786,
+        "VXN": -0.14460699415130523,
+        "VIX": -0.1871468097271632
+      },
+      "top_positions": [
+        {
+          "label": "S&P 500 variance swap",
+          "pnl": -441727.49068938283
+        },
+        {
+          "label": "NVIDIA autocallable note",
+          "pnl": -58266.153573727235
+        }
+      ]
+    },
+    {
+      "target_loss": 1000000.0,
+      "pnl": -1000040.1197395751,
+      "mahalanobis": 3.2080078125000004,
+      "probability": 0.0006682893384121134,
+      "converged": true,
+      "moves": {
+        "AAPL": 0.008608252509279334,
+        "NVDA": -0.12075016526690792,
+        "SPX": 0.0217194557804351,
+        "VXAPL": -0.14858135371764708,
+        "VXN": -0.23555994660004753,
+        "VIX": -0.3078467981489418
+      },
+      "top_positions": [
+        {
+          "label": "S&P 500 variance swap",
+          "pnl": -695315.1899046944
+        },
+        {
+          "label": "NVIDIA autocallable note",
+          "pnl": -306118.64718166646
+        }
+      ]
+    },
+    {
+      "target_loss": 2000000.0,
+      "pnl": -2000234.8394671073,
+      "mahalanobis": 6.966796875000002,
+      "probability": 1.621191394485388e-12,
+      "converged": true,
+      "moves": {
+        "AAPL": -0.034164337309047985,
+        "NVDA": -0.33736855630074,
+        "SPX": -0.001124506212587392,
+        "VXAPL": -0.15709590257561226,
+        "VXN": -0.28863796608383313,
+        "VIX": -0.38121974572873935
+      },
+      "top_positions": [
+        {
+          "label": "NVIDIA autocallable note",
+          "pnl": -1172358.4194169478
+        },
+        {
+          "label": "S&P 500 variance swap",
+          "pnl": -837580.3172646706
+        }
+      ]
+    }
+  ]
+}

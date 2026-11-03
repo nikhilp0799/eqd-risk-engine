@@ -5,6 +5,7 @@ import aiAgentJson from "@/data/ai_agent.json";
 import deepHedgingJson from "@/data/deep_hedging.json";
 import robustnessJson from "@/data/deep_hedging_robustness.json";
 import pnlExplainJson from "@/data/pnl_explain.json";
+import stressJson from "@/data/stress.json";
 import varJson from "@/data/var.json";
 import volPcaJson from "@/data/vol_pca.json";
 import volSurfaceJson from "@/data/vol_surface.json";
@@ -17,6 +18,7 @@ import type {
   RobustnessData,
   RobustnessRow,
   RobustnessScenario,
+  StressData,
   VarData,
   VolPcaData,
   VolSurfaceData,
@@ -29,6 +31,7 @@ export const pnlExplain = pnlExplainJson as PnlExplainData;
 export const volSurface = volSurfaceJson as VolSurfaceData;
 export const volPca = volPcaJson as VolPcaData;
 export const varData = varJson as VarData;
+export const stressData = stressJson as StressData;
 
 // ---- P&L explain -----------------------------------------------------------
 
@@ -288,4 +291,51 @@ export const marketRisk = {
   worstDay: varData.worst_days[0],
   seriesDays: varData.series.length,
   proxyNames: varData.proxy.names.map((n) => ({ ...n, label: VOL_PCA_NAMES[n.underlying] ?? n.underlying })),
+};
+
+// ---- Stress (conditional and reverse) -----------------------------------------
+
+const FACTOR_LABELS: Record<string, string> = {
+  SPX: "S&P 500",
+  AAPL: "Apple",
+  NVDA: "NVIDIA",
+  VIX: "VIX",
+  VXAPL: "Apple volatility",
+  VXN: "Nasdaq volatility",
+};
+
+/** Expected years between 10-day moves at least this unusual, under a normal
+ * approximation (one 10-day period = 10/252 of a year). */
+export function yearsBetween(probability: number): number {
+  return 10 / 252 / probability;
+}
+
+const at20 = stressData.conditional.find((r) => Math.abs(r.spx_shock + 0.2) < 1e-9);
+const move20 = (factor: string, variant: string) =>
+  stressData.moves_at_minus_20[`${factor} | ${variant}`];
+
+export const stress = {
+  bars: stressData.conditional.map((r) => ({
+    shock: `S&P ${Math.round(r.spx_shock * 100)}%`,
+    short: `${Math.round(r.spx_shock * 100)}%`,
+    conditional: r.conditional_ex_varswap,
+    naive: r.naive_ex_varswap,
+  })),
+  at20,
+  /** How much larger the naive loss is at S&P -20%, ex variance swap, in %. */
+  naiveOverPct: at20 ? (at20.naive_ex_varswap / at20.conditional_ex_varswap - 1) * 100 : NaN,
+  longEndPct: at20
+    ? (at20.conditional_long_end_ex_varswap / at20.conditional_ex_varswap - 1) * 100
+    : NaN,
+  vix20: move20("VIX", "conditional"),
+  spx1yConditional: move20("SPX vol 1y k=+0.0 (points)", "conditional"),
+  spx1yNaive: move20("SPX vol 1y k=+0.0 (points)", "naive"),
+  reverse: stressData.reverse.map((r) => ({
+    ...r,
+    years: yearsBetween(r.probability),
+    // The index, the note's stock and VIX on every row, so rows compare.
+    keyMoves: ["SPX", "NVDA", "VIX"]
+      .filter((f) => f in r.moves)
+      .map((f) => `${FACTOR_LABELS[f]} ${r.moves[f] > 0 ? "+" : ""}${Math.round(r.moves[f] * 100)}%`),
+  })),
 };

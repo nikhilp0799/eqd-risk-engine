@@ -68,6 +68,7 @@ from eqdrisk.portfolio.mark import (
     PositionMark,
     load_market_state,
     mark_with_state,
+    varswap_pnl,
 )
 from eqdrisk.portfolio.schema import Portfolio
 from eqdrisk.risk.proxy import VOL_INDEX_FOR, ProxyFit, node_field, proxy_for_underlying
@@ -103,12 +104,17 @@ K_VALUES = np.array(K_GRID)
 # History
 
 
-def load_factor_history(underlyings: Sequence[str], start: dt.date, asof: dt.date) -> pd.DataFrame:
-    """Daily closes, one column per underlying and per vol index, indexed by
-    date, up to and including `asof`. Vol indices come from FRED; where FRED has
-    not yet posted `asof` (it publishes a day late), yfinance's same-day close
-    fills it."""
-    names = [VOL_INDEX_FOR[u] for u in underlyings if u in VOL_INDEX_FOR]
+def load_factor_history(
+    underlyings: Sequence[str],
+    start: dt.date,
+    asof: dt.date,
+    extra_indices: Sequence[str] = (),
+) -> pd.DataFrame:
+    """Daily closes, one column per underlying and per vol index (each name's own,
+    plus `extra_indices`), indexed by date, up to and including `asof`. Vol
+    indices come from FRED; where FRED has not yet posted `asof` (it publishes a
+    day late), yfinance's same-day close fills it."""
+    names = [VOL_INDEX_FOR[u] for u in underlyings if u in VOL_INDEX_FOR] + list(extra_indices)
     end = asof + dt.timedelta(days=1)
     long_columns = ["asof_date", "index", "value"]
     ohlc = sources.fetch_underlying_ohlc(list(underlyings), start, end)
@@ -184,7 +190,7 @@ def build_shocks(
 
 
 @dataclass
-class _RevalContext:
+class RevalContext:
     cfg: BaseConfig
     asof: dt.date
     portfolio: Portfolio
@@ -193,7 +199,7 @@ class _RevalContext:
     ids: list[str]
 
 
-_WORKER: dict[str, _RevalContext] = {}
+_WORKER: dict[str, RevalContext] = {}
 # A process per core already uses every core; numpy's BLAS threads on top only
 # oversubscribe them. Spawned workers read these at import, so they are set
 # while the pool starts.
@@ -206,7 +212,7 @@ _SINGLE_THREAD_ENV = {
 
 
 @contextmanager
-def _single_threaded_children() -> Iterator[None]:
+def single_threaded_children() -> Iterator[None]:
     saved = {k: os.environ.get(k) for k in _SINGLE_THREAD_ENV}
     os.environ.update(_SINGLE_THREAD_ENV)
     try:
@@ -219,11 +225,11 @@ def _single_threaded_children() -> Iterator[None]:
                 os.environ[k] = v
 
 
-def _init_worker(ctx: _RevalContext) -> None:
+def _init_worker(ctx: RevalContext) -> None:
     _WORKER["ctx"] = ctx
 
 
-def _values(ctx: _RevalContext, shock: dict[str, MarketShock] | None) -> np.ndarray:
+def scenario_values(ctx: RevalContext, shock: dict[str, MarketShock] | None) -> np.ndarray:
     """(2, n positions): price, and fair strike for variance swaps (NaN otherwise).
     A position the scenario could not price comes back NaN."""
     res = mark_with_state(ctx.cfg, ctx.asof, ctx.portfolio, ctx.state, shock, ctx.mc)
@@ -241,11 +247,11 @@ def _values(ctx: _RevalContext, shock: dict[str, MarketShock] | None) -> np.ndar
 
 def _values_chunk(shocks: list[dict[str, MarketShock]]) -> list[np.ndarray]:
     ctx = _WORKER["ctx"]
-    return [_values(ctx, s) for s in shocks]
+    return [scenario_values(ctx, s) for s in shocks]
 
 
 def revalue(
-    ctx: _RevalContext,
+    ctx: RevalContext,
     shocks: list[dict[str, MarketShock]],
     max_workers: int | None = None,
 ) -> np.ndarray:
@@ -253,11 +259,11 @@ def revalue(
     `max_workers=1` runs in-process (tests)."""
     workers = max_workers if max_workers is not None else os.cpu_count() or 1
     if workers <= 1 or len(shocks) <= 1:
-        return np.array([_values(ctx, s) for s in shocks])
+        return np.array([scenario_values(ctx, s) for s in shocks])
     n_chunks = min(len(shocks), workers * 4)
     chunks = [list(c) for c in np.array_split(np.array(shocks, dtype=object), n_chunks)]
     with (
-        _single_threaded_children(),
+        single_threaded_children(),
         ProcessPoolExecutor(
             max_workers=workers, initializer=_init_worker, initargs=(ctx,)
         ) as executor,
@@ -271,8 +277,7 @@ def full_pnl(base: np.ndarray, scen: np.ndarray, marks: list[PositionMark]) -> n
     pnl = scen[:, 0, :] - base[0][None, :]
     for i, m in enumerate(marks):
         if m.type == "varswap" and m.status != lifecycle.SETTLED:
-            k0, k1 = base[1, i], scen[:, 1, i]
-            pnl[:, i] = m.vega * (k1**2 - k0**2) / (2.0 * k0)
+            pnl[:, i] = varswap_pnl(m.vega, base[1, i], scen[:, 1, i])
     return pnl
 
 
@@ -413,6 +418,69 @@ def base_iv_grid(cfg: BaseConfig, asof: dt.date, underlying: str) -> np.ndarray 
 
 
 # ---------------------------------------------------------------------------
+# Shared set-up: VaR and the conditional / reverse stress tests
+
+
+def active_underlyings(portfolio: Portfolio, asof: dt.date) -> list[str]:
+    return sorted({p.underlying for p in portfolio.positions if lifecycle.is_active(p, asof)})
+
+
+@dataclass
+class PreparedRevaluation:
+    underlyings: list[str]
+    single_names: list[str]
+    fits: dict[str, ProxyFit]
+    proxies: dict[str, VolProxy]
+    state: MarketState
+    marks: list[PositionMark]  # sorted by position id, the order of every value array
+    ctx: RevalContext
+    base: np.ndarray  # `scenario_values` with no shock
+    proxy_skipped: dict[str, str] = field(default_factory=dict)
+
+
+def prepare_revaluation(
+    cfg: BaseConfig,
+    asof: dt.date,
+    portfolio: Portfolio,
+    levels: pd.DataFrame,
+    greeks: bool = False,
+) -> PreparedRevaluation | str:
+    """Vol proxies, market state, marks and the base values for scenario
+    revaluation on `asof`, or the reason they could not be built. A name with no
+    vol move or a position left unpriced would silently understate the risk, so
+    either refuses. `greeks=True` takes the marks (and their Greeks) at the daily
+    settings, for the Taylor method."""
+    underlyings = active_underlyings(portfolio, asof)
+    single_names = [u for u in underlyings if u in cfg.universe.single_names]
+    fits, skipped = fit_proxies(cfg, asof, underlyings, levels)
+    if skipped:
+        return "no vol proxy for " + ", ".join(sorted(skipped))
+    proxies: dict[str, VolProxy] = {}
+    for u, fit in fits.items():
+        base_iv = base_iv_grid(cfg, asof, u)
+        today = levels[fit.index].get(asof, np.nan)
+        if base_iv is None or np.isnan(today):
+            return f"no risk-factor grid or {fit.index} close for {u} on {asof}"
+        proxies[u] = VolProxy(fit.index, float(today), base_iv, fit.beta_field())
+    if asof not in levels.index or levels.loc[asof, underlyings].isna().any():
+        return f"no spot close for every name on {asof} in the history"
+    state = load_market_state(cfg, asof, portfolio)
+    if state is None:
+        return "no curated rates available"
+    mark = mark_with_state(cfg, asof, portfolio, state, None, None if greeks else VAR_MC_SETTINGS)
+    if mark.skipped:
+        return "positions not priced: " + ", ".join(sorted(mark.skipped))
+    marks = sorted(mark.marks, key=lambda m: m.position_id)
+    ctx = RevalContext(cfg, asof, portfolio, state, VAR_MC_SETTINGS, [m.position_id for m in marks])
+    base = scenario_values(ctx, None)
+    if np.isnan(base[0]).any():
+        return "a position could not be priced at the VaR settings"
+    return PreparedRevaluation(
+        underlyings, single_names, fits, proxies, state, marks, ctx, base, skipped
+    )
+
+
+# ---------------------------------------------------------------------------
 # Run
 
 
@@ -525,7 +593,7 @@ def _scenario_frame(
 
 
 def proxy_error(
-    ctx: _RevalContext,
+    ctx: RevalContext,
     base: np.ndarray,
     marks: list[PositionMark],
     fits: dict[str, ProxyFit],
@@ -587,52 +655,21 @@ def run_var(
     window, both methods. `levels` lets a backfill fetch history once."""
     result = VaRResult(asof=asof)
     portfolio = Portfolio.from_yaml(portfolio_path)
-    underlyings = sorted(
-        {p.underlying for p in portfolio.positions if lifecycle.is_active(p, asof)}
-    )
-    single_names = [u for u in underlyings if u in cfg.universe.single_names]
-
     if levels is None:
         n_days = (max(WINDOWS) if full else PRIMARY_WINDOW) + TEN_DAY
         start = asof - dt.timedelta(days=int(n_days * 365 / 252) + HISTORY_PADDING_DAYS)
-        levels = load_factor_history(underlyings, start, asof)
+        levels = load_factor_history(active_underlyings(portfolio, asof), start, asof)
     levels = levels.loc[levels.index <= asof]
 
-    fits, skipped = fit_proxies(cfg, asof, underlyings, levels)
-    result.skipped.update({f"proxy {u}": r for u, r in skipped.items()})
-    if skipped:
-        # A name with no vol move would silently understate VaR: refuse instead.
-        result.skipped["_all_"] = "no vol proxy for " + ", ".join(sorted(skipped))
-        return result
-    proxies: dict[str, VolProxy] = {}
-    for u, fit in fits.items():
-        base_iv = base_iv_grid(cfg, asof, u)
-        today = levels[fit.index].get(asof, np.nan)
-        if base_iv is None or np.isnan(today):
-            result.skipped["_all_"] = f"no risk-factor grid or {fit.index} close for {u} on {asof}"
-            return result
-        proxies[u] = VolProxy(fit.index, float(today), base_iv, fit.beta_field())
-    if asof not in levels.index or levels.loc[asof, underlyings].isna().any():
-        result.skipped["_all_"] = f"no spot close for every name on {asof} in the history"
-        return result
-    state = load_market_state(cfg, asof, portfolio)
-    if state is None:
-        result.skipped["_all_"] = "no curated rates available"
-        return result
-
     # Greeks for the Taylor method: the day's own mark at the daily settings.
-    daily = mark_with_state(cfg, asof, portfolio, state)
-    if daily.skipped:
-        # A position left out would silently understate VaR: refuse instead.
-        result.skipped["_all_"] = "positions not priced: " + ", ".join(sorted(daily.skipped))
+    prep = prepare_revaluation(cfg, asof, portfolio, levels, greeks=True)
+    if isinstance(prep, str):
+        result.skipped["_all_"] = prep
         return result
-    marks = sorted(daily.marks, key=lambda m: m.position_id)
-    ids = [m.position_id for m in marks]
-    ctx = _RevalContext(cfg, asof, portfolio, state, VAR_MC_SETTINGS, ids)
-    base = _values(ctx, None)
-    if np.isnan(base[0]).any():
-        result.skipped["_all_"] = "a position could not be priced at the VaR settings"
-        return result
+    result.skipped.update({f"proxy {u}": r for u, r in prep.proxy_skipped.items()})
+    underlyings, single_names = prep.underlyings, prep.single_names
+    fits, proxies, state = prep.fits, prep.proxies, prep.state
+    marks, ctx, base = prep.marks, prep.ctx, prep.base
     is_varswap = np.array([m.type == "varswap" for m in marks])
     columns = underlyings + [proxies[u].index for u in underlyings]
 

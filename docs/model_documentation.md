@@ -5,8 +5,9 @@
 **Scope of this document:** Steps 1-14 of the engine as built and verified against real live
 market data through 2026-09-05, plus Step 8.2 (vol surface PCA, added 2026-10-31 on the stored
 history to 2026-10-30), Step 8.3 (vol proxy regression) and Step 9 (VaR and Expected Shortfall),
-both added 2026-11-01. Steps 10 (backtesting) and 11.3/11.4 (conditional and reverse stress) are
-out of scope for this version — they are not yet built, for reasons given in Section 4.
+both added 2026-11-01, and Steps 11.3/11.4 (conditional and reverse stress, 2026-11-02). Step 10
+(backtesting) is out of scope for this version — it is not yet built, for reasons given in
+Section 4.
 
 ---
 
@@ -23,15 +24,15 @@ underlyings (SPX, AAPL, NVDA, JPM, XLE). It performs five functions:
    otherwise) and computes a full Greek set per position.
 4. Decomposes day-over-day portfolio P&L into a Greeks-based waterfall and reports the residual —
    the model's own self-check on how complete its risk representation is.
-5. Runs hypothetical and historical stress scenarios against the book.
+5. Runs hypothetical, historical, conditional and reverse stress scenarios against the book
+   (3.7).
 6. Computes VaR and Expected Shortfall by historical simulation, by full revaluation and by a
    Greeks (Taylor) approximation, with each name's vol moves proxied from its published vol index
    (3.6).
 
-**What this model does not do**, by design, not oversight: it does not backtest its VaR series, and
-it does not support conditional or reverse stress testing. Both are blocked on the same root cause —
-insufficient real historical depth — and are discussed honestly in Section 4 rather than
-approximated with a token or vacuous version.
+**What this model does not do**, by design, not oversight: it does not backtest its VaR series.
+That is blocked on insufficient real historical depth (about 250 days of VaR against the P&L that
+followed) and is discussed in Section 4 rather than approximated with a token or vacuous version.
 
 **Intended use:** this is a demonstration/portfolio project built to exercise the same design
 decisions a real risk-desk quant would face, not a production trading system. It has no live
@@ -45,7 +46,7 @@ trading connectivity, uses free-tier market data (Section 5), and its "book" is 
 | Type | Positions | Payoff |
 |---|---|---|
 | Vanilla option | P001-P005 | Standard European call/put, Black-76 forward-space pricing. |
-| Variance swap | P006 | Pays the difference between realized variance and a fair strike fixed at inception; here always marked as a *fresh* swap struck at today's own fair strike, so its model P&L is exactly zero by construction (Section 3). |
+| Variance swap | P006 | Pays the difference between realized variance and a fair strike fixed at inception; here always marked as a *fresh* swap struck at today's own fair strike, so its daily model P&L is exactly zero by construction (Section 3); VaR and stress scenarios hold it at the day's fair strike instead (3.6, 3.7). |
 | Barrier option | P007 | Down-and-in put: activates a vanilla put only if the underlying trades below a barrier at any point up to expiry (continuously monitored, not discretely). |
 | Autocallable note | P008 | Quarterly-observation reverse convertible: early redemption at par-plus-coupon if the underlying is at/above an autocall barrier on an observation date; a "memory" coupon if between a lower coupon barrier and the autocall barrier; otherwise no payment and the memory counter increments. At maturity, if never autocalled, the investor is short a European (maturity-only) down-and-in put struck at inception. |
 | Equity (delta-one) | P009 | Underlying stock/index position, no optionality. |
@@ -288,6 +289,36 @@ full P&L on average, because ATM vega misses the larger downside move of the smi
 $752,244 from overlapping moves against $1,144,377 by $\sqrt{10}$ scaling. 10-day 97.5% ES
 $711,649, $736,937 after the liquidity-horizon cascade. 500 full revaluations in 48.7 s.
 
+### 3.7 Stress testing (Step 11, `stress/`)
+
+**Variance swap.** Since 2026-11-02 every stress test counts it as VaR does (struck at the day's
+fair strike); the stored tables carry its part separately (`varswap_pnl`).
+
+**Historical replay and hypothetical grid (11.1, 11.2).** Real spot moves per name (11.1) or a
+spot ladder (11.2), with a parallel relative vol bump on every surface: VIX's relative move in
+11.1, the ladder in 11.2. That bump moves 1-2y vol by the full relative amount, which the
+conditional stress shows history does not do; with the variance swap counted it produces
+implausible swap gains (COVID replay +$128.7M for the swap alone). Figures without the swap are the
+meaningful ones (2026-10-29 book: COVID crash -$2.53M; grid worst cell -$1.28M).
+
+**Conditional stress (11.3).** SPX shocks of -5/-10/-20/-30%. Each other factor's 10-day log move
+(AAPL, NVDA, VIX, VXAPL, VXN) is regressed with an intercept on SPX's over the worst 10% of SPX
+10-day moves since 2010-06-01 (412 periods); each vol index is mapped onto the surface by the 8.3
+betas. 10-day moves because daily fits extrapolate badly to -20% (the worst day in 1,000 is -6%);
+sell-offs only because vol reacts more in them. Episode check of the fit: COVID VIX +364% fitted
+against +328% actual; 2022 +206% against +102%; April 2025 +129% against +243%. Compared with the
+naive version (11.1's convention), and with a variant whose node betas beyond 1m are scaled to the
+crash-regime term structure (3-month VIX 0.75 points per VIX point in sell-offs, 0.57 in the betas).
+At SPX -20%, without the swap: -$806K conditional, -$1,411K naive, -$830K with the long-end scaling.
+
+**Reverse stress (11.4).** Minimise the squared Mahalanobis distance of the 10-day log moves of
+SPX, AAPL, NVDA, VIX, VXAPL, VXN (covariance over all 10-day periods since 2010, zero mean) subject
+to a full-revaluation loss of $0.5M, $1M or $2M; SLSQP from three starting directions, vol-index
+levels bounded by their 2010-2026 range. Converged = the distance stopped improving (SLSQP's own
+test fails on the ~$1K Monte Carlo noise in the constraint); the final point is scaled along its
+direction to lose exactly the target. On the 2026-10-29 book every solution is a vol collapse
+(d = 1.39, 3.21, 6.97), the larger ones with an NVDA-specific fall.
+
 ---
 
 ## 4. Assumptions and limitations
@@ -370,8 +401,15 @@ here but not zero. The 500-day window holds the April 2025 sell-off and rebound,
 the tail: a 1,000-day window gives a lower 1-day VaR ($343K against $362K).
 
 **No backtest exists.** Step 10 needs about 250 days of daily VaR against the P&L that followed;
-the daily VaR record started on 2026-10-29. Conditional and reverse stress (11.3/11.4) need a
-historical factor covariance estimate and are not built.
+the daily VaR record started on 2026-10-29.
+
+**Stress assumptions.** The conditional fit is an average over sell-offs; fast crashes lift vol
+more than it says and slow grinds less (April 2025 and 2022 above). The surface response rests on
+the 8.3 betas, fitted on calm days, which understate the long end in a crash; scaling them to the
+crash-regime term structure changes the -20% loss by 3% on this book. Reverse-stress probabilities
+use a normal approximation that understates fat tails, so they rank scenarios more than they price
+them, and the factor set has no rates, dividends, skew or term-structure factor beyond what the
+index-to-surface mapping implies. 11.1 and 11.2 still use the parallel vol bump.
 
 **The residual monitor is automated but simple.** Every daily run checks the total and
 per-position residual against 5bp of NAV and logs ALERT lines (or INCONCLUSIVE when Monte Carlo
@@ -537,8 +575,10 @@ partial rather than assumed.
 | Barrier in+out = vanilla parity | Model-independent identity, validated across strike/barrier configurations |
 | Autocallable CRN scale-invariance | Under flat vol, delta/gamma (and, after Step 13, vanna) come out exactly 0.0 — a deterministic proof point, not a statistical one |
 | Variance swap fair strike vs. VIX-style cross-check | Real SPX gap shrank from 3.775 vol points (naive ATM-vol comparison) to 1.258 vol points (proper fair-strike comparison) |
-| Historical replay (5 real named episodes) | COVID crash: -$3.40M, ~82% of book value, using real pulled spot/VIX data |
-| Hypothetical stress grid | Base case exactly $0; worst cell -$1.44M at spot -30%/vol +50% |
+| Historical replay (5 real named episodes) | COVID crash: -$3.40M, ~82% of book value, on the 2026-08-28 book; -$2.53M (60%) without the variance swap on 2026-10-29 |
+| Hypothetical stress grid | Base case exactly $0; worst cell -$1.44M at spot -30%/vol +50% (2026-09-04); -$1.28M without the swap on 2026-10-29 |
+| Conditional stress fit | Recovers exact log betas on synthetic history; COVID VIX +364% fitted vs +328% actual |
+| Reverse stress solver | Matches the closed-form answer for a linear book, also from a poor starting direction |
 | VaR, equity position | Full revaluation and Taylor P&L both equal quantity x spot x return to 1e-12 in every scenario |
 | VaR measures | Property tests: ES >= VaR, VaR is one of the scenario losses, higher confidence never lowers VaR |
 | VaR price-only Monte Carlo | Same price as the Greeks run to 1e-12 (same paths); seed-to-seed sd of P008 scenario P&L $0.4-3.8K on $30-530K moves |
@@ -546,7 +586,7 @@ partial rather than assumed.
 | P&L explain telescoping | Total actual P&L across all 4 steps matches true full-reval P&L to $10^{-9}$ relative |
 | P&L explain on equity/varswap positions | Exactly zero residual in every step (linear payoff for equity; marked to 0 by construction for varswap) — an exact, not approximate, design validation |
 | P&L explain, real multi-day | 4 real consecutive day-pairs (2026-08-31 through 2026-09-04): residuals of +$151.7k, -$252.4k, +$349.0k, -$170.7k — genuinely oscillating in sign, not a cherry-picked single "good" day |
-| Full test suite | 1,949 unit/property/integration tests passing (2026-11-01); ruff and mypy clean throughout |
+| Full test suite | 1,957 unit/property/integration tests passing (2026-11-02); ruff and mypy clean throughout |
 
 Several real defects were caught during development by writing a test for a claim rather than
 trusting the algebra or a single manual check — a pattern this document treats as evidence of
@@ -565,6 +605,7 @@ than loosened to hide the platform difference.
 |---|---|---|
 | P&L-explain residual | **Medium** — 8.6bp of NAV mean absolute residual over 28 real day pairs (median 6.8bp, worst 25bp), still above the 5bp threshold on average; almost all of what remains is P008 | Eight input and model causes found and fixed (Section 4), plus the SPX long-end forwards and the SVI wing guard; bucketed vega and skew measured and rejected |
 | Vol-shock stress approximation error | **Medium**, grows with shock size (~7-40% measured) | Documented and bounded; not eliminated; matters most for the largest stress-ladder shocks |
+| Parallel vol bump in 11.1/11.2 | **Medium**: overstates long-dated vol moves (SPX 1y +23 pts naive vs ~2 conditional at -20%), and with it the variance swap's gains | Conditional stress (11.3) run alongside; 11.1 episodes through the index-to-surface mapping not yet built |
 | Residual monitoring alerts are logged, not paged | **Low** — daily alerts are visible in the log and dashboard but nobody is notified | Automated 5bp check with a noise band since 2026-09-10 / 2026-10; paging not built |
 | Two single names (JPM, XLE) have no real coverage | **Low** for this book (no positions assigned there), but blocks any future position in those names | Not currently mitigated; the 8.3 index proxy could cover them if given an index |
 | VaR vol moves are an index proxy; no backtest yet | **High** for any real risk-limit use case: single-name proxy R² ~0.3, VaR record a few days long | Proxy error measured in dollars daily (`proxy_errors`); full revaluation alongside Taylor; backtest pending ~250 days of VaR |
@@ -590,8 +631,7 @@ of it not yet implemented (marked accordingly):
 4. **VaR exception tracking (Kupiec/Christoffersen/traffic-light/PLA)** — *not implemented*: the
    daily VaR series exists since 2026-10-29 (`var_summary`), the tests need ~250 days of it.
 5. **Real-history depth tracking** — a simple count of real trading days accumulated so far,
-   since several steps' eventual activation (11.3/11.4 at tens-to-hundreds of days, 10 at ~250
-   days of VaR) is gated purely on this growing. *Implemented*: the dashboard's Backtest tab
+   since Step 10's activation (~250 days of VaR) is gated purely on this growing. *Implemented*: the dashboard's Backtest tab
    reports the count of stored VaR days rather than a generic "not available" message.
 6. **Automation health** — whether the daily `launchd` job actually ran and succeeded.
    *Implemented*: per-day log files (`logs/daily_ingest_*.log`), checked manually; no automated

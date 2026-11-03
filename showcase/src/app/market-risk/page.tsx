@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
+import { GroupedBars } from "@/components/charts/GroupedBars";
 import { LossHistogram } from "@/components/charts/LossHistogram";
 import { RankedBars } from "@/components/charts/RankedBars";
 import { VarHistory } from "@/components/charts/VarHistory";
 import { Card, DemoNote, Methodology, PageHeader, StatTile, Takeaway } from "@/components/ui";
 import { fmtDate, pct, signedUsdCompact, usdCompact } from "@/lib/format";
-import { marketRisk, varData } from "@/lib/metrics";
+import { SERIES } from "@/lib/chartTheme";
+import { marketRisk, stress, varData } from "@/lib/metrics";
 
 export const metadata: Metadata = {
   title: "Market Risk — EQD Risk Engine",
@@ -20,6 +22,12 @@ const factorBars = [
 ];
 
 const positionRows = varData.positions.filter((p) => p.rms_full >= 1_000);
+
+function howOften(years: number): string {
+  if (years < 1) return `about every ${Math.max(1, Math.round(years * 12))} months`;
+  if (years > 1_000) return "less than once in 1,000 years";
+  return `about once in ${Math.round(years).toLocaleString("en-US")} years`;
+}
 
 export default function MarketRiskPage() {
   return (
@@ -157,6 +165,79 @@ export default function MarketRiskPage() {
             assumes never happens.
           </p>
         </div>
+      </Card>
+
+      <Card
+        title="Stress tests that move the market the way it really moves"
+        subtitle="Loss if the S&P 500 fell this far, without the variance swap. Realistic: Apple, NVIDIA and volatility move as they have in past sell-offs since 2010. Naive: every stock falls as much as the index and every volatility rises by VIX's percentage."
+      >
+        <GroupedBars
+          data={stress.bars}
+          categoryKey="shock"
+          shortCategoryKey="short"
+          series={[
+            { key: "conditional", label: "Realistic", color: SERIES[0] },
+            { key: "naive", label: "Naive", color: SERIES[1] },
+          ]}
+          format="usdCompact"
+          labels={false}
+        />
+        {stress.at20 && (
+          <div className="mt-5 flex flex-col gap-3 text-sm leading-relaxed text-ink-2">
+            <p>
+              At an S&amp;P fall of 20% the naive test overstates the loss by{" "}
+              {pct(stress.naiveOverPct)} ({usdCompact(stress.at20.naive_ex_varswap)} against{" "}
+              {usdCompact(stress.at20.conditional_ex_varswap)}). It lifts one-year volatility by
+              {" "}{stress.spx1yNaive.toFixed(0)} points; in past sell-offs, with VIX up{" "}
+              {pct(stress.vix20 * 100)}, it rose about {stress.spx1yConditional.toFixed(0)} points. Most
+              of the gap is the NVIDIA autocallable note, which loses as volatility rises.
+            </p>
+            <p>
+              Counting the variance swap, the book gains in every one of these crashes (
+              {signedUsdCompact(stress.at20.conditional_book)} at -20%): it is a large bet on
+              volatility rising.
+            </p>
+          </div>
+        )}
+        <h3 className="mt-8 text-base font-semibold text-ink">
+          Working backwards: what would it take to lose this much?
+        </h3>
+        <p className="mt-1 text-sm text-muted">
+          The most likely 10-day market move, judged against 16 years of history, that loses each
+          amount.
+        </p>
+        <div className="mt-3 overflow-x-auto">
+          <table className="tabular w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-muted">
+                <th className="py-2 pr-4 font-medium">Loss</th>
+                <th className="py-2 pr-4 font-medium">Most likely move</th>
+                <th className="py-2 pr-4 font-medium">How often, roughly</th>
+                <th className="py-2 font-medium">Biggest loser</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stress.reverse.map((r) => (
+                <tr key={r.target_loss} className="border-b border-border/60">
+                  <td className="py-2 pr-4 text-ink">{usdCompact(r.target_loss)}</td>
+                  <td className="py-2 pr-4">{r.keyMoves.join(", ")}</td>
+                  <td className="py-2 pr-4">{howOften(r.years)}</td>
+                  <td className="py-2">{r.top_positions[0]?.label}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-2 text-xs text-muted">
+            How often: a normal approximation, which understates how often extreme moves
+            happen; read the rows as a ranking more than as odds.
+          </p>
+        </div>
+        <p className="mt-5 text-sm leading-relaxed text-ink-2">
+          The danger is not a crash. Every one of these losses starts with volatility falling,
+          which hits the variance swap; the larger ones also need NVIDIA to fall at the same
+          time, which hits the note. In an ordinary sell-off the two big positions offset each
+          other.
+        </p>
       </Card>
 
       <Card

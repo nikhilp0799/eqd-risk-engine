@@ -621,6 +621,34 @@ def mark_with_state(
     return result
 
 
+def varswap_pnl(vega_notional: float, k0: Any, k1: Any) -> Any:
+    """P&L of a variance swap struck at fair strike `k0` (vol points) when its fair
+    strike moves to `k1`: vega_notional x (k1^2 - k0^2) / (2 k0), discounting
+    ignored as in the mark. Works on arrays."""
+    return vega_notional * (k1**2 - k0**2) / (2.0 * k0)
+
+
+def revaluation_pnl(base: PortfolioMarkResult, shocked: PortfolioMarkResult) -> dict[str, float]:
+    """Per-position P&L of `shocked` against `base`, for positions priced in both.
+
+    The daily mark treats a variance swap as a fresh swap at its own fair strike,
+    so its price is always 0. Under a scenario it is held at the base mark's fair
+    strike instead (`varswap_pnl`), as in VaR (user decision 2026-11-01, extended
+    to the stress tests 2026-11-02)."""
+    shocked_by_id = {m.position_id: m for m in shocked.marks}
+    out: dict[str, float] = {}
+    for m in base.marks:
+        s = shocked_by_id.get(m.position_id)
+        if s is None:
+            continue
+        if m.type == "varswap" and m.status != lifecycle.SETTLED:
+            if m.fair_strike and s.fair_strike is not None:
+                out[m.position_id] = float(varswap_pnl(m.vega, m.fair_strike, s.fair_strike))
+            continue
+        out[m.position_id] = s.price - m.price
+    return out
+
+
 def mark_portfolio(cfg: BaseConfig, asof: dt.date, portfolio_path: str) -> PortfolioMarkResult:
     portfolio = Portfolio.from_yaml(portfolio_path)
     state = load_market_state(cfg, asof, portfolio)
