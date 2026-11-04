@@ -786,7 +786,7 @@ Design intent — be able to explain each:
 
 ## Step 8 — Risk factors, PCA, and proxy modelling
 
-**Status: built, verified live.** 8.1 (the fixed risk-factor grid), 8.2 (PCA, run on 29-32 real daily changes per name, 2026-10-31) and 8.3 (each name's surface on its own vol index, 2026-11-01, as the vol model behind Step 9's VaR). The earnings-day failure of the proxy is not shown yet: the one earnings move in the stored history (NVDA, 2026-08-26) fell in a week with no stored surfaces.
+**Status: built, verified live.** 8.1 (the fixed risk-factor grid), 8.2 (PCA, run on 29-32 real daily changes per name, 2026-10-31) and 8.3 (each name's surface on its own vol index, 2026-11-01, as the vol model behind Step 9's VaR). The earnings-day failure of the proxy was first measured on 2026-11-03 (AAPL, results below); NVDA reports on 2026-11-17.
 
 ### 8.1 Building the risk-factor grid
 
@@ -892,6 +892,23 @@ consecutive trading days.
 - **Single-name R² is low (median ~0.3-0.4)**: more than half of AAPL and NVDA surface moves are not
   explained by an index. For this book that matters less than it sounds: the single-name vol
   exposure is a 10-day ES of $82K against $712K for the whole book (Step 9).
+- **Earnings: the proxy breaks the way the README predicts.** AAPL reported after the close on
+  2026-11-02. On 11-03 its 1m ATM vol fell 4.9 points and VXAPL 18%: the event's variance left the
+  front of the surface only. With the betas fitted up to 11-02 (the event day out of sample):
+
+  | AAPL ATM | Real change (vol points) | Proxy |
+  |---|---|---|
+  | 1m | -4.9 | -4.2 |
+  | 3m | -1.8 | -2.3 |
+  | 6m | -0.8 | -1.6 |
+  | 1y | -0.3 | -1.0 |
+
+  The front is close; from 6m out the proxy moves vol 2-3.5x too much, because it reads an
+  earnings crush in the 30-day index as a move of the whole term structure. The same day, added
+  to a fit of about 33 changes, cut the 1y ATM beta from 0.16 to 0.10 and the 6m from 0.27 to 0.20.
+  In dollars it does not show on this book (AAPL vol exposure is small: about $2K a day), so no
+  fix yet. NVDA's report (2026-11-17) is the one that matters, through the autocallable; if it
+  shows the same pattern, earnings days come out of the beta fit or get their own treatment.
 
 **Acceptance for Step 8:**
 - PC1–PC3 explain > 90% of surface variance.
