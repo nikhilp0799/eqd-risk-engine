@@ -399,9 +399,13 @@ stored days, and moves level, skew and term structure together by construction, 
 decomposition cannot split vol into them. Measured in dollars: replaying today's book on the 29
 stored days with their real per-node vol changes and with the index-implied ones, the proxy misses
 $79K a day RMS against a typical daily swing of $163K, nearly all on the SPX variance swap. The
-proxy's behaviour on earnings days is untested: the only earnings move in the stored history
-(NVDA, 2026-08-26) fell in a week with no stored surfaces. The betas rest on about 30 changes per
-name and move as days are added.
+proxy fails on earnings days in the way expected. On AAPL's first stored report (after the close on
+2026-11-02), with betas fitted up to the day before, the 1m ATM move was close (-4.2 vol points
+proxied against -4.9 real) but 6m and 1y moved 2-3.5x too much (-1.6 against -0.8, -1.0 against
+-0.3): an earnings crush leaves the front of the surface only, and the 30-day index cannot say so.
+The book's AAPL vol exposure is small (about $2K a day), so the error is negligible in dollars
+here; NVDA's report on 2026-11-17 is the test that matters. The betas rest on about 30 changes per
+name and move as days are added: that one earnings day cut AAPL's 1y ATM beta from 0.16 to 0.10.
 
 **Other VaR assumptions.** Rates and dividends do not move in scenarios. The exotics' vol shock uses
 the local-vol rescaling approximation (above), small for the moves of a few vol points typical
