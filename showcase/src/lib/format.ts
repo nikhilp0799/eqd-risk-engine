@@ -11,6 +11,11 @@ export function signedUsdCompact(x: number): string {
   return `${x >= 0 ? "+" : ""}${usdCompact(x)}`;
 }
 
+/** "made $48K" or "lost $165K": a P&L as a verb, never "made -$165K". */
+export function madeOrLost(x: number): string {
+  return `${x >= 0 ? "made" : "lost"} ${usdCompact(Math.abs(x))}`;
+}
+
 export function usd(x: number, digits = 0): string {
   const sign = x < 0 ? "-" : "";
   return `${sign}$${Math.abs(x).toLocaleString("en-US", {

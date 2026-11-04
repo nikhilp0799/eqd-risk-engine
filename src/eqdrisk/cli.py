@@ -188,9 +188,10 @@ def historicalreplay(
     config: str = typer.Option("configs/base.yaml", help="Path to base config"),
 ) -> None:
     """Reprice today's portfolio under five named historical market episodes
-    (Volmageddon, COVID crash, etc.), using REAL pulled spot/VIX moves from
-    each episode (Step 11.1). Not in the README's original CLI table, same
-    reasoning as `curves`/`iv`/`riskfactors`.
+    (Volmageddon, COVID crash, etc.), using REAL pulled spot and vol-index moves
+    from each episode, mapped onto each surface by the 8.3 betas, beside the
+    naive parallel VIX bump (Step 11.1). Not in the README's original CLI
+    table, same reasoning as `curves`/`iv`/`riskfactors`.
     """
     from eqdrisk.stress.replay import run_historical_replay
 

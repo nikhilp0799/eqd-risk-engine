@@ -294,12 +294,20 @@ $711,649, $736,937 after the liquidity-horizon cascade. 500 full revaluations in
 **Variance swap.** Since 2026-11-02 every stress test counts it as VaR does (struck at the day's
 fair strike); the stored tables carry its part separately (`varswap_pnl`).
 
-**Historical replay and hypothetical grid (11.1, 11.2).** Real spot moves per name (11.1) or a
-spot ladder (11.2), with a parallel relative vol bump on every surface: VIX's relative move in
-11.1, the ladder in 11.2. That bump moves 1-2y vol by the full relative amount, which the
-conditional stress shows history does not do; with the variance swap counted it produces
-implausible swap gains (COVID replay +$128.7M for the swap alone). Figures without the swap are the
-meaningful ones (2026-10-29 book: COVID crash -$2.53M; grid worst cell -$1.28M).
+**Historical replay (11.1).** Each episode's real spot move per name and its own vol index's real
+relative move (VIX, VXAPL, VXN) between the closes nearest the episode's boundary dates; the index
+move is rescaled to today's level and mapped onto every node by the 8.3 betas, as in VaR. Since
+2026-11-03; before, every node was scaled by VIX's relative move, which is kept as the `naive`
+variant. Both run through the same revaluation as VaR (32,768 paths, common random numbers). On
+the 2026-10-29 book, COVID crash: +$17.60M proxy against +$126.18M naive; without the swap -$1.28M
+against -$2.53M. The swap's gain is credible under the proxy (fair strike 16.9 to 53.3 on a
+seven-week swap, March 2020 VIX 61.6) and not under the naive bump (to 133). Without the swap,
+naive overstates the loss by 38-262% across the episodes, mostly through the autocallable's
+long-dated vol.
+
+**Hypothetical grid (11.2).** A spot ladder crossed with a parallel relative vol bump on every
+surface: a defined what-if, not a claim about history. With the swap counted, its vol-up cells are
+dominated by the swap; without it the worst cell is -$1.28M (2026-10-29 book).
 
 **Conditional stress (11.3).** SPX shocks of -5/-10/-20/-30%. Each other factor's 10-day log move
 (AAPL, NVDA, VIX, VXAPL, VXN) is regressed with an intercept on SPX's over the worst 10% of SPX
@@ -409,7 +417,9 @@ the 8.3 betas, fitted on calm days, which understate the long end in a crash; sc
 crash-regime term structure changes the -20% loss by 3% on this book. Reverse-stress probabilities
 use a normal approximation that understates fat tails, so they rank scenarios more than they price
 them, and the factor set has no rates, dividends, skew or term-structure factor beyond what the
-index-to-surface mapping implies. 11.1 and 11.2 still use the parallel vol bump.
+index-to-surface mapping implies. The 11.1 replay rests on the same betas, so it is likely light on
+long-dated vol in the larger episodes (COVID's +328% VIX is far outside the daily moves they were
+fitted on). 11.2's grid uses a parallel bump by design.
 
 **The residual monitor is automated but simple.** Every daily run checks the total and
 per-position residual against 5bp of NAV and logs ALERT lines (or INCONCLUSIVE when Monte Carlo
@@ -575,7 +585,7 @@ partial rather than assumed.
 | Barrier in+out = vanilla parity | Model-independent identity, validated across strike/barrier configurations |
 | Autocallable CRN scale-invariance | Under flat vol, delta/gamma (and, after Step 13, vanna) come out exactly 0.0 — a deterministic proof point, not a statistical one |
 | Variance swap fair strike vs. VIX-style cross-check | Real SPX gap shrank from 3.775 vol points (naive ATM-vol comparison) to 1.258 vol points (proper fair-strike comparison) |
-| Historical replay (5 real named episodes) | COVID crash: -$3.40M, ~82% of book value, on the 2026-08-28 book; -$2.53M (60%) without the variance swap on 2026-10-29 |
+| Historical replay (5 real named episodes) | COVID crash on the 2026-10-29 book, without the variance swap: -$1.28M through the 8.3 mapping, -$2.53M with the naive parallel bump (and -$3.40M naive on the 2026-08-28 book) |
 | Hypothetical stress grid | Base case exactly $0; worst cell -$1.44M at spot -30%/vol +50% (2026-09-04); -$1.28M without the swap on 2026-10-29 |
 | Conditional stress fit | Recovers exact log betas on synthetic history; COVID VIX +364% fitted vs +328% actual |
 | Reverse stress solver | Matches the closed-form answer for a linear book, also from a poor starting direction |
@@ -605,7 +615,7 @@ than loosened to hide the platform difference.
 |---|---|---|
 | P&L-explain residual | **Medium** — 8.6bp of NAV mean absolute residual over 28 real day pairs (median 6.8bp, worst 25bp), still above the 5bp threshold on average; almost all of what remains is P008 | Eight input and model causes found and fixed (Section 4), plus the SPX long-end forwards and the SVI wing guard; bucketed vega and skew measured and rejected |
 | Vol-shock stress approximation error | **Medium**, grows with shock size (~7-40% measured) | Documented and bounded; not eliminated; matters most for the largest stress-ladder shocks |
-| Parallel vol bump in 11.1/11.2 | **Medium**: overstates long-dated vol moves (SPX 1y +23 pts naive vs ~2 conditional at -20%), and with it the variance swap's gains | Conditional stress (11.3) run alongside; 11.1 episodes through the index-to-surface mapping not yet built |
+| Parallel vol bump in 11.2 (and 11.1's naive variant) | **Low**: overstates long-dated vol moves (SPX 1y +23 pts naive vs ~2 conditional at -20%), and with it the variance swap's gains | 11.1 runs through the 8.3 mapping since 2026-11-03, naive kept for comparison; 11.2 is a defined what-if |
 | Residual monitoring alerts are logged, not paged | **Low** — daily alerts are visible in the log and dashboard but nobody is notified | Automated 5bp check with a noise band since 2026-09-10 / 2026-10; paging not built |
 | Two single names (JPM, XLE) have no real coverage | **Low** for this book (no positions assigned there), but blocks any future position in those names | Not currently mitigated; the 8.3 index proxy could cover them if given an index |
 | VaR vol moves are an index proxy; no backtest yet | **High** for any real risk-limit use case: single-name proxy R² ~0.3, VaR record a few days long | Proxy error measured in dollars daily (`proxy_errors`); full revaluation alongside Taylor; backtest pending ~250 days of VaR |
