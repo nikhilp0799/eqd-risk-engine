@@ -429,12 +429,27 @@ def render_stress_tab(cfg: BaseConfig) -> None:
         dates = sorted(replay_all["asof_date"].unique(), reverse=True)
         asof = st.selectbox("As-of date", dates, key="replay_date")
         day_df = _without_varswap(replay_all[replay_all["asof_date"] == asof], exclude)
-        day_df = day_df.sort_values("pnl")
-        fig = go.Figure(go.Bar(x=day_df["episode_name"], y=day_df["pnl"]))
-        fig.update_layout(yaxis_title="P&L ($)", height=400, margin=dict(l=0, r=0, t=20, b=0))
+        # Rows before 2026-11-03 have no variant: they were all the parallel method.
+        variant = day_df.get("variant", pd.Series(index=day_df.index, dtype=object))
+        day_df = day_df.assign(variant=variant.fillna("naive"))
+        book = day_df.pivot_table(
+            index="episode_name", columns="variant", values="pnl", aggfunc="sum"
+        )
+        book = book.sort_values("proxy" if "proxy" in book else "naive")
+        fig = go.Figure(
+            [go.Bar(x=book.index, y=book[v], name=v) for v in ("proxy", "naive") if v in book]
+        )
+        fig.update_layout(
+            yaxis_title="P&L ($)", barmode="group", height=400, margin=dict(l=0, r=0, t=20, b=0)
+        )
         st.plotly_chart(fig, width="stretch")
+        st.caption(
+            "Proxy: each name's real spot move, and its own vol index's real move (VIX, VXAPL, "
+            "VXN) mapped onto each surface point by the 8.3 betas. Naive: every point scaled by "
+            "VIX's move, so 1-2 year vol rises as much as 1-month vol."
+        )
         st.dataframe(
-            day_df[["episode_name", "episode_description", "base_value", "pnl"]],
+            day_df[["episode_name", "episode_description", "variant", "base_value", "pnl"]],
             hide_index=True,
         )
 

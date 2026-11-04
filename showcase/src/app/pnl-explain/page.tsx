@@ -4,7 +4,7 @@ import { GroupedBars } from "@/components/charts/GroupedBars";
 import { RankedBars } from "@/components/charts/RankedBars";
 import { Card, DemoNote, Methodology, NextLink, PageHeader, StatTile, Takeaway } from "@/components/ui";
 import { SERIES } from "@/lib/chartTheme";
-import { fmtDate, fmtShortDate, pct, signedUsdCompact, usdCompact } from "@/lib/format";
+import { fmtDate, fmtShortDate, madeOrLost, pct, signedUsdCompact, usdCompact } from "@/lib/format";
 import { DRIVER_LABELS, DRIVER_SHORT_LABELS, STATUS_LABELS, pnl, pnlExplain } from "@/lib/metrics";
 
 export const metadata: Metadata = {
@@ -56,7 +56,8 @@ export default function PnlExplainPage() {
       />
 
       <Takeaway>
-        On {fmtDate(pnlExplain.asof_date)} the book made <strong>{signedUsdCompact(pnl.actual)}</strong>{" "}
+        From {fmtDate(pnlExplain.day0)} to {fmtDate(pnlExplain.asof_date)} the book{" "}
+        <strong>{madeOrLost(pnl.actual)}</strong>{" "}
         against <strong>{signedUsdCompact(pnl.expected)}</strong> expected by the risk model. The gap of{" "}
         <strong>{usdCompact(Math.abs(pnl.unexplained))}</strong> is{" "}
         {pct(Math.abs(pnl.unexplainedPctOfBook), 2)} of book value (simulation noise &plusmn;
@@ -88,7 +89,7 @@ export default function PnlExplainPage() {
 
       <Card
         title="Expected vs. actual, by driver"
-        subtitle={`On the latest day the model expected ${signedUsdCompact(pnl.expected)} and the book made ${signedUsdCompact(pnl.actual)}. The largest remaining difference is in ${DRIVER_LABELS[biggestGapDriver.step].toLowerCase()} (${signedUsdCompact(biggestGapDriver.residual)}).`}
+        subtitle={`From ${fmtDate(pnlExplain.day0)} to ${fmtDate(pnlExplain.asof_date)} the model expected ${signedUsdCompact(pnl.expected)} and the book ${madeOrLost(pnl.actual)}. The largest remaining difference is in ${DRIVER_LABELS[biggestGapDriver.step].toLowerCase()} (${signedUsdCompact(biggestGapDriver.residual)}).`}
       >
         <GroupedBars
           data={drivers}

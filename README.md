@@ -51,10 +51,10 @@ not tuned-to-look-clean ones:
   error; the Brownian-bridge barrier correction cut a >25-SE naive-discretisation bias down to
   ~0.1 SE at the same coarse step count (Step 6).
 - A live historical-replay stress test against five real episodes (Volmageddon, the COVID crash,
-  the 2022 rate shock, the 2024 yen carry unwind) using REAL pulled spot/VIX moves — the COVID
-  scenario showed an 82%-of-book loss on the 2026-08-28 book, and 60% (-$2.53M without the variance
-  swap) on the book of 2026-10-29, after the autocallable was priced against its real issue level
-  (Step 11.1).
+  the 2022 rate shock, the 2024 yen carry unwind) using REAL pulled spot and vol-index moves, each
+  name's own index mapped onto its surface by the 8.3 betas (Step 11.1). Without the variance swap,
+  COVID costs the 2026-10-29 book -$1.28M; the original parallel vol bump said -$2.53M, and with the
+  swap counted it gave the swap a fair strike of 133 and the book +$126M.
 - Conditional stress (Step 11.3): at SPX -20%, moving the rest of the market as it has in past
   sell-offs gives a loss of $806K without the variance swap, against $1.41M for the naive parallel
   vol bump, which lifts 1y vol 23 points where history moves it about 2. Reverse stress (11.4): the
@@ -1054,20 +1054,45 @@ Write the backtest report the way a validator would want to read it: state the t
 
 ## Step 11 — Stress testing and reverse stress testing
 
-**Status: built, verified live.** 11.1 (historical replay, using real pulled spot/VIX moves from five named episodes), 11.2 (the hypothetical spot×vol grid), and since 2026-11-02 11.3 (conditional stress) and 11.4 (reverse stress), both on 16 years of free spot and vol-index history (results after 11.4 below).
+**Status: built, verified live.** 11.1 (historical replay, using real pulled spot and vol-index moves from five named episodes, mapped onto each surface by the 8.3 betas since 2026-11-03), 11.2 (the hypothetical spot×vol grid), and since 2026-11-02 11.3 (conditional stress) and 11.4 (reverse stress), both on 16 years of free spot and vol-index history (results after 11.4 below).
 
 **Since 2026-11-02 every stress test counts the SPX variance swap** (struck at the day's fair strike,
-as in VaR), and the stored tables carry its part separately (`varswap_pnl`). That turns 11.1 and
-11.2 upside down: under their parallel vol bump sized off VIX's ratio, the long $250K-per-point swap
-gains enormously (COVID replay +$128.7M for the swap alone). Those swap figures are not credible: the
-bump lifts 1-2y vol by VIX's full relative move, where history moves it a few points (11.3 below).
-Without the swap, on the 2026-10-29 book: COVID crash -$2.53M, COVID single day -$0.86M, yen carry
-unwind -$0.82M, 2022 rate shock -$0.55M, Volmageddon -$0.50M; the grid's worst cell (spot -30%,
-vol +50%) -$1.28M. Running 11.1's episodes through the 8.3 index-to-surface mapping instead of the
-parallel bump is the obvious next fix.
+as in VaR), and the stored tables carry its part separately (`varswap_pnl`). Under 11.1's original
+parallel vol bump sized off VIX's ratio, the long $250K-per-point swap gained enormously (COVID
+replay +$128.7M for the swap alone): the bump lifted every node by VIX's full relative move and
+applied VIX to AAPL and NVDA too.
 
-**Latest results (book of 2026-10-22, value $4.16M; re-run after the position lifecycle and the
-autocallable's issue-date fix, 2026-10-20).** Historical replay: COVID crash -$2.56M (62% of book),
+**Since 2026-11-03 the replay runs through the 8.3 index-to-surface mapping** (plan:
+`planning/step11_1_proxy_replay_plan.md`). Each name's real spot move, and its own vol index's real
+move (VIX, VXAPL, VXN) rescaled to today's level and mapped onto every node by the 8.3 betas, as VaR
+does. The parallel version is kept beside it as `naive`. On the 2026-10-29 book (value $4.19M):
+
+| Episode | Proxy | Naive | Proxy without the swap | Naive without the swap |
+|---|---|---|---|---|
+| COVID crash 2020 | +$17.60M | +$126.18M | -$1.28M | -$2.53M |
+| Yen carry unwind 2024 | +$3.43M | +$12.21M | -$0.28M | -$0.81M |
+| Volmageddon 2018 | +$2.17M | +$6.46M | -$0.14M | -$0.49M |
+| COVID single day 2020 | +$0.62M | +$2.38M | -$0.62M | -$0.86M |
+| 2022 rate shock | +$0.27M | +$0.99M | -$0.38M | -$0.54M |
+
+- **The swap's gain is now credible.** P006 has seven weeks left; in COVID the proxy takes its fair
+  strike from 16.9 to 53.3, about where short-dated S&P variance traded in March 2020 (VIX closed at
+  61.6 on the 23rd). The naive bump took it to 133.
+- **Without the swap, naive overstates every episode's loss by 38-262%.** Most of it is the NVDA
+  autocallable (short long-dated vol): naive lifts 1-2y vol by VIX's relative move, the betas by a
+  fraction (COVID SPX ATM: 1m +29 points, 1y +5).
+- **Each name's own index matters.** In 2022 VXAPL rose 46% where VIX rose 24%; in 2024 VIX
+  doubled and VXAPL rose 32%.
+- **Likely light on the back end.** The betas are fitted on calm 2026 days, and 11.3 found them
+  under the crash-regime long end (3m/1m 0.57 vs 0.75). COVID's +328% VIX is far outside the range
+  they were fitted on. The truth is between the two variants, nearer the proxy.
+
+11.2's grid stays a parallel bump: a cell like "vol +50%" is a defined what-if, not a claim about
+history. With the swap counted, its vol-up cells are dominated by the swap; without it, the worst
+cell (spot -30%, vol +50%) is -$1.28M.
+
+**Earlier results (book of 2026-10-22, value $4.16M, parallel method, swap at zero; re-run after
+the position lifecycle and the autocallable's issue-date fix, 2026-10-20).** Historical replay: COVID crash -$2.56M (62% of book),
 COVID single day -$0.96M, 2024 yen carry unwind -$0.88M, 2022 rate shock -$0.62M, Volmageddon
 -$0.53M. Hypothetical grid (2026-10-20): worst cell spot -30% / vol +50% at -$1.63M, against -$1.44M
 on 2026-09-04. The COVID loss was -$3.40M (82%) on the 2026-08-28 book; it is smaller now mainly

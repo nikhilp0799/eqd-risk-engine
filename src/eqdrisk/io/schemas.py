@@ -492,6 +492,9 @@ HISTORICAL_REPLAY_SCHEMA = pa.schema(
         ("asof_date", pa.date32()),
         ("episode_name", pa.string()),
         ("episode_description", pa.string()),
+        # "proxy" (each name's own index through the 8.3 betas) or "naive" (every node
+        # scaled by VIX's move). Added 2026-11-03; older rows are all the naive method.
+        ("variant", pa.string()),
         ("base_value", pa.float64()),
         ("shocked_value", pa.float64()),
         ("pnl", pa.float64()),
@@ -502,6 +505,7 @@ HISTORICAL_REPLAY_SCHEMA = pa.schema(
 HISTORICAL_REPLAY_REQUIRED_NOT_NULL = [
     "asof_date",
     "episode_name",
+    "variant",
     "base_value",
     "shocked_value",
     "pnl",

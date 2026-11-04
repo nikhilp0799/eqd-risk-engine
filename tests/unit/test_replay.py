@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 import yaml
 
+import eqdrisk.risk.var as var_module
 import eqdrisk.stress.replay as replay_module
 from eqdrisk.config import BaseConfig, Paths, Universe
 from eqdrisk.io import store
@@ -19,15 +20,18 @@ from eqdrisk.io.schemas import (
     VOL_SURFACE_SCHEMA,
     validate,
 )
+from eqdrisk.risk.proxy import ProxyFit
 from eqdrisk.stress.historical_scenarios import HistoricalEpisode
 from eqdrisk.stress.replay import run_historical_replay
-from eqdrisk.stress.shock import MarketShock
+from eqdrisk.vol.risk_factors import K_GRID, T_GRID
 
 ASOF = dt.date(2026, 8, 20)
-UNDERLYING = "TEST"
+UNDERLYING = "SPX"
 SPOT = 100.0
 PILLAR_TS = [0.25, 0.5]
 PILLAR_EXPIRIES = [ASOF + dt.timedelta(days=int(t * 365)) for t in PILLAR_TS]
+EPISODE = HistoricalEpisode("fake_crash", dt.date(2020, 3, 2), dt.date(2020, 3, 16), "synthetic")
+N_T, N_K = len(T_GRID), len(K_GRID)
 
 
 def _write_curve(tmp_path):
@@ -138,61 +142,99 @@ def _write_portfolio_yaml(tmp_path) -> str:
     path = tmp_path / "portfolio.yaml"
     path.write_text(
         yaml.dump(
-            {"positions": [{"id": "E1", "type": "equity", "underlying": UNDERLYING, "qty": 100}]}
+            {
+                "positions": [
+                    {"id": "E1", "type": "equity", "underlying": UNDERLYING, "qty": 100},
+                    {
+                        "id": "S1",
+                        "type": "varswap",
+                        "underlying": UNDERLYING,
+                        "expiry": PILLAR_EXPIRIES[1].isoformat(),
+                        "vega_notional": 100,
+                    },
+                ]
+            }
         )
     )
     return str(path)
 
 
-def test_run_historical_replay_applies_real_shocks_and_reports_pnl(tmp_path, monkeypatch):
+def _levels(with_vix: bool = True) -> pd.DataFrame:
+    """The episode: SPX -20%, VIX +100%; today SPX at SPOT, VIX at 20."""
+    levels = pd.DataFrame(
+        {"SPX": [SPOT, 0.8 * SPOT, SPOT], "VIX": [20.0, 40.0, 20.0]},
+        index=pd.Index([EPISODE.before, EPISODE.after, ASOF], name="asof_date"),
+    )
+    if not with_vix:
+        levels.loc[[EPISODE.before, EPISODE.after], "VIX"] = np.nan
+    return levels
+
+
+def _mock_proxy(monkeypatch) -> None:
+    """Node betas falling with maturity, as fitted on real days."""
+    beta = np.tile(np.linspace(0.5, 0.05, N_T)[:, None], (1, N_K))
+    fit = ProxyFit(
+        underlying=UNDERLYING,
+        index="VIX",
+        nodes=[],
+        coverage=pd.Series(dtype=float),
+        changes=pd.DataFrame(),
+        index_change=pd.Series(dtype=float),
+        alpha=np.array([]),
+        beta=np.array([]),
+        r2=np.array([]),
+    )
+    monkeypatch.setattr(fit, "beta_field", lambda: beta)
+    monkeypatch.setattr(var_module, "fit_proxies", lambda *a, **k: ({UNDERLYING: fit}, {}))
+    monkeypatch.setattr(var_module, "base_iv_grid", lambda *a, **k: np.full((N_T, N_K), 20.0))
+    monkeypatch.setattr(replay_module, "EPISODES", [EPISODE])
+
+
+def _write_market(tmp_path) -> None:
     _write_curve(tmp_path)
     _write_underlying(tmp_path)
     _write_forwards(tmp_path)
     _write_surface(tmp_path)
-    portfolio_path = _write_portfolio_yaml(tmp_path)
 
-    fake_episode = HistoricalEpisode("fake_crash", ASOF, ASOF, "a synthetic test episode")
-    monkeypatch.setattr(replay_module, "EPISODES", [fake_episode])
-    monkeypatch.setattr(
-        replay_module,
-        "compute_episode_shocks",
-        lambda episode, underlyings: {u: MarketShock(spot_shock_pct=-0.20) for u in underlyings},
+
+def test_run_historical_replay_runs_both_variants_and_persists(tmp_path, monkeypatch):
+    _write_market(tmp_path)
+    _mock_proxy(monkeypatch)
+    result = run_historical_replay(
+        _cfg(tmp_path), ASOF, _write_portfolio_yaml(tmp_path), levels=_levels(), max_workers=1
     )
 
-    result = run_historical_replay(_cfg(tmp_path), ASOF, portfolio_path)
+    assert not result.skipped, result.skipped
+    by_variant = {er.variant: er for er in result.episodes}
+    assert set(by_variant) == {"proxy", "naive"}
+    for er in by_variant.values():
+        assert er.moves == pytest.approx({"SPX": -0.2, "VIX": 1.0})
+        assert er.shocked_value == pytest.approx(result.base_value + er.pnl)
+        # E1: 100 shares, spot -20%.
+        assert er.pnl - er.varswap_pnl == pytest.approx(-0.2 * 100 * SPOT, rel=1e-12)
+    # Naive doubles 6-month vol; the proxy lifts it by beta x 20 index points.
+    assert 0 < by_variant["proxy"].varswap_pnl < by_variant["naive"].varswap_pnl / 3
 
-    assert not result.skipped
-    assert result.base_value == pytest.approx(100 * SPOT)
-    assert len(result.episodes) == 1
-    er = result.episodes[0]
-    assert er.episode.name == "fake_crash"
-    # equity position: qty=100, spot shocked -20% -> value = 100 * 80 = 8000, pnl = -2000
-    assert er.shocked_value == pytest.approx(100 * SPOT * 0.8)
-    assert er.pnl == pytest.approx(100 * SPOT * 0.8 - 100 * SPOT)
+    stored = pd.read_parquet(tmp_path / "historical_replay")
+    assert sorted(stored["variant"]) == ["naive", "proxy"]
 
 
-def test_run_historical_replay_skips_an_episode_that_fails_to_fetch_data(tmp_path, monkeypatch):
-    _write_curve(tmp_path)
-    _write_underlying(tmp_path)
-    _write_forwards(tmp_path)
-    _write_surface(tmp_path)
-    portfolio_path = _write_portfolio_yaml(tmp_path)
-
-    fake_episode = HistoricalEpisode("broken", ASOF, ASOF, "raises")
-    monkeypatch.setattr(replay_module, "EPISODES", [fake_episode])
-
-    def raising(episode, underlyings):
-        raise ValueError("network unavailable")
-
-    monkeypatch.setattr(replay_module, "compute_episode_shocks", raising)
-
-    result = run_historical_replay(_cfg(tmp_path), ASOF, portfolio_path)
-
-    assert "broken" in result.skipped
+def test_run_historical_replay_skips_an_episode_missing_a_factor(tmp_path, monkeypatch):
+    _write_market(tmp_path)
+    _mock_proxy(monkeypatch)
+    result = run_historical_replay(
+        _cfg(tmp_path),
+        ASOF,
+        _write_portfolio_yaml(tmp_path),
+        levels=_levels(with_vix=False),
+        max_workers=1,
+    )
+    assert "no VIX price within" in result.skipped["fake_crash"]
     assert not result.episodes
 
 
-def test_run_historical_replay_reports_skip_when_no_curated_rates(tmp_path):
-    portfolio_path = _write_portfolio_yaml(tmp_path)
-    result = run_historical_replay(_cfg(tmp_path), ASOF, portfolio_path)
+def test_run_historical_replay_reports_skip_when_no_proxy_or_rates(tmp_path):
+    result = run_historical_replay(
+        _cfg(tmp_path), ASOF, _write_portfolio_yaml(tmp_path), levels=_levels(), max_workers=1
+    )
     assert "_all_" in result.skipped
