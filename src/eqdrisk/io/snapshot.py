@@ -257,6 +257,15 @@ def _has_snapshot(chains_curated_root: Path, asof: dt.date, underlying: str) -> 
     return part.is_dir() and any(part.glob("*.parquet"))
 
 
+def missing_chains(cfg: BaseConfig, asof: dt.date) -> list[str]:
+    """Universe names with no stored chain snapshot for `asof`. Chains are
+    live-only, so the daily run waits and re-runs the ingest while this is
+    non-empty (planning/ingest_catch_up_retry_plan.md)."""
+    chains_root = Path(cfg.paths.curated) / "chains"
+    universe = cfg.universe.index + cfg.universe.single_names
+    return [u for u in universe if not _has_snapshot(chains_root, asof, u)]
+
+
 def run_snapshot(cfg: BaseConfig, asof: dt.date, force: bool = False) -> SnapshotResult:
     """Without `force`, an underlying that already has a chain snapshot for `asof`
     keeps it: a re-run after the close used to overwrite the day's real snapshot

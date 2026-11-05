@@ -14,6 +14,7 @@ from eqdrisk.io.snapshot import (
     _prior_day_count,
     _snap_offset_minutes,
     _with_retries,
+    missing_chains,
     run_snapshot,
 )
 
@@ -199,6 +200,18 @@ def test_rerun_keeps_existing_snapshots_and_fills_only_the_gaps(
     assert sorted(result.qc.kept_existing) == ["AAPL", "NVDA"]
     assert "kept existing snapshot" in result.qc.render()
     assert nvda.read_bytes() == before
+
+
+def test_missing_chains_lists_the_names_a_catch_up_retry_must_fetch(
+    tmp_path, monkeypatch, make_chain_df, no_sleep
+):
+    cfg = _cfg(tmp_path)
+    universe = cfg.universe.index + cfg.universe.single_names
+    assert missing_chains(cfg, dt.date(2026, 9, 15)) == universe
+    _fake_sources(monkeypatch, make_chain_df, failing={"SPX"})
+    run_snapshot(cfg, dt.date(2026, 9, 15))
+    assert missing_chains(cfg, dt.date(2026, 9, 15)) == ["SPX"]
+    assert missing_chains(cfg, dt.date(2026, 9, 16)) == universe
 
 
 def test_force_replaces_an_existing_snapshot(tmp_path, monkeypatch, make_chain_df, no_sleep):
