@@ -35,6 +35,19 @@ def ingest(
 
 
 @app.command()
+def missingchains(
+    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Print the universe names with no option-chain snapshot for this date, space
+    separated (nothing if complete): what the daily run's catch-up retry waits on."""
+    from eqdrisk.io.snapshot import missing_chains
+
+    cfg = BaseConfig.from_yaml(config)
+    typer.echo(" ".join(missing_chains(cfg, dt.date.fromisoformat(date))))
+
+
+@app.command()
 def curves(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     config: str = typer.Option("configs/base.yaml", help="Path to base config"),
