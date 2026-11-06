@@ -46,6 +46,9 @@ an existing chain snapshot for a date and fetches only the underlyings that are 
 `--force` to replace one on purpose. Before this, an after-hours re-run of the pipeline overwrote
 the real 16:30 SPX snapshots of 2026-09-09 and 2026-09-14 with stale after-hours quotes, and the
 originals could not be recovered (both days now mark only the non-SPX positions).
+`eqdrisk missingchains --date X` prints the universe names with no chain snapshot for that day
+(2026-11-04 prints `AAPL NVDA`, both lost to a Yahoo outage), so you can see what a re-run would
+fetch before running it.
 
 ## What's set up
 
