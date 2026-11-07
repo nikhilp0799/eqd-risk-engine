@@ -50,6 +50,19 @@ originals could not be recovered (both days now mark only the non-SPX positions)
 (2026-11-04 prints `AAPL NVDA`, both lost to a Yahoo outage), so you can see what a re-run would
 fetch before running it.
 
+**A missing chain is retried until its cutoff (since 2026-11-07).** Yahoo outages lost chains on
+2026-10-23 (SPX, AAPL), 10-30 (SPX) and 11-04 (AAPL, NVDA), each lasting longer than the ingest's
+own retries. After `ingest`, `eqdrisk catchup` re-runs the ingest for the missing names only: SPX
+every 10 minutes with a last try just before 17:00, single names until 21:00 (every 30 minutes
+once SPX is done). The rest of the pipeline waits for it, so an outage day finishes late but
+complete. The cutoffs (`chain_catch_up` in `configs/base.yaml`) come from sampling chains after
+the close on 2026-11-06 and scoring them against the 16:30 snapshot: SPX had 3,206 quotes passing
+the filters at 17:00 (3,240 at 16:30, mids about 1% apart) and 1 at 17:30, with the bids pulled;
+AAPL and NVDA quotes were unchanged to 21:00. The wait checks the wall clock every 30 seconds, so
+a Mac that sleeps through a cutoff skips that name rather than fetching it late. A name still
+missing at the end is logged as `*** CHAINS MISSING ***`. On a past date every cutoff has passed,
+so `catchup` fetches nothing.
+
 ## What's set up
 
 - **`scripts/daily_ingest.sh`** — runs the full daily pipeline for "today," skipping outright (not

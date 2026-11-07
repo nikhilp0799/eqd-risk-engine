@@ -14,6 +14,7 @@ from eqdrisk.io.snapshot import (
     _prior_day_count,
     _snap_offset_minutes,
     _with_retries,
+    catch_up_chains,
     missing_chains,
     run_snapshot,
 )
@@ -212,6 +213,92 @@ def test_missing_chains_lists_the_names_a_catch_up_retry_must_fetch(
     run_snapshot(cfg, dt.date(2026, 9, 15))
     assert missing_chains(cfg, dt.date(2026, 9, 15)) == ["SPX"]
     assert missing_chains(cfg, dt.date(2026, 9, 16)) == universe
+
+
+# --- catch-up retry (2026-11-07): wait out an outage, each name until its cutoff ---
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """A fake wall clock starting 16:35 ET on 2026-09-15; every sleep advances it."""
+    now = [pd.Timestamp("2026-09-15 16:35", tz="America/New_York")]
+
+    def sleep(seconds):
+        now[0] += pd.Timedelta(seconds=seconds)
+
+    monkeypatch.setattr(snapshot_module, "_now", lambda: now[0])
+    monkeypatch.setattr(snapshot_module, "_sleep", sleep)
+    return now
+
+
+def _outage(monkeypatch, make_chain_df, clock, down_until: dict[str, str]):
+    """Fake sources where each name's chain fetch fails until an ET time ("" = all
+    evening); returns the fetch log as (name, HH:MM) pairs."""
+    _fake_sources(monkeypatch, make_chain_df, failing=set())
+    fetches: list[tuple[str, str]] = []
+
+    def fetch_option_chain(underlying, asof_ts):
+        fetches.append((underlying, f"{clock[0]:%H:%M}"))
+        until = down_until.get(underlying)
+        if until is not None and (until == "" or f"{clock[0]:%H:%M}" < until):
+            raise KeyError("currentTradingPeriod")
+        return make_chain_df(dt.date(2026, 9, 15), underlying, 4)
+
+    monkeypatch.setattr(snapshot_module.sources, "fetch_option_chain", fetch_option_chain)
+    return fetches
+
+
+def test_catch_up_fetches_a_chain_once_the_outage_ends(tmp_path, monkeypatch, make_chain_df, clock):
+    fetches = _outage(monkeypatch, make_chain_df, clock, {"SPX": "16:50"})
+    run_snapshot(_cfg(tmp_path), dt.date(2026, 9, 15))
+    assert missing_chains(_cfg(tmp_path), dt.date(2026, 9, 15)) == ["SPX"]
+
+    before = len(fetches)
+
+    logged: list[str] = []
+    assert catch_up_chains(_cfg(tmp_path), dt.date(2026, 9, 15), log=logged.append) == []
+    # Only the missing name is re-fetched, 10 minutes apart while it is an index.
+    assert {u for u, _ in fetches[before:]} == {"SPX"}
+    # The interval runs from the end of a failed try (its own retries take 35 s).
+    assert _attempts(logged) == [("16:45", "SPX"), ("16:56", "SPX")]
+
+
+def _attempts(logged: list[str]) -> list[tuple[str, str]]:
+    """(HH:MM, names) for each catch-up attempt, from its 'catch-up' log line."""
+    return [
+        (line.split()[1].rstrip(":"), line.split("fetching ")[1])
+        for line in logged
+        if line.startswith("catch-up")
+    ]
+
+
+def test_catch_up_stops_each_name_at_its_own_cutoff(tmp_path, monkeypatch, make_chain_df, clock):
+    _outage(monkeypatch, make_chain_df, clock, {"SPX": "", "NVDA": ""})
+    run_snapshot(_cfg(tmp_path), dt.date(2026, 9, 15))
+
+    logged: list[str] = []
+    still_missing = catch_up_chains(_cfg(tmp_path), dt.date(2026, 9, 15), log=logged.append)
+    assert still_missing == ["SPX", "NVDA"]
+    attempts = _attempts(logged)
+    with_spx = [t for t, names in attempts if "SPX" in names]
+    nvda_only = [t for t, names in attempts if names == "NVDA"]
+    # SPX had no bids by 17:30 (measured 2026-11-06): its last try is just before 17:00.
+    assert len(with_spx) == 3 and with_spx[-1] == "16:59"
+    # NVDA quotes stayed unchanged to 21:00: tried every ~30 minutes once SPX is done.
+    assert nvda_only[0] == "17:30" and nvda_only[-1] == "20:59"
+    assert len(nvda_only) == 8
+
+
+def test_catch_up_on_a_past_date_fetches_nothing(tmp_path, monkeypatch, make_chain_df, clock):
+    fetches = _outage(monkeypatch, make_chain_df, clock, {})
+    clock[0] = pd.Timestamp("2026-09-16 16:35", tz="America/New_York")
+
+    assert catch_up_chains(_cfg(tmp_path), dt.date(2026, 9, 15), log=lambda s: None) == [
+        "SPX",
+        "NVDA",
+        "AAPL",
+    ]
+    assert fetches == []
 
 
 def test_force_replaces_an_existing_snapshot(tmp_path, monkeypatch, make_chain_df, no_sleep):
