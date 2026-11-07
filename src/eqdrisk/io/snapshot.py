@@ -266,18 +266,73 @@ def missing_chains(cfg: BaseConfig, asof: dt.date) -> list[str]:
     return [u for u in universe if not _has_snapshot(chains_root, asof, u)]
 
 
-def run_snapshot(cfg: BaseConfig, asof: dt.date, force: bool = False) -> SnapshotResult:
+def _now() -> pd.Timestamp:
+    return pd.Timestamp.now(tz=NY_TZ)  # patched in tests
+
+
+# How often the catch-up wait checks the wall clock. One long sleep stops
+# counting while the Mac sleeps and would fetch at whatever time it wakes.
+POLL_SECONDS = 30.0
+
+
+def _wait_until(target: pd.Timestamp) -> None:
+    while _now() < target:
+        _sleep(POLL_SECONDS)
+
+
+def catch_up_chains(
+    cfg: BaseConfig, asof: dt.date, log: Callable[[str], None] = print
+) -> list[str]:
+    """Re-run the ingest for names missing a chain for `asof`, each until its
+    cutoff (`cfg.chain_catch_up`), and return the names still missing. Yahoo
+    outages lost chains on 2026-10-23, 10-30 and 11-04 for longer than
+    `_with_retries` waits, and a chain not fetched on its day is lost for good.
+    The interval is the index one while an index name is still due, so SPX is
+    retried often before its early cutoff. A past `asof` has every cutoff
+    behind it and fetches nothing."""
+    cu = cfg.chain_catch_up
+    cutoffs = {u: cu.index_cutoff for u in cfg.universe.index} | {
+        u: cu.single_name_cutoff for u in cfg.universe.single_names
+    }
+    deadline = {u: pd.Timestamp.combine(asof, t).tz_localize(NY_TZ) for u, t in cutoffs.items()}
+
+    def due() -> list[str]:
+        now = _now()
+        return [u for u in missing_chains(cfg, asof) if now <= deadline[u]]
+
+    while names := due():
+        index_due = any(u in cfg.universe.index for u in names)
+        interval = cu.index_interval_minutes if index_due else cu.single_name_interval_minutes
+        # Wake no later than the earliest cutoff, a poll early so it is not missed.
+        _wait_until(
+            min(
+                _now() + pd.Timedelta(minutes=interval),
+                min(deadline[u] for u in names) - pd.Timedelta(seconds=POLL_SECONDS),
+            )
+        )
+        if names := due():
+            log(f"catch-up {_now():%H:%M}: fetching {' '.join(names)}")
+            log(run_snapshot(cfg, asof, underlyings=names).qc.render())
+    return missing_chains(cfg, asof)
+
+
+def run_snapshot(
+    cfg: BaseConfig, asof: dt.date, force: bool = False, underlyings: list[str] | None = None
+) -> SnapshotResult:
     """Without `force`, an underlying that already has a chain snapshot for `asof`
     keeps it: a re-run after the close used to overwrite the day's real snapshot
     with an after-hours one whose quotes mostly fail the staleness filter, and the
     original was lost (SPX on 2026-09-09 and 2026-09-14, found while rebuilding
     history, planning/input_stability_plan.md). Missing underlyings are still
-    fetched, so re-running after a partial failure fills only the gaps."""
+    fetched, so re-running after a partial failure fills only the gaps.
+    `underlyings` limits the chain fetch to those names (the catch-up retry);
+    spot, rates and vol indices are fetched for the whole universe either way."""
     raw_root = Path(cfg.paths.raw)
     curated_root = Path(cfg.paths.curated)
-    asof_ts = pd.Timestamp.now(tz=NY_TZ)
+    asof_ts = _now()
 
     universe = cfg.universe.index + cfg.universe.single_names
+    chain_names = universe if underlyings is None else [u for u in universe if u in underlyings]
     qc = QCReport(asof=asof)
     chains_curated_root = curated_root / "chains"
 
@@ -289,7 +344,7 @@ def run_snapshot(cfg: BaseConfig, asof: dt.date, force: bool = False) -> Snapsho
             f"(tolerance {cfg.snap_tolerance_minutes}min)"
         )
 
-    for underlying in universe:
+    for underlying in chain_names:
         if not force and _has_snapshot(chains_curated_root, asof, underlying):
             qc.kept_existing.append(underlying)
             continue

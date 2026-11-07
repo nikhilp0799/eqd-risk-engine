@@ -9,3 +9,8 @@ calendar: "NYSE"
 daycount: "ACT/365F"
 canonical_snap_time: "16:00:00"   # ET — SPX settles 4:15pm, index prints 4:00pm; see Step 1.4
 snap_tolerance_minutes: 45   # the launchd job deliberately runs at 16:30 (docs/AUTOMATION.md); this flags genuinely late runs (e.g. a Mac asleep at 16:30), not the planned 30-min lag
+chain_catch_up:   # ET; re-fetch a chain the 16:30 run missed (measured 2026-11-06, planning/ingest_catch_up_retry_plan.md)
+  index_cutoff: "17:00:00"         # SPX quotes had no bids by 17:30
+  single_name_cutoff: "21:00:00"   # AAPL/NVDA quotes unchanged from the close to 21:00
+  index_interval_minutes: 10
+  single_name_interval_minutes: 30

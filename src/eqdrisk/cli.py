@@ -48,6 +48,23 @@ def missingchains(
 
 
 @app.command()
+def catchup(
+    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Wait and re-fetch the option chains missing for this date, each name until its
+    cutoff (chain_catch_up in the config); a past date fetches nothing."""
+    from eqdrisk.io.snapshot import catch_up_chains
+
+    cfg = BaseConfig.from_yaml(config)
+    still_missing = catch_up_chains(cfg, dt.date.fromisoformat(date), log=typer.echo)
+    if still_missing:
+        typer.echo(f"STILL MISSING: {' '.join(still_missing)} (past the retry cutoff)")
+    else:
+        typer.echo("all option chains present")
+
+
+@app.command()
 def curves(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     config: str = typer.Option("configs/base.yaml", help="Path to base config"),

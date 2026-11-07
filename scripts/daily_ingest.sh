@@ -36,6 +36,16 @@ sys.exit(0 if is_trading_day(datetime.date.today()) else 1)
     echo "--- ingest ---"
     "$EQDRISK" ingest --date "$TODAY" || echo "INGEST FAILED"
 
+    # Chains are live-only: wait out a Yahoo outage and re-fetch only the missing
+    # names, SPX until 17:00 and single names until 21:00 (configs/base.yaml
+    # chain_catch_up). Returns at once when nothing is missing.
+    echo "--- catchup ---"
+    CATCHUP_OUTPUT="$("$EQDRISK" catchup --date "$TODAY" 2>&1)" || echo "CATCHUP FAILED"
+    echo "$CATCHUP_OUTPUT"
+    if echo "$CATCHUP_OUTPUT" | grep -q "STILL MISSING:"; then
+        echo "*** CHAINS MISSING: the names above have no option chain today, and it cannot be fetched later ***"
+    fi
+
     echo "--- curves ---"
     "$EQDRISK" curves --date "$TODAY" || echo "CURVES FAILED"
 

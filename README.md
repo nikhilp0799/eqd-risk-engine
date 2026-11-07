@@ -399,6 +399,13 @@ daycount: "ACT/365F"
 
 **Status: done, verified live.** Real ingestion for SPX/AAPL/NVDA/JPM/XLE, schema-enforced, reason-coded row rejection, QC reports with prior-day diffs.
 
+Option chains are live-only, and Yahoo outages lost at least one name's chain on 3 of the 12
+trading days to 2026-11-04. Since 2026-11-07 the daily run waits out an outage: `eqdrisk catchup`
+re-fetches only the missing names, SPX until 17:00 and single names until 21:00. Those cutoffs
+were measured on 2026-11-06 by fetching chains every 30-60 minutes after the close: SPX quotes
+still passed the filters at 17:00 (3,206 against 3,240 in the 16:30 snapshot) and had no bids by
+17:30, while AAPL and NVDA quotes stayed unchanged to 21:00.
+
 ### 1.1 Sources
 
 | Data | Source | Cost | Notes |
@@ -1441,6 +1448,7 @@ Property-based tests are unusual in quant portfolios and signal real software ma
 
 ```bash
 eqdrisk ingest      --date 2026-08-11
+eqdrisk catchup     --date 2026-08-11        # re-fetch missing chains until their cutoffs
 eqdrisk calibrate   --date 2026-08-11 --underlying SPX
 eqdrisk price       --date 2026-08-11 --portfolio configs/portfolio.yaml
 eqdrisk portfolio   --date 2026-08-11 --portfolio configs/portfolio.yaml
