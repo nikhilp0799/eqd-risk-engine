@@ -277,7 +277,9 @@ def source_values(context: str, extra_pct: list[float] | None = None) -> dict[st
     return values
 
 
-def _matches(claim: Claim, pool: list[float]) -> bool:
+def matches(claim: Claim, pool: list[float]) -> bool:
+    """True when `claim` is one of `pool` within its printed precision or 0.5%,
+    ignoring sign."""
     printed = 0.5 * 10.0**-claim.decimals
     return any(
         abs(abs(claim.value) - abs(v)) <= max(printed, RELATIVE_TOLERANCE * abs(v)) for v in pool
@@ -311,15 +313,15 @@ def check(
     for text in answer_texts:
         for claim, window, after in _claims_with_windows(text):
             result.n_numbers += 1
-            if not _matches(claim, allowed[claim.unit]):
+            if not matches(claim, allowed[claim.unit]):
                 result.unsupported.append(claim.text)
                 continue
             named = named_quantities(window, after)
             if labelled is None or not named:
                 continue
             same_unit = [s for s in labelled if s.unit == claim.unit]
-            if _matches(claim, [s.value for s in same_unit if s.label in named]):
+            if matches(claim, [s.value for s in same_unit if s.label in named]):
                 continue
-            labels = {s.label for s in same_unit if _matches(claim, [s.value])}
+            labels = {s.label for s in same_unit if matches(claim, [s.value])}
             result.mislabelled.append(_describe(claim, named, labels))
     return result

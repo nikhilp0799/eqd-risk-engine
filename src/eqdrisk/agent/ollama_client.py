@@ -28,22 +28,37 @@ def is_available(host: str = OLLAMA_HOST) -> bool:
         return False
 
 
+def installed_models(host: str = OLLAMA_HOST) -> list[str] | None:
+    """Names of the models pulled into the local Ollama, or None if unreachable."""
+    try:
+        resp = requests.get(f"{host}/api/tags", timeout=5.0)
+        if resp.status_code != 200:
+            return None
+        return [str(m.get("name", "")) for m in resp.json().get("models", [])]
+    except requests.exceptions.RequestException:
+        return None
+
+
 def chat(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
     model: str = OLLAMA_MODEL,
     host: str = OLLAMA_HOST,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    options: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """One turn of `/api/chat` (non-streaming), optionally offering `tools` in
     Ollama's function-calling format. Returns the raw `message` dict (with
     `content` and/or `tool_calls`) or `None` on any failure — the daily
     pipeline must degrade gracefully (an honest "AI unavailable" note) if the
     local model service happens to be down, not crash the whole run over an
-    optional add-on."""
+    optional add-on. `options`: Ollama sampling options, e.g. {"seed": 1} (the
+    benchmark fixes the seed so a run can be repeated)."""
     payload: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
     if tools:
         payload["tools"] = tools
+    if options:
+        payload["options"] = options
     try:
         resp = requests.post(f"{host}/api/chat", json=payload, timeout=timeout)
         if resp.status_code != 200:

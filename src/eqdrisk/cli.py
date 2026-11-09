@@ -65,6 +65,73 @@ def catchup(
 
 
 @app.command()
+def agentbench(
+    models: str = typer.Option("qwen2.5:7b", help="Comma-separated Ollama models"),
+    samples: int = typer.Option(2, help="Answers per model and day (seeds 0..n-1)"),
+    days: str = typer.Option("", help="Only these days, comma-separated YYYY-MM-DD"),
+    split: str = typer.Option("all", help="dev, test or all"),
+    portfolio_path: str = typer.Option(
+        "configs/portfolio.yaml", "--portfolio", help="Path to portfolio config"
+    ),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Run the AI investigation agent on stored real days with each model and score
+    every answer against what the day's data says (planning/agent_benchmark_plan.md).
+    Not part of the daily run: several models take hours."""
+    from eqdrisk.agent import ollama_client
+    from eqdrisk.agent.benchmark import run_benchmark, summarize
+
+    names = [m.strip() for m in models.split(",") if m.strip()]
+    installed = ollama_client.installed_models()
+    if installed is None:
+        typer.echo("Ollama is not reachable at localhost:11434")
+        raise typer.Exit(code=1)
+    missing = [m for m in names if m not in installed]
+    if missing:
+        typer.echo(f"not pulled yet: {' '.join(missing)} (run: ollama pull <model>)")
+        raise typer.Exit(code=1)
+    cfg = BaseConfig.from_yaml(config)
+    only = [dt.date.fromisoformat(d.strip()) for d in days.split(",") if d.strip()] or None
+    df = run_benchmark(
+        cfg,
+        names,
+        samples,
+        portfolio_path,
+        days=only,
+        split=None if split == "all" else split,
+        log=typer.echo,
+    )
+    if not df.empty:
+        typer.echo(summarize(df).to_string(index=False))
+
+
+@app.command()
+def agentbenchreport(
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+) -> None:
+    """Every stored benchmark answer, summarized per model and split."""
+    from eqdrisk.agent.benchmark import load_results, summarize
+
+    df = load_results(BaseConfig.from_yaml(config))
+    typer.echo("no benchmark results yet" if df.empty else summarize(df).to_string(index=False))
+
+
+@app.command()
+def labelbench() -> None:
+    """Open the labelling page for the agent benchmark: one answer at a time, each
+    number right or wrong and the reasoning graded, blind to model and fact-check."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parents[2]
+    app_path = project_root / "app" / "label_bench.py"
+    subprocess.run(
+        [sys.executable, "-m", "streamlit", "run", str(app_path)], cwd=project_root, check=True
+    )
+
+
+@app.command()
 def curves(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     config: str = typer.Option("configs/base.yaml", help="Path to base config"),
