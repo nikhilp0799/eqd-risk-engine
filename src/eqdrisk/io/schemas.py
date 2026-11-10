@@ -661,6 +661,68 @@ AI_INVESTIGATION_TRACE_SCHEMA = pa.schema(
 )
 AI_INVESTIGATION_TRACE_REQUIRED_NOT_NULL = ["asof_date", "day0", "round", "tool_name"]
 
+# One benchmark answer (agent/benchmark.py, planning/agent_benchmark_plan.md):
+# a model's answer for one stored day and seed, the day's answer-key status, the
+# fact-check result and each computed score (null where it does not apply).
+AGENT_BENCH_SCHEMA = pa.schema(
+    [
+        ("model_key", pa.string()),  # partition-safe model name
+        ("asof_date", pa.date32()),
+        ("model", pa.string()),
+        ("day0", pa.date32()),
+        ("sample", pa.int64()),  # also the Ollama seed
+        ("split", pa.string()),  # "dev" | "test"
+        ("day_status", pa.string()),  # "alert" | "inconclusive" | "clean"
+        ("ai_available", pa.bool_()),
+        ("factcheck_status", pa.string()),
+        ("n_numbers", pa.int64()),
+        ("n_unsupported", pa.int64()),
+        ("n_mislabelled", pa.int64()),
+        # The fact-check's own verdicts, as JSON lists: what the hand labels are
+        # compared with to measure its recall.
+        ("unsupported", pa.string()),
+        ("mislabelled", pa.string()),
+        ("retried", pa.bool_()),
+        ("grounded", pa.bool_()),
+        ("status_ok", pa.bool_()),
+        ("top_named", pa.bool_()),
+        ("noise_ok", pa.bool_()),
+        ("complete", pa.bool_()),
+        ("called_tool", pa.bool_()),
+        ("n_tool_calls", pa.int64()),
+        ("seconds", pa.float64()),
+        ("summary", pa.string()),
+        ("root_cause_hypothesis", pa.string()),
+        ("flagged_positions", pa.string()),  # JSON [[position_id, reason], ...]
+        ("trace", pa.string()),  # JSON [{round, tool, arguments, result}, ...]
+        ("raw_response", pa.string()),
+    ]
+)
+AGENT_BENCH_REQUIRED_NOT_NULL = ["model_key", "asof_date", "model", "sample", "split"]
+
+# A hand label for one benchmark answer (agent/labels.py): each number right or
+# wrong, with whether the fact-check flagged it, and the reasoning grade.
+AGENT_BENCH_LABEL_SCHEMA = pa.schema(
+    [
+        ("model_key", pa.string()),
+        ("asof_date", pa.date32()),
+        ("sample", pa.int64()),
+        ("model", pa.string()),
+        ("numbers", pa.string()),  # JSON [{text, right, flagged}, ...]
+        ("reasoning", pa.string()),  # "good" | "weak" | "wrong"
+        ("note", pa.string()),
+        ("labelled_at", pa.string()),  # ISO timestamp, ET
+    ]
+)
+AGENT_BENCH_LABEL_REQUIRED_NOT_NULL = [
+    "model_key",
+    "asof_date",
+    "sample",
+    "model",
+    "numbers",
+    "reasoning",
+]
+
 DEEP_HEDGE_RESULT_SCHEMA = pa.schema(
     [
         ("asof_date", pa.date32()),

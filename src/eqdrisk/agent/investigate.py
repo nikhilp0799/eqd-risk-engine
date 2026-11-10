@@ -46,6 +46,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -191,8 +192,10 @@ referencing specific positions/steps from the data above (or from a tool call yo
 If nothing is unusual today, flagged_positions and proposed_changes should be empty lists."""
 
 
-def _build_messages(result: PnLExplainResult, history: str) -> list[dict[str, Any]]:
-    system = (
+def system_prompt() -> str:
+    """The agent's instructions: the same every day, so the benchmark gives every
+    model this one with each stored day's data."""
+    return (
         "You are a risk-desk assistant investigating one day's real P&L-explain output for an "
         "equity derivatives book. Use ONLY real numbers — from the data given below, or from "
         "tool calls you make — never invent figures. You have two real tools available: "
@@ -206,6 +209,9 @@ def _build_messages(result: PnLExplainResult, history: str) -> list[dict[str, An
         f"{MAX_TOOL_ROUNDS} rounds of tool calls before you must give your final answer.\n\n"
         f"{_FINAL_JSON_INSTRUCTIONS}"
     )
+
+
+def _build_messages(result: PnLExplainResult, history: str) -> list[dict[str, Any]]:
     user = f"""TODAY'S P&L EXPLAIN ({result.day0} -> {result.day1}, NAV={result.nav:,.2f}):
 {result.render()}
 
@@ -219,7 +225,7 @@ RECENT HISTORY (last {HISTORY_LOOKBACK_DAYS} real day-pairs):
             f"\nBefore answering, call what_if_reprice on {worst_position}, today's largest-"
             "residual position, to verify your hypothesis with a real number.\n"
         )
-    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    return [{"role": "system", "content": system_prompt()}, {"role": "user", "content": user}]
 
 
 def _parse_response(raw: str) -> tuple[dict, str | None]:
@@ -233,6 +239,19 @@ def _parse_response(raw: str) -> tuple[dict, str | None]:
         return {}, f"JSON parse failed: {exc}"
 
 
+# One chat turn: (messages, tools or None) -> the reply message, or None when the
+# call failed. The daily run uses the default model; the benchmark binds others.
+Chat = Callable[[list[dict[str, Any]], list[dict[str, Any]] | None], dict[str, Any] | None]
+# Runs one tool call: (name, arguments) -> its result.
+ToolExecutor = Callable[[str, dict[str, Any]], Any]
+
+
+def _default_chat(
+    messages: list[dict[str, Any]], tool_specs: list[dict[str, Any]] | None
+) -> dict[str, Any] | None:
+    return ollama_client.chat(messages, tools=tool_specs)
+
+
 def _run_agentic_loop(
     cfg: BaseConfig,
     result: PnLExplainResult,
@@ -240,17 +259,30 @@ def _run_agentic_loop(
     portfolio_path: str,
     project_root: Path,
 ) -> tuple[str | None, list[ToolCallTrace], list[dict[str, Any]]]:
+    """The daily run's loop: today's prompt, the real tools, the default model."""
+
+    def execute(name: str, arguments: dict[str, Any]) -> Any:
+        return tools.execute_tool_call(
+            name, arguments, cfg, portfolio_path, result.day1, project_root
+        )
+
+    return tool_loop(_build_messages(result, history), execute, _default_chat)
+
+
+def tool_loop(
+    messages: list[dict[str, Any]], execute: ToolExecutor, chat: Chat
+) -> tuple[str | None, list[ToolCallTrace], list[dict[str, Any]]]:
     """Up to `MAX_TOOL_ROUNDS` real tool-call round-trips, then a forced
     tools-off final answer if the model still wants to call something.
     Returns `(final_raw_content, trace)` — `final_raw_content` is `None` if
     the Ollama chat call itself failed (treated as AI-unavailable by the
     caller), distinct from a malformed-but-present final answer. Also returns
     the conversation so far, for the fact-check and its corrective retry."""
-    messages = _build_messages(result, history)
+    messages = list(messages)
     trace: list[ToolCallTrace] = []
 
     for round_num in range(1, MAX_TOOL_ROUNDS + 1):
-        message = ollama_client.chat(messages, tools=tools.TOOL_SPECS)
+        message = chat(messages, tools.TOOL_SPECS)
         if message is None:
             return None, trace, messages
         tool_calls = message.get("tool_calls") or []
@@ -266,9 +298,7 @@ def _run_agentic_loop(
             arguments = fn.get("arguments")
             if not isinstance(arguments, dict):
                 arguments = {}
-            tool_result = tools.execute_tool_call(
-                name, arguments, cfg, portfolio_path, result.day1, project_root
-            )
+            tool_result = execute(name, arguments)
             trace.append(
                 ToolCallTrace(
                     round=round_num,
@@ -285,7 +315,7 @@ def _run_agentic_loop(
             "content": f"No more tool calls are allowed. {_FINAL_JSON_INSTRUCTIONS}",
         }
     )
-    message = ollama_client.chat(messages, tools=None)
+    message = chat(messages, None)
     if message is None:
         return None, trace, messages
     return (message.get("content") or None), trace, messages
@@ -309,51 +339,58 @@ def run_daily_investigation(
 
     history = _historical_trend(curated_root, result.day1, HISTORY_LOOKBACK_DAYS)
     raw, trace, messages = _run_agentic_loop(cfg, result, history, portfolio_path, project_root)
+    investigation = check_and_retry(
+        result.day0, result.day1, raw, trace, messages, _residual_shares(result)
+    )
+    _persist(investigation, curated_root)
+    if investigation.ai_available:
+        _write_markdown(investigation, project_root)
+    return investigation
+
+
+def check_and_retry(
+    day0: dt.date,
+    day1: dt.date,
+    raw: str | None,
+    trace: list[ToolCallTrace],
+    messages: list[dict[str, Any]],
+    shares: list[float],
+    model: str = ollama_client.OLLAMA_MODEL,
+    chat: Chat = _default_chat,
+) -> AIInvestigationResult:
+    """Parse the loop's final answer, fact-check it, and give it one corrective
+    retry if anything is wrong. `raw` None (the chat call failed) gives an
+    AI-unavailable result that keeps the partial trace. `shares`: each
+    position's share of the residual, in %, a figure the model may compute."""
     prompt = "\n\n".join(m["content"] for m in messages[:2])
-
-    if raw is None:
-        investigation = AIInvestigationResult(
-            day0=result.day0,
-            day1=result.day1,
-            model=ollama_client.OLLAMA_MODEL,
-            ai_available=False,
-            trace=trace,
-            prompt=prompt,
-        )
-        _persist(investigation, curated_root)
-        return investigation
-
     investigation = AIInvestigationResult(
-        day0=result.day0,
-        day1=result.day1,
-        model=ollama_client.OLLAMA_MODEL,
-        ai_available=True,
+        day0=day0,
+        day1=day1,
+        model=model,
+        ai_available=raw is not None,
         trace=trace,
         prompt=prompt,
     )
+    if raw is None:
+        return investigation
+
     _fill_from_raw(investigation, raw)
     context = _factcheck_context(messages)
-    shares = _residual_shares(result)
     labelled = _labelled_sources(messages, trace, shares)
     checked = _check(investigation, context, shares, labelled)
     # One corrective retry in total, for whatever went wrong: invalid JSON, numbers
     # not in the data, or numbers called the wrong quantity. A retry that is not
     # valid JSON is discarded.
     if investigation.parse_error or checked.unsupported or checked.mislabelled:
-        retry_raw = _corrective_retry(messages, raw, investigation.parse_error, checked)
+        retry_raw = _corrective_retry(messages, raw, investigation.parse_error, checked, chat)
         if retry_raw is not None:
-            retry = AIInvestigationResult(
-                day0=result.day0, day1=result.day1, model=investigation.model, ai_available=True
-            )
+            retry = AIInvestigationResult(day0=day0, day1=day1, model=model, ai_available=True)
             _fill_from_raw(retry, retry_raw)
             if not retry.parse_error:
                 _fill_from_raw(investigation, retry_raw)
                 investigation.factcheck_retried = True
                 checked = _check(investigation, context, shares, labelled)
     investigation.factcheck = checked
-
-    _persist(investigation, curated_root)
-    _write_markdown(investigation, project_root)
     return investigation
 
 
@@ -450,6 +487,7 @@ def _corrective_retry(
     raw: str,
     parse_error: str | None,
     checked: factcheck.FactCheckResult,
+    chat: Chat = _default_chat,
 ) -> str | None:
     """One more turn: say what was wrong (invalid JSON, numbers that are not in the
     model's data, numbers called the wrong quantity) and ask for the same JSON
@@ -481,7 +519,7 @@ def _corrective_retry(
         {"role": "assistant", "content": raw},
         {"role": "user", "content": f"{' '.join(problems)} {_FINAL_JSON_INSTRUCTIONS}"},
     ]
-    message = ollama_client.chat(retry_messages, tools=None)
+    message = chat(retry_messages, None)
     if message is None:
         return None
     return message.get("content") or None
