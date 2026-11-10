@@ -12,6 +12,8 @@ from eqdrisk.agent.benchmark import (
     INCONCLUSIVE,
     ToolCache,
     answer_key,
+    data_turn,
+    load_items,
     load_results,
     model_key,
     run_benchmark,
@@ -19,7 +21,13 @@ from eqdrisk.agent.benchmark import (
     summarize,
 )
 from eqdrisk.agent.factcheck import FactCheckResult
-from eqdrisk.agent.investigate import AIInvestigationResult, ToolCallTrace, _build_messages
+from eqdrisk.agent.investigate import (
+    PROMPT_VERSION,
+    AIInvestigationResult,
+    ToolCallTrace,
+    _build_messages,
+    closing_line,
+)
 from eqdrisk.config import BaseConfig, Paths, Universe
 from eqdrisk.io import store
 from eqdrisk.io.schemas import (
@@ -119,6 +127,24 @@ def test_scores_that_do_not_apply_to_the_day_are_none():
     scores = score(_answer("P008 residual 6,979.95 is within Monte Carlo noise"), inconclusive)
     assert scores["status_ok"] is None and scores["noise_ok"] is True
     assert score(_answer("P008 residual 6,979.95"), inconclusive)["noise_ok"] is False
+
+
+def test_an_answer_that_is_not_json_gets_no_credit_for_its_content():
+    """Unparsed means no flags; on a clean day that would otherwise count as the
+    right call. Calling the tool is behaviour, so it still counts."""
+    clean = answer_key(_user_turn(_explain()))
+    unparsed = _answer("P008 residual 6,510.13, nothing to flag")
+    assert unparsed.factcheck is not None
+    unparsed.factcheck.parsed = False
+    scores = score(unparsed, clean)
+    assert scores["status_ok"] is False and scores["complete"] is False
+    assert scores["top_named"] is None
+
+    alert = answer_key(_user_turn(_explain(breaches=["total"])))
+    reprice = ToolCallTrace(1, "what_if_reprice", json.dumps({"position_id": "P008"}), "{}")
+    unparsed.trace = [reprice]
+    scores = score(unparsed, alert)
+    assert scores["top_named"] is False and scores["called_tool"] is True
 
 
 def test_no_answer_scores_nothing():
@@ -223,6 +249,32 @@ def test_run_benchmark_scores_each_day_and_a_rerun_replaces_it(tmp_path):
     assert {c.kwargs["options"]["seed"] for c in chat.call_args_list} == {0, 1}
     assert len(by_day) == 4
 
-    report = summarize(stored)
-    assert list(report["split"]) == ["dev", "test"]
-    assert report.set_index("split").loc["test", "complete"] == "100% of 2"
+    assert set(stored["prompt_version"]) == {PROMPT_VERSION}
+
+    report = summarize(stored).set_index("split")
+    assert list(report.index) == ["dev", "test"]
+    assert report.loc["test", "complete"] == "100% of 2"
+    # The status score is shown per kind of day: always flagging is right on
+    # every alert day and wrong on every clean one.
+    assert report.loc["test", "alert_flagged"] == "100% of 2"
+    assert report.loc["dev", "clean_left_clean"] == "0% of 2"
+
+
+def test_a_stored_day_is_run_with_todays_closing_line(tmp_path):
+    """Days stored before the clean-day line (prompt v1) end without it; an
+    alert day already ends with the reprice line. The benchmark cuts each back
+    to its data and adds the line the daily run would send now, once."""
+    cfg = _cfg(tmp_path)
+    alert_turn = _user_turn(_explain(breaches=["total"]))
+    v1_clean_turn = data_turn(_user_turn(_explain()))
+    assert "clean day" not in v1_clean_turn
+    _store_investigation(cfg, DAY0, DAY1, "SYSTEM\n\n" + alert_turn)
+    _store_investigation(
+        cfg, dt.date(2026, 9, 1), dt.date(2026, 9, 2), "SYSTEM\n\n" + v1_clean_turn
+    )
+
+    clean, alert = load_items(cfg)
+    assert alert.user_turn() == alert_turn
+    assert alert.user_turn().count("Before answering") == 1
+    assert clean.user_turn() == _user_turn(_explain())
+    assert clean.user_turn().endswith(closing_line(alert=False, clean=True, worst_position=None))

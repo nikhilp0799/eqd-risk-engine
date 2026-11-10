@@ -10,6 +10,7 @@ from eqdrisk.agent.investigate import (
     _historical_trend,
     _parse_response,
     _run_agentic_loop,
+    closing_line,
     run_daily_investigation,
 )
 from eqdrisk.config import BaseConfig, Paths, Universe
@@ -131,11 +132,22 @@ def test_build_messages_includes_real_numbers_and_tool_instructions():
     assert "1,000,000.00" in user
 
 
-def test_build_messages_adds_no_directive_when_clean():
+def test_build_messages_ends_a_clean_day_with_empty_flags():
+    """qwen2.5:7b flagged a position on every clean day under the system prompt's
+    own 'empty lists' line (benchmark 2026-11-09, 0 of 18): the instruction is
+    repeated as the user turn's last line, as the reprice one is on alert days."""
     result = _pnl_result()  # no breaches set -> a clean day
-    messages = _build_messages(result, "no history")
-    user = messages[1]["content"]
+    user = _build_messages(result, "no history")[1]["content"]
     assert "Before answering, call what_if_reprice" not in user
+    assert user.endswith(closing_line(alert=False, clean=True, worst_position="P1"))
+    assert "flagged_positions and proposed_changes must be empty" in user
+
+
+def test_build_messages_has_no_closing_line_on_an_inconclusive_only_day():
+    result = _pnl_result()
+    result.inconclusive = ["P1 residual band too wide to tell"]
+    user = _build_messages(result, "no history")[1]["content"]
+    assert "Before answering" not in user and "clean day" not in user
 
 
 def test_build_messages_directs_worst_position_when_breached():

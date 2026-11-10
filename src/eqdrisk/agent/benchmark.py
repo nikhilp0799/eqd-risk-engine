@@ -4,15 +4,20 @@ what that day's own data says the right answer is.
 
 Why: the fact-check (`agent/factcheck.py`) catches wrong numbers, not wrong
 reasoning, and every result so far is about one model. An item is one real day:
-its stored user turn (the P&L explain and five-day history the model saw) under
-today's system prompt, so every model gets the same instructions and data. The
-loop, fact-check and corrective retry are the daily run's own
-(`investigate.tool_loop`, `investigate.check_and_retry`).
+its stored data (the P&L explain and five-day history the model saw) under
+today's prompt (the system prompt and the closing line,
+`investigate.closing_line`), so every model gets the same instructions and data,
+and a prompt change is tested as the daily run would send it. Each answer
+records the `PROMPT_VERSION` it ran under. The loop, fact-check and corrective
+retry are the daily run's own (`investigate.tool_loop`,
+`investigate.check_and_retry`).
 
 Scores per answer, all computed from the day's data, none judged:
 - grounded: the fact-check passed (after its one corrective retry, as daily);
 - status_ok: positions flagged on an alert day, none on a clean day (not scored
   on an inconclusive-only day, where flagging for review is a fair call);
+  reported separately for the two, since a model that always flags is right on
+  every alert day;
 - top_named: the largest-residual position is named, on any day not clean;
 - noise_ok: Monte Carlo noise is mentioned on a day whose total residual is
   inside its noise band, or that is inconclusive;
@@ -41,11 +46,13 @@ import pandas as pd
 
 from eqdrisk.agent import factcheck, ollama_client, tools
 from eqdrisk.agent.investigate import (
+    PROMPT_VERSION,
     AIInvestigationResult,
     Chat,
     ToolCallTrace,
     ToolExecutor,
     check_and_retry,
+    closing_line,
     system_prompt,
     tool_loop,
 )
@@ -177,6 +184,10 @@ def score(investigation: AIInvestigationResult, key: AnswerKey) -> dict[str, Any
             claims, key.position_residual[top], key.position_residual_bp[top]
         )
     out["complete"] = complete
+    if investigation.factcheck.status == "unparsed":
+        # Not the answer format the daily run reads: no flags, so a clean day
+        # would otherwise be scored right for free. Tool use is still scored.
+        out = {k: (v if v is None else False) for k, v in out.items()}
     if key.status == ALERT and top is not None:
         out["called_tool"] = any(
             t.tool_name == "what_if_reprice" and json.loads(t.arguments).get("position_id") == top
@@ -189,15 +200,30 @@ def score(investigation: AIInvestigationResult, key: AnswerKey) -> dict[str, Any
 class BenchItem:
     day0: dt.date
     day1: dt.date
-    user_turn: str
+    data_turn: str  # the explain and history, without the closing line
 
     @property
     def split(self) -> str:
         return "test" if self.day1 >= TEST_FROM else "dev"
 
+    def user_turn(self) -> str:
+        """The user turn the daily run would send today for this day's data."""
+        key = answer_key(self.data_turn)
+        return self.data_turn + closing_line(
+            key.status == ALERT, key.status == CLEAN, key.top_position
+        )
+
+
+def data_turn(stored: str) -> str:
+    """A stored user turn without its closing line: everything up to the blank
+    line after the recent history."""
+    history = stored.find("RECENT HISTORY")
+    end = stored.find("\n\n", history)
+    return stored if history < 0 or end < 0 else stored[: end + 1]
+
 
 def load_items(cfg: BaseConfig) -> list[BenchItem]:
-    """One item per day with a stored investigation: the user turn it was given."""
+    """One item per day with a stored investigation: the data it was given."""
     root = Path(cfg.paths.curated) / "ai_investigations"
     if not root.exists():
         return []
@@ -210,7 +236,9 @@ def load_items(cfg: BaseConfig) -> list[BenchItem]:
         start = prompt.find(USER_TURN_MARKER)
         if start < 0:
             continue
-        items.append(BenchItem(_as_date(r["day0"]), _as_date(r["asof_date"]), prompt[start:]))
+        items.append(
+            BenchItem(_as_date(r["day0"]), _as_date(r["asof_date"]), data_turn(prompt[start:]))
+        )
     return items
 
 
@@ -275,11 +303,11 @@ def run_item(
     item: BenchItem, model: str, sample: int, execute: ToolExecutor
 ) -> tuple[AIInvestigationResult, AnswerKey, float]:
     """One answer: the daily run's loop and fact-check, this model, seed `sample`."""
-    key = answer_key(item.user_turn)
+    key = answer_key(item.data_turn)
     chat = _chat_for(model, seed=sample)
     messages = [
         {"role": "system", "content": system_prompt()},
-        {"role": "user", "content": item.user_turn},
+        {"role": "user", "content": item.user_turn()},
     ]
     start = time.perf_counter()
     raw, trace, messages = tool_loop(messages, execute, chat)
@@ -300,6 +328,7 @@ def _row(
     fc = investigation.factcheck
     return {
         "model_key": model_key(model),
+        "prompt_version": PROMPT_VERSION,
         "asof_date": item.day1,
         "model": model,
         "day0": item.day0,
@@ -364,34 +393,45 @@ def run_benchmark(
                 row = _row(item, model, sample, investigation, key, seconds)
                 day_rows.append(row)
                 log(
-                    f"{model} {item.day1} #{sample}: {row['factcheck_status']}, "
+                    f"{model} {item.day1} #{sample}: {row['factcheck_status'] or 'no answer'}, "
                     f"{len(investigation.trace)} tool calls, {seconds:.0f}s"
                 )
             table = validate(
                 pd.DataFrame(day_rows), AGENT_BENCH_SCHEMA, AGENT_BENCH_REQUIRED_NOT_NULL
             )
-            store.write_partitioned(table, curated / "agent_bench", ["model_key", "asof_date"])
+            store.write_partitioned(table, curated / "agent_bench", PARTITION_COLS)
             rows += day_rows
     return pd.DataFrame(rows)
 
 
 SCORES = ("grounded", "status_ok", "top_named", "noise_ok", "complete", "called_tool")
+PARTITION_COLS = ["model_key", "prompt_version", "asof_date"]
+
+
+def _rate(scores: pd.Series) -> str:
+    applies = scores.dropna()
+    return f"{applies.astype(bool).mean():.0%} of {len(applies)}" if len(applies) else "-"
 
 
 def summarize(df: pd.DataFrame) -> pd.DataFrame:
-    """Per model and split: answers, how many came back, and each score's pass
-    rate over the answers it applies to (with that count)."""
+    """Per model, prompt version and split: answers, how many came back, and each
+    score's pass rate over the answers it applies to (with that count). The
+    status score is shown as alert days flagged and clean days left clean."""
     out = []
-    for (model, split), g in df.groupby(["model", "split"]):
+    for (model, version, split), g in df.groupby(["model", "prompt_version", "split"]):
         row: dict[str, Any] = {
             "model": model,
+            "prompt": version,
             "split": split,
             "answers": len(g),
             "available": int(g["ai_available"].sum()),
         }
         for s in SCORES:
-            applies = g[s].dropna()
-            row[s] = f"{applies.astype(bool).mean():.0%} of {len(applies)}" if len(applies) else "-"
+            if s == "status_ok":
+                row["alert_flagged"] = _rate(g.loc[g["day_status"] == ALERT, s])
+                row["clean_left_clean"] = _rate(g.loc[g["day_status"] == CLEAN, s])
+            else:
+                row[s] = _rate(g[s])
         row["median_s"] = round(float(g["seconds"].median()))
         out.append(row)
     return pd.DataFrame(out)

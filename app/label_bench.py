@@ -74,11 +74,11 @@ def main() -> None:
     )
     answer = sample.iloc[picked]
 
-    user_turns = {i.day1: i.user_turn for i in load_items(cfg)}
+    data_turns = {i.day1: i.data_turn for i in load_items(cfg)}
     left, right = st.columns(2)
     with left:
-        st.subheader("What the model was given")
-        st.code(user_turns.get(answer["asof_date"], "(day's prompt not found)"), language=None)
+        st.subheader("The day's data, as the model was given it")
+        st.code(data_turns.get(answer["asof_date"], "(day's data not found)"), language=None)
         for call in json.loads(answer["trace"] or "[]"):
             with st.expander(f"Tool call, round {call['round']}: {call['tool']}", expanded=True):
                 st.write("Arguments:")

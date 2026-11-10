@@ -667,6 +667,7 @@ AI_INVESTIGATION_TRACE_REQUIRED_NOT_NULL = ["asof_date", "day0", "round", "tool_
 AGENT_BENCH_SCHEMA = pa.schema(
     [
         ("model_key", pa.string()),  # partition-safe model name
+        ("prompt_version", pa.string()),  # investigate.PROMPT_VERSION it ran under
         ("asof_date", pa.date32()),
         ("model", pa.string()),
         ("day0", pa.date32()),
@@ -698,7 +699,14 @@ AGENT_BENCH_SCHEMA = pa.schema(
         ("raw_response", pa.string()),
     ]
 )
-AGENT_BENCH_REQUIRED_NOT_NULL = ["model_key", "asof_date", "model", "sample", "split"]
+AGENT_BENCH_REQUIRED_NOT_NULL = [
+    "model_key",
+    "prompt_version",
+    "asof_date",
+    "model",
+    "sample",
+    "split",
+]
 
 # A hand label for one benchmark answer (agent/labels.py): each number right or
 # wrong, with whether the fact-check flagged it, and the reasoning grade.
