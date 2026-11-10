@@ -61,9 +61,31 @@ def test_label_sample_is_fixed_and_shares_models_evenly():
     assert picked.equals(label_sample(results, n=10))
     assert sorted(picked["model"].value_counts().tolist()) == [3, 3, 4]
     assert picked["ai_available"].all()
+    # Only the labelled prompt version is sampled.
+    later = results.assign(prompt_version="v2")
+    assert label_sample(pd.concat([results.assign(prompt_version="v1"), later]), n=10).equals(
+        label_sample(results.assign(prompt_version="v1"), n=10)
+    )
     # Spread over days: no day repeats within a model before every day is used.
     for _, g in picked.groupby("model"):
         assert g["asof_date"].is_unique
+
+
+def test_adding_a_model_keeps_what_was_already_in_the_sample():
+    rows = [
+        {"model": m, "asof_date": DAY - dt.timedelta(days=d), "sample": s, "ai_available": True}
+        for m in ("a", "b", "c", "d")
+        for d in range(10)
+        for s in range(2)
+    ]
+    results = pd.DataFrame(rows)
+    before = label_sample(results[results["model"] != "c"], n=12)
+    after = label_sample(results, n=12)
+
+    def keys(df):
+        return set(zip(df["model"], df["asof_date"], df["sample"], strict=True))
+
+    assert keys(after[after["model"] != "c"]) <= keys(before)
 
 
 def _cfg(tmp_path) -> BaseConfig:

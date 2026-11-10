@@ -1646,6 +1646,31 @@ the actual real worst-residual position from the day's own `by_position_residual
 generic instruction. Verified this fix alone (nothing else changed) flips the behavior, both in
 isolation and in the real CLI path.
 
+**The same failure on clean days, found by the agent benchmark (2026-11-10).** The benchmark
+(`agent/benchmark.py`) reruns the agent on every stored real day and scores each answer against
+what that day's data says. It showed qwen2.5:7b flagging a position on every clean day, 0 of 18,
+although the system prompt says to leave the flags empty when nothing is unusual (for example
+2026-09-02: P008 at +2.6 +- 4.1bp, "no residual breaches", flagged as "large and unusual"). A
+model that always flags also scored 100% on alert days, so the status score is now reported
+separately for the two. Fix, the same as for the tool call: a closing line on clean days
+(`investigate.closing_line`) saying the flags stay empty and the summary still states the total
+residual. Measured on the 23 earlier days, 2 answers each (prompt work allowed there), then on
+the 10 later days once:
+
+| qwen2.5:7b | Before, earlier days | After, earlier days | After, later days |
+|---|---|---|---|
+| Clean days left clean | 0% of 16 | 94% of 16 | 100% of 2 (was 0%) |
+| Noise mentioned when it matters | 56% of 18 | 100% of 18 | 75% of 8 (unchanged) |
+| States the day's key figures | 72% of 46 | 63% of 46 | 60% of 20 (was 55%) |
+| Alert days flagged / right position / tool called | 100 / 93 / 100% | unchanged | unchanged |
+
+The first wording dropped the key figures to 59% (summaries said "within the noise band" with no
+number); one added sentence brought it back inside the 10-point limit set before the run. Rerun
+noise is real: with the same prompt and seed, 20 of 30 answers on alert and inconclusive days came
+out different, and the key-figures score flipped on 6 of them, so differences of a few answers
+mean little. The later days have only one clean day, so the clean-day result rests mainly on the
+earlier days.
+
 **What this deliberately does not do** (guardrails, not aspirations):
 - Never auto-applies a proposed config/threshold change — always a written suggestion for a human.
 - Never recalibrates or touches any model parameter.

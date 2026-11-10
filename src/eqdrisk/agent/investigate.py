@@ -211,6 +211,32 @@ def system_prompt() -> str:
     )
 
 
+# The prompt the daily run sends; benchmark rows record which one they ran under.
+# v1 until 2026-11-10: no closing line on a clean day. v2 (benchmark only): the
+# clean-day line without its last sentence; summaries then left out the total.
+PROMPT_VERSION = "v3"
+
+_CLEAN_DAY_LINE = (
+    "\nNo position breached the residual threshold today, so this is a clean day: "
+    "flagged_positions and proposed_changes must be empty lists, and root_cause_hypothesis "
+    "must be 'no unusual residual today'. A residual inside its noise band is not unusual. "
+    "The summary must still state the book's total residual, in $ and bp of NAV, as given.\n"
+)
+
+
+def closing_line(alert: bool, clean: bool, worst_position: str | None) -> str:
+    """The user turn's last line, from the day's status. The model follows an
+    instruction here that it ignores at the end of the system prompt: the tool
+    call on an alert day (2026-09-15), empty flags on a clean day (2026-11-10,
+    planning/clean_day_flagging_plan.md). An inconclusive-only day gets none."""
+    if alert and worst_position:
+        return (
+            f"\nBefore answering, call what_if_reprice on {worst_position}, today's largest-"
+            "residual position, to verify your hypothesis with a real number.\n"
+        )
+    return _CLEAN_DAY_LINE if clean else ""
+
+
 def _build_messages(result: PnLExplainResult, history: str) -> list[dict[str, Any]]:
     user = f"""TODAY'S P&L EXPLAIN ({result.day0} -> {result.day1}, NAV={result.nav:,.2f}):
 {result.render()}
@@ -218,13 +244,10 @@ def _build_messages(result: PnLExplainResult, history: str) -> list[dict[str, An
 RECENT HISTORY (last {HISTORY_LOOKBACK_DAYS} real day-pairs):
 {history}
 """
-    if result.breaches and result.by_position_residual:
-        residuals = result.by_position_residual
-        worst_position = max(residuals, key=lambda p: abs(residuals[p]))
-        user += (
-            f"\nBefore answering, call what_if_reprice on {worst_position}, today's largest-"
-            "residual position, to verify your hypothesis with a real number.\n"
-        )
+    residuals = result.by_position_residual
+    worst = max(residuals, key=lambda p: abs(residuals[p])) if residuals else None
+    clean = not result.breaches and not result.inconclusive
+    user += closing_line(bool(result.breaches), clean, worst)
     return [{"role": "system", "content": system_prompt()}, {"role": "user", "content": user}]
 
 

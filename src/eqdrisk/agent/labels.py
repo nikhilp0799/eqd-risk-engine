@@ -32,6 +32,9 @@ from eqdrisk.io.schemas import (
 )
 
 LABEL_TARGET = 100
+# The labels are of the first full run (2026-11-09); later prompt versions are
+# scored by the computed scores only.
+LABEL_PROMPT_VERSION = "v1"
 REASONING_GRADES = ("good", "weak", "wrong")
 ANSWER_KEY_COLS = ["model_key", "asof_date", "sample"]
 
@@ -78,25 +81,29 @@ def numbers_in(row: pd.Series | dict[str, Any]) -> list[NumberInAnswer]:
 def label_sample(results: pd.DataFrame, n: int = LABEL_TARGET, seed: int = 0) -> pd.DataFrame:
     """`n` answers to label, the same every time: an equal share per model,
     spread over days (shuffled day order, one sample per day before repeats),
-    then shuffled together so the page does not show one model's run in a row."""
+    then shuffled together so the page does not show one model's run in a row.
+    Each model's order has its own seed, so adding a model later only shortens
+    the others' shares: what was already labelled stays in the sample. Only
+    answers under `LABEL_PROMPT_VERSION` are labelled."""
     answered = results[results["ai_available"].astype(bool)]
+    if "prompt_version" in answered:
+        answered = answered[answered["prompt_version"] == LABEL_PROMPT_VERSION]
     if answered.empty:
         return answered
-    rng = random.Random(seed)
     models = sorted(answered["model"].unique())
     per_model, extra = divmod(n, len(models))
     picked = []
     for i, model in enumerate(models):
         rows = answered[answered["model"] == model].sort_values(["asof_date", "sample"])
         days = sorted(rows["asof_date"].unique())
-        rng.shuffle(days)
+        random.Random(f"{seed}:{model}").shuffle(days)
         order = []
         for sample in sorted(rows["sample"].unique()):
             for day in days:
                 match = rows[(rows["asof_date"] == day) & (rows["sample"] == sample)]
                 order += list(match.index)
         picked += order[: per_model + (1 if i < extra else 0)]
-    rng.shuffle(picked)
+    random.Random(seed).shuffle(picked)
     return answered.loc[picked]
 
 
