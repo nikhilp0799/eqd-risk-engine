@@ -93,6 +93,17 @@ Monday-Friday, five minutes before the launchd job fires. **Note:** `pmset repea
 repeating schedule at a time — running this replaces any other repeating wake/sleep schedule already
 set on this machine. Check first with `pmset -g sched` if you're not sure whether one already exists.
 
+**With the lid closed on battery this is not enough (found 2026-11-10).** The wake fired at
+16:25:00 and macOS went back to sleep 6 seconds later; with the lid closed it only allows short
+maintenance wakes (2-20 seconds every 10-17 minutes, `pmset -g log`). The run started in one at
+16:42 and moved only in them: one SPX request "timed out after 622,623 ms" against a 30-second
+timeout, the ingest ended past SPX's 17:00 cutoff, and the day had no SPX. `caffeinate` cannot
+hold a closed laptop on battery either. Keep the lid open, or the Mac on power, from 16:25 to
+17:00 on trading days. The run log now says when this happens: `*** ASLEEP: the Mac slept 2h31m
+of the 2h43m since the run started ... ***`, from the gap between the wall clock and the monotonic
+clock, which stops during sleep (`src/eqdrisk/io/runclock.py`). A snapshot from GitHub's servers,
+which do not sleep, is being tested (`.github/workflows/cloud_snapshot.yml`, run by hand for now).
+
 ## Checking on it
 
 - `launchctl list | grep eqdrisk` — confirms the agent is loaded (exit status `0` in the listing

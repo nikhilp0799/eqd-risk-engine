@@ -27,3 +27,6 @@ logs/
 .DS_Store
 .vscode/
 .idea/
+
+# Local runs of scripts/cloud_snapshot.py (the workflow uploads its own as an artifact)
+cloud_snapshot/
