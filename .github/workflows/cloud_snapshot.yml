@@ -1,0 +1,37 @@
+# A test of the daily snapshot from GitHub's servers (planning/sleep_safe_snapshot_plan.md):
+# does Yahoo answer a cloud runner with usable option chains at the close? Run by hand
+# (Actions tab, "Cloud snapshot", Run workflow), ideally between 16:30 and 16:45 ET on a
+# trading day. No schedule until a manual run shows it works.
+name: Cloud snapshot
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: cloud-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # CPU torch: the default Linux wheel brings about 2.5 GB of CUDA, minutes of a window
+      # that closes at 17:00 for SPX. The snapshot does not use torch at all.
+      - name: Install
+        run: pip install --extra-index-url https://download.pytorch.org/whl/cpu -e .
+      - name: Snapshot
+        run: python scripts/cloud_snapshot.py --out cloud_snapshot
+      # Kept 3 days, long enough for the local run to fetch; nothing is committed.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cloud-snapshot-${{ github.run_id }}
+          path: cloud_snapshot/
+          retention-days: 3
+          if-no-files-found: warn

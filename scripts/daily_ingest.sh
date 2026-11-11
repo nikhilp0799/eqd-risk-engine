@@ -13,6 +13,18 @@ UNDERLYINGS=(SPX AAPL NVDA JPM XLE)
 mkdir -p "$LOG_DIR"
 cd "$PROJECT_DIR" || exit 1
 
+# Wall and monotonic clock at the start: their gap later is time the Mac slept
+# (src/eqdrisk/io/runclock.py). On 2026-11-10 a sleeping Mac lost the SPX day.
+RUN_CLOCK="$("$PROJECT_DIR/.venv/bin/python3" -c "from eqdrisk.io.runclock import mark; print(mark())")"
+sleep_report() {
+    "$PROJECT_DIR/.venv/bin/python3" -c "
+from eqdrisk.io.runclock import sleep_report
+line = sleep_report('$RUN_CLOCK')
+if line:
+    print('*** ASLEEP: ' + line + ' ***')
+"
+}
+
 {
     echo "=== Daily ingest run: $(date) ==="
 
@@ -45,6 +57,7 @@ sys.exit(0 if is_trading_day(datetime.date.today()) else 1)
     if echo "$CATCHUP_OUTPUT" | grep -q "STILL MISSING:"; then
         echo "*** CHAINS MISSING: the names above have no option chain today, and it cannot be fetched later ***"
     fi
+    sleep_report
 
     echo "--- curves ---"
     "$EQDRISK" curves --date "$TODAY" || echo "CURVES FAILED"
@@ -118,5 +131,6 @@ print(day0.isoformat() if day0 else '')
     echo "--- var ---"
     "$EQDRISK" var --date "$TODAY" || echo "VAR FAILED"
 
+    sleep_report
     echo "=== Done: $(date) ==="
 } >> "$LOG_FILE" 2>&1
