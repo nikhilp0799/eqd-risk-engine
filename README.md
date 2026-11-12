@@ -1256,9 +1256,14 @@ mean absolute residual 8.6bp of NAV (median day 6.8bp, worst 25bp). Since the SP
 net book figure moved little (9.2 to 9.7bp on the same 26 pairs) while the sum of each position's
 absolute residual fell from 16.2 to 13.9bp (7.1 to 4.8bp without the autocallable). The spot step uses
 sticky-moneyness Greeks, matching how the explain moves the market; a revaluation ladder was
-measured as the alternative and rejected. Vega by maturity bucket plus a skew sensitivity was also
-measured and rejected (no gain); the large vol-step days turned out to be weekly expiries moving
-the local-vol model, fixed by building the exotics' grid from expiries at least a month out. The
+measured as the alternative and rejected. Vega by maturity bucket plus a skew sensitivity was
+measured in October and rejected (no gain on the quiet days then); the large vol-step days turned
+out to be weekly expiries moving the local-vol model, fixed by building the exotics' grid from
+expiries at least a month out. Bucketed vega came back on 2026-11-12, as forward-vol time bands:
+with the autocallable's first observation days away, the plain average of its ATM vol moves let a
+4-day point cancel the long end (2026-11-11: explained +414 against -24,312) or swamp it (11-12,
+after a 13% NVDA gap down: -59,964 against -8,411). By band, the vol-step residual RMS fell from
+$18.4K to $6.5K over 35 pairs, about even on the 23 quiet ones (Section 4 of the model doc). The
 previous worst day (2026-10-09, 38bp) was a short AAPL call a week from expiry valued at 426% vol:
 AAPL weeklies are quoted only near the money, and the fitted SVI wing shot upward past the last
 quote. Fitted wings that put their kink outside the quotes or break Lee's moment bound now

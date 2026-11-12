@@ -122,3 +122,75 @@ def test_upcoming_events_lists_expiries_and_observations_within_a_week():
     )
     assert lifecycle.upcoming_events(v, asof) == ["V expires 2026-11-13"]
     assert lifecycle.upcoming_events(v, dt.date(2026, 11, 1)) == []
+
+
+def test_an_observation_says_what_it_decides_at_todays_level():
+    """P008 on 2026-11-11: NVDA 173.73 against a 225.16 fixing, observation on
+    Sunday 2026-11-15, so the fixing is the Monday close."""
+    p8 = _autocall(
+        id="P008",
+        underlying="NVDA",
+        notional=5_000_000.0,
+        coupon=0.0225,
+        expiry=dt.date(2028, 8, 15),
+        issue_date=dt.date(2026, 8, 15),
+        initial_level=225.160004,
+    )
+    (event,) = lifecycle.upcoming_events(p8, dt.date(2026, 11, 11), spot=173.729996)
+    assert event == (
+        "P008 autocall observation 2026-11-15: fixing on the 2026-11-16 close; NVDA 173.73 is "
+        "77.2% of the 225.16 initial fixing; coupon barrier 75% (a 2.8% fall reaches it): "
+        "112,500 coupon paid at or above it; autocall barrier 100% (a 29.6% rise reaches it): "
+        "redeems the 5,000,000 notional at or above it"
+    )
+    # Two coupons missed: the next one pays all three; below the barrier it needs a rise.
+    (owed,) = lifecycle.upcoming_events(p8, dt.date(2026, 11, 12), spot=166.19, memory=2)
+    assert "a 1.6% rise reaches it): 337,500 coupon paid at or above it, including 2" in owed
+    assert "put barrier" not in owed
+
+
+def test_the_final_observation_names_the_put_barrier():
+    final = lifecycle.observation_detail(_autocall(), dt.date(2027, 8, 14), 70.0, 0)
+    assert "put barrier 65% (a 7.1% fall reaches it): below it the notional is repaid" in final
+
+
+def test_event_lines_skip_what_has_settled(tmp_path):
+    from eqdrisk.config import BaseConfig, Paths, Universe
+    from eqdrisk.io import store
+    from eqdrisk.io.schemas import UNDERLYING_REQUIRED_NOT_NULL, UNDERLYING_SCHEMA, validate
+    from eqdrisk.portfolio.schema import Portfolio
+
+    cfg = BaseConfig(
+        run_date=dt.date(2026, 11, 13),
+        universe=Universe(index=[], single_names=["X"]),
+        paths=Paths(raw=str(tmp_path / "raw"), curated=str(tmp_path / "curated")),
+        calendar="NYSE",
+        daycount="ACT/365F",
+    )
+    days = [dt.date(2026, 11, 12), dt.date(2026, 11, 13)]
+    closes = pd.DataFrame(
+        {
+            "underlying": "X",
+            "open": 1.0,
+            "high": 1.0,
+            "low": 1.0,
+            "close": [1.1, 1.2],
+            "volume": 1,
+            "asof_date": days,
+        }
+    )
+    table = validate(closes, UNDERLYING_SCHEMA, UNDERLYING_REQUIRED_NOT_NULL)
+    store.write_partitioned(table, tmp_path / "curated" / "underlyings", ["asof_date"])
+    lifecycle._closes.cache_clear()
+
+    settles_today = VanillaPosition(
+        id="V", underlying="X", cp="C", strike=1.0, expiry=dt.date(2026, 11, 13), qty=1
+    )
+    next_week = VanillaPosition(
+        id="W", underlying="X", cp="C", strike=1.0, expiry=dt.date(2026, 11, 20), qty=1
+    )
+    pf = Portfolio(positions=[settles_today, next_week])
+    # 11-12: V is a day out; W's 11-20 is past the week.
+    assert lifecycle.event_lines(cfg, pf, dt.date(2026, 11, 12)) == ["V expires 2026-11-13"]
+    # 11-13: V settled at today's close, so it is gone; W is now inside the week.
+    assert lifecycle.event_lines(cfg, pf, dt.date(2026, 11, 13)) == ["W expires 2026-11-20"]

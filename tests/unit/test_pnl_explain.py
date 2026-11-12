@@ -1,3 +1,4 @@
+import dataclasses
 import datetime as dt
 import shutil
 
@@ -712,3 +713,50 @@ def test_spot_step_uses_sticky_moneyness_delta_when_available():
         0.5 * 2 + 0.5 * 0.02 * 4
     )
     assert _explained_for_step("spot", both, 1, *states) == pytest.approx(0.4 * 2 + 0.5 * 0.01 * 4)
+
+
+def test_band_vegas_see_the_long_end_move_an_equal_average_cancels(monkeypatch):
+    """2026-11-11 for P008: the observation 4 days out lost 2.3 vol points while
+    the rest rose, so the equal average of the ATM moves was about zero and the
+    explain said +414 against -24,312. Band by band, the forward vol over each
+    band rose, and the long bands carry the vega (planning/p008_vol_weighting_plan.md)."""
+    import eqdrisk.pricing.pnl_explain as pe
+    from eqdrisk.portfolio.mark import PositionMark
+
+    def fake_atm(surface, t):
+        if surface["tag"].iloc[0] == "prev":
+            return 0.50
+        return 0.50 - 0.023 if t < 0.05 else 0.50 + 0.0033
+
+    monkeypatch.setattr(pe, "_atm_iv", fake_atm)
+    obs = [0.014, 0.26, 0.51, 0.76, 1.01, 1.26, 1.51, 1.76]
+    m = PositionMark(
+        position_id="P008",
+        type="autocall",
+        underlying="NVDA",
+        expiry=DAY1,
+        T=1.76,
+        price=1.0,
+        vega=-1_900_000.0,
+        volga=0.0,
+        vol_times=obs,
+        bucket_vega=[-100_000.0, -800_000.0, -1_000_000.0, 0.0],
+    )
+    prev, cur = _surface_tagged("prev", 2.2), _surface_tagged("cur", 2.2)
+
+    assert pe._vol_move(m, prev, cur) == pytest.approx(0.0, abs=2e-4)
+    assert pe._band_vol_moves(m, prev, cur) == pytest.approx([0.0033] * 4)
+    assert pe._banded_vol_explained(m, prev, cur) == pytest.approx(-1_900_000.0 * 0.0033)
+
+    # Without band vegas the vol step is the equal average, as before.
+    plain = dataclasses.replace(m, bucket_vega=None)
+    assert pe._banded_vol_explained(plain, prev, cur) is None
+
+
+def test_explain_prices_band_vegas_only_for_the_vol_step_state():
+    import eqdrisk.pricing.pnl_explain as pe
+
+    assert pe.EXPLAIN_VOL_STATE_SETTINGS.vega_bands == (0.25, 1.0, 2.0)
+    # The same paths and seeds as the daily mark, so common random numbers hold.
+    daily = pe.MCSettings()
+    assert dataclasses.replace(pe.EXPLAIN_VOL_STATE_SETTINGS, vega_bands=()) == daily

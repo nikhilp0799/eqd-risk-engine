@@ -30,9 +30,11 @@ import pandas as pd
 
 from eqdrisk.config import BaseConfig
 from eqdrisk.io import store
+from eqdrisk.marketdata.calendar import trading_days
 from eqdrisk.portfolio.schema import (
     AutocallPosition,
     BarrierPosition,
+    Portfolio,
     Position,
     VanillaPosition,
 )
@@ -196,8 +198,16 @@ def position_status(cfg: BaseConfig, asof: dt.date, p: Position) -> PositionStat
     return _autocall(p, asof, closes)
 
 
-def upcoming_events(p: Position, asof: dt.date, days: int = NEAR_EVENT_DAYS) -> list[str]:
-    """Expiry or autocall observation within `days` calendar days of `asof`."""
+def upcoming_events(
+    p: Position,
+    asof: dt.date,
+    days: int = NEAR_EVENT_DAYS,
+    spot: float | None = None,
+    memory: int = 0,
+    calendar: str = "NYSE",
+) -> list[str]:
+    """Expiry or autocall observation within `days` calendar days of `asof`; with
+    `spot`, an observation says what it decides at that level."""
     horizon = asof + dt.timedelta(days=days)
     events = []
     expiry = getattr(p, "expiry", None)
@@ -206,5 +216,63 @@ def upcoming_events(p: Position, asof: dt.date, days: int = NEAR_EVENT_DAYS) -> 
     if isinstance(p, AutocallPosition):
         for obs in quarterly_observation_dates(p.expiry, p.issue_date):
             if asof < obs <= horizon and obs != p.expiry:
-                events.append(f"{p.id} autocall observation {obs}")
+                event = f"{p.id} autocall observation {obs}"
+                if spot is not None and p.initial_level:
+                    event += ": " + observation_detail(p, obs, spot, memory, calendar)
+                events.append(event)
     return events
+
+
+def observation_detail(
+    p: AutocallPosition, obs: dt.date, spot: float, memory: int, calendar: str = "NYSE"
+) -> str:
+    """What an upcoming observation decides, at today's level. Added after
+    2026-11-11: the log said only "UPCOMING: P008 autocall observation
+    2026-11-15", while NVDA sat 2.9% above the coupon barrier with a $112,500
+    coupon decided by the Monday fixing (planning/p008_vol_weighting_plan.md).
+    The put barrier matters only at maturity, so it is named only there."""
+    s0 = float(p.initial_level or spot)
+    fixing = trading_days(obs, obs + dt.timedelta(days=10), calendar)[0]
+    level = spot / s0
+    coupon = p.notional * p.coupon * (1 + memory)
+    owed = f", including {memory} missed in memory" if memory else ""
+    parts = [
+        f"fixing on the {fixing} close; {p.underlying} {spot:,.2f} is {level:.1%} of the "
+        f"{s0:,.2f} initial fixing",
+        f"coupon barrier {p.coupon_barrier:.0%} ({_move_to(level, p.coupon_barrier)}): "
+        f"{coupon:,.0f} coupon paid at or above it{owed}",
+        f"autocall barrier {p.autocall_barrier:.0%} ({_move_to(level, p.autocall_barrier)}): "
+        f"redeems the {p.notional:,.0f} notional at or above it",
+    ]
+    if obs == p.expiry:
+        parts.append(
+            f"put barrier {p.put_barrier:.0%} ({_move_to(level, p.put_barrier)}): below it the "
+            "notional is repaid in proportion to the level"
+        )
+    return "; ".join(parts)
+
+
+def _move_to(level: float, barrier: float) -> str:
+    move = barrier / level - 1.0
+    if move == 0.0:
+        return "at it"
+    return f"a {abs(move):.1%} {'rise' if move > 0 else 'fall'} reaches it"
+
+
+def event_lines(cfg: BaseConfig, portfolio: Portfolio, asof: dt.date) -> list[str]:
+    """Every upcoming event in the book on `asof`, from the stored closes: the run
+    log's UPCOMING lines and the AI agent's UPCOMING EVENTS section."""
+    lines = []
+    for p in portfolio.positions:
+        if not is_active(p, asof):
+            continue
+        try:
+            status = position_status(cfg, asof, p)
+        except LifecycleError:
+            status = PositionStatus()
+        if status.status == SETTLED:
+            continue
+        closes = _closes(str(cfg.paths.curated), p.underlying, asof)
+        spot = float(closes.iloc[-1]) if len(closes) else None
+        lines += upcoming_events(p, asof, spot=spot, memory=status.memory, calendar=cfg.calendar)
+    return lines

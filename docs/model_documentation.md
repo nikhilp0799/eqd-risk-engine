@@ -358,9 +358,23 @@ call's: P004's summed absolute residual over 27 pairs fell from $37.6K to $2.0K.
 comparable pairs the residual is now 9.5bp; over all 28 stored pairs it is 8.6bp (median 6.8bp,
 worst 25bp), and the sum of each position's absolute residual is 10.4bp (1.9bp without P008).
 
-What remains: the explain's vol step is still one vega times the ATM move at the position's
-exposure dates. A parallel vol ladder, and vega by maturity bucket plus a skew sensitivity, were
-measured and did not help, so they were not built. The largest remaining day (2026-09-28, 25bp) is
+**The autocallable's vol step is explained by time band since 2026-11-12.** Until then it was one
+vega times the plain average of the ATM vol moves at the note's eight observation dates. When the
+first observation came within days (2026-11-15), its short-dated vol could cancel or swamp the
+long end, where the vega sits: on 2026-11-11 the 4-day point fell 2.3 vol points while the long
+end rose 0.4-0.7, the average was about zero, and the explain said +414 against an actual
+-24,312 (repriced: the long end alone -20,142, the short end -807); on 11-12, after a 13% gap down,
+the short end spiked and the explain said -59,964 against -8,411. P008's vega is now priced per
+band (0-0.25, 0.25-1, 1-2, 2+ years: the local-vol grid bumped on that band's rows only, same
+paths), and each band's vega is multiplied by the day's move in the ATM forward vol over that band.
+The bands sum to the total vega within 2% on every stored pair. On all 35 pairs the vol-step
+residual RMS fell from $18.4K to $6.5K (worst day $80.3K to $19.2K); on the quieter 23 pairs to
+2026-10-21 it is about even ($5.2K to $5.0K), and the whole gain is the November days. That is
+consistent with October, when implied-vol tent buckets were measured on 24 quiet pairs, before the
+1-month local-vol pillar cutoff, and did not help (25.8bp against 23.0bp), so they were not built
+then. A parallel vol ladder did not help either. Cost: one more state's worth of band repricing,
+P008's vol-step mark 5.9s to 8.4s. P007 keeps the single move (one maturity, residual about 0.1bp).
+The largest remaining day (2026-09-28, 25bp) is
 almost all P008; it was 9bp before the wing guard only because P004's mispricing offset it. Residuals carry a
 Monte Carlo standard error, so a day is flagged only when the gap exceeds the 5bp threshold by more
 than its noise.
@@ -600,7 +614,7 @@ partial rather than assumed.
 | P&L explain telescoping | Total actual P&L across all 4 steps matches true full-reval P&L to $10^{-9}$ relative |
 | P&L explain on equity/varswap positions | Exactly zero residual in every step (linear payoff for equity; marked to 0 by construction for varswap) — an exact, not approximate, design validation |
 | P&L explain, real multi-day | 4 real consecutive day-pairs (2026-08-31 through 2026-09-04): residuals of +$151.7k, -$252.4k, +$349.0k, -$170.7k — genuinely oscillating in sign, not a cherry-picked single "good" day |
-| Full test suite | 1,981 unit/property/integration tests passing (2026-11-11); ruff and mypy clean throughout |
+| Full test suite | 1,988 unit/property/integration tests passing (2026-11-12); ruff and mypy clean throughout |
 
 Several real defects were caught during development by writing a test for a claim rather than
 trusting the algebra or a single manual check — a pattern this document treats as evidence of
@@ -617,7 +631,7 @@ than loosened to hide the platform difference.
 
 | Risk | Materiality | Mitigant / current state |
 |---|---|---|
-| P&L-explain residual | **Medium** — 8.6bp of NAV mean absolute residual over 28 real day pairs (median 6.8bp, worst 25bp), still above the 5bp threshold on average; almost all of what remains is P008 | Eight input and model causes found and fixed (Section 4), plus the SPX long-end forwards and the SVI wing guard; bucketed vega and skew measured and rejected |
+| P&L-explain residual | **Medium** — 8.6bp of NAV mean absolute residual over 28 real day pairs (median 6.8bp, worst 25bp), still above the 5bp threshold on average; almost all of what remains is P008 | Eight input and model causes found and fixed (Section 4), plus the SPX long-end forwards, the SVI wing guard and (2026-11-12) the autocallable's vol step by time band (vol-step RMS $18.4K to $6.5K over 35 pairs); skew sensitivity measured and rejected |
 | Vol-shock stress approximation error | **Medium**, grows with shock size (~7-40% measured) | Documented and bounded; not eliminated; matters most for the largest stress-ladder shocks |
 | Parallel vol bump in 11.2 (and 11.1's naive variant) | **Low**: overstates long-dated vol moves (SPX 1y +23 pts naive vs ~2 conditional at -20%), and with it the variance swap's gains | 11.1 runs through the 8.3 mapping since 2026-11-03, naive kept for comparison; 11.2 is a defined what-if |
 | Residual monitoring alerts are logged, not paged | **Low** — daily alerts are visible in the log and dashboard but nobody is notified | Automated 5bp check with a noise band since 2026-09-10 / 2026-10; paging not built |

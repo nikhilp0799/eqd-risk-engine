@@ -53,8 +53,10 @@ from eqdrisk.agent.investigate import (
     ToolExecutor,
     check_and_retry,
     closing_line,
+    events_section,
     system_prompt,
     tool_loop,
+    upcoming_events,
 )
 from eqdrisk.config import BaseConfig
 from eqdrisk.io import store
@@ -201,6 +203,8 @@ class BenchItem:
     day0: dt.date
     day1: dt.date
     data_turn: str  # the explain and history, without the closing line
+    # The book's upcoming events on day1, rebuilt from the stored closes.
+    events: list[str] = field(default_factory=list)
 
     @property
     def split(self) -> str:
@@ -209,8 +213,10 @@ class BenchItem:
     def user_turn(self) -> str:
         """The user turn the daily run would send today for this day's data."""
         key = answer_key(self.data_turn)
-        return self.data_turn + closing_line(
-            key.status == ALERT, key.status == CLEAN, key.top_position
+        return (
+            self.data_turn
+            + events_section(self.events)
+            + closing_line(key.status == ALERT, key.status == CLEAN, key.top_position)
         )
 
 
@@ -222,8 +228,9 @@ def data_turn(stored: str) -> str:
     return stored if history < 0 or end < 0 else stored[: end + 1]
 
 
-def load_items(cfg: BaseConfig) -> list[BenchItem]:
-    """One item per day with a stored investigation: the data it was given."""
+def load_items(cfg: BaseConfig, portfolio_path: str = "configs/portfolio.yaml") -> list[BenchItem]:
+    """One item per day with a stored investigation: the data it was given, and
+    the day's upcoming events as the daily run would add them now."""
     root = Path(cfg.paths.curated) / "ai_investigations"
     if not root.exists():
         return []
@@ -236,8 +243,14 @@ def load_items(cfg: BaseConfig) -> list[BenchItem]:
         start = prompt.find(USER_TURN_MARKER)
         if start < 0:
             continue
+        day1 = _as_date(r["asof_date"])
         items.append(
-            BenchItem(_as_date(r["day0"]), _as_date(r["asof_date"]), data_turn(prompt[start:]))
+            BenchItem(
+                _as_date(r["day0"]),
+                day1,
+                data_turn(prompt[start:]),
+                upcoming_events(cfg, portfolio_path, day1),
+            )
         )
     return items
 
@@ -379,7 +392,7 @@ def run_benchmark(
     curated = Path(cfg.paths.curated)
     items = [
         i
-        for i in load_items(cfg)
+        for i in load_items(cfg, portfolio_path)
         if (days is None or i.day1 in days) and (split is None or i.split == split)
     ]
     cache = ToolCache(curated / "agent_bench" / "tool_cache.json")

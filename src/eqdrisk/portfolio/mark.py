@@ -144,6 +144,15 @@ class MCSettings:
     # False prices MC exotics without their bumped Greeks (left at zero): VaR's
     # hundreds of scenario revaluations need prices only, at ~1/10 the cost.
     greeks: bool = True
+    # Autocallable vega per time band (VEGA_BAND_EDGES), two more reprices a
+    # band; off by default, on for the P&L explain's vol-step state only.
+    vega_bands: tuple[float, ...] = ()
+
+
+# Time bands (years) of the autocallable's bucketed vega: [0, 0.25), [0.25, 1),
+# [1, 2), [2, inf). P008's equal-weighted vol move let a 4-day observation cancel
+# the long end's move (2026-11-11, planning/p008_vol_weighting_plan.md).
+VEGA_BAND_EDGES: tuple[float, ...] = (0.25, 1.0, 2.0)
 
 
 # Variance swap base slice (MarketState.w_slice): exact points, and their span
@@ -250,6 +259,10 @@ class PositionMark:
     vol_times: list[float] | None = None
     # Variance swaps: today's fair strike (vol points), which VaR revalues against.
     fair_strike: float | None = None
+    # Autocallable vega per VEGA_BAND_EDGES band, when `MCSettings.vega_bands`
+    # asked for it, and per RQMC sub-run; never persisted.
+    bucket_vega: list[float] | None = None
+    bucket_vega_batches: list[list[float]] | None = None
 
     @property
     def expiry_bucket(self) -> str:
@@ -658,13 +671,7 @@ def mark_portfolio(cfg: BaseConfig, asof: dt.date, portfolio_path: str) -> Portf
         return result
 
     result = mark_with_state(cfg, asof, portfolio, state)
-    settled = {m.position_id for m in result.marks if m.status == lifecycle.SETTLED}
-    result.upcoming = [
-        event
-        for p in portfolio.positions
-        if lifecycle.is_active(p, asof) and p.id not in settled
-        for event in lifecycle.upcoming_events(p, asof)
-    ]
+    result.upcoming = lifecycle.event_lines(cfg, portfolio, asof)
     if result.marks:
         _persist(result, Path(cfg.paths.curated))
     return result
@@ -891,6 +898,8 @@ def _mark_autocall(
         spec, obs_times=_quarterly_obs_times(next_day, p.expiry, cfg.daycount)
     )
 
+    band_batches: list[list[float]] = []
+
     def greeks_fn(n_paths: int, seed: int) -> SimpleNamespace:
         if not mc_settings.greeks:
             return SimpleNamespace(
@@ -909,7 +918,10 @@ def _mark_autocall(
             seed,
             spot_bump_frac=mc_settings.exotic_spot_bump_frac,
             vol_bump=mc_settings.exotic_vol_bump,
+            vega_band_edges=mc_settings.vega_bands,
         )
+        if g.bucket_vega:
+            band_batches.append(list(g.bucket_vega))
         theta = 0.0
         if mc_settings.exotic_theta and len(spec_next.obs_times):
             price_next = price_autocallable(
@@ -944,6 +956,8 @@ def _mark_autocall(
         stderr=stderr,
         batches=batches,
         vol_times=[float(t) for t in obs_times],
+        bucket_vega=[float(v) for v in np.mean(band_batches, axis=0)] if band_batches else None,
+        bucket_vega_batches=band_batches or None,
     )
 
 
