@@ -28,6 +28,7 @@ Greeks pure noise, per the README's own warning.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 
 import numpy as np
@@ -170,6 +171,9 @@ class AutocallableGreeks:
     # P&L explain's own market states follow (planning/revaluation_ladder_plan.md).
     delta_sm: float = 0.0
     gamma_sm: float = 0.0
+    # Vega per time band (`vega_band_edges`): the local-vol grid bumped on that
+    # band's rows only. Empty when no bands were asked for.
+    bucket_vega: tuple[float, ...] = ()
 
 
 def autocallable_greeks(
@@ -183,6 +187,7 @@ def autocallable_greeks(
     seed: int,
     spot_bump_frac: float = 0.01,
     vol_bump: float = 0.01,
+    vega_band_edges: tuple[float, ...] = (),
 ) -> AutocallableGreeks:
     """Bump-and-reval, all under the SAME seed (common random numbers) — the
     only way path-dependent bump-and-reval Greeks aren't pure noise.
@@ -194,7 +199,13 @@ def autocallable_greeks(
     computed as a central difference too. Vanna needs the four cross-bumped
     (spot, vol) corners on top of the five single-variable prices already
     computed for delta/gamma/vega — nine full reprices in total, all under the
-    same seed so the mixed finite difference isn't noise."""
+    same seed so the mixed finite difference isn't noise.
+
+    `vega_band_edges` (years, e.g. (0.25, 1.0, 2.0)) adds a vega per band
+    [0, 0.25), [0.25, 1), ...: the same central difference with only that
+    band's grid rows bumped, two reprices a band, none for a band with no rows.
+    The bumps add up to the parallel one, so the bands sum to `vega` up to
+    interpolation (planning/p008_vol_weighting_plan.md)."""
     h = s0 * spot_bump_frac
 
     def _price(s0_: float, grid_: LocalVolGrid) -> float:
@@ -231,6 +242,18 @@ def autocallable_greeks(
     delta_sm = (price_up_sm - price_dn_sm) / (2 * h)
     gamma_sm = (price_up_sm - 2 * price0 + price_dn_sm) / h**2
 
+    bucket_vega = []
+    edges = (0.0, *vega_band_edges, np.inf) if vega_band_edges else ()
+    for lo, hi in zip(edges[:-1], edges[1:], strict=True):
+        rows = (grid.t_grid >= lo) & (grid.t_grid < hi)
+        if not rows.any():
+            bucket_vega.append(0.0)
+            continue
+        band = np.where(rows[:, None], vol_bump, 0.0)
+        band_up = dataclasses.replace(grid, sigma_loc=grid.sigma_loc + band)
+        band_dn = dataclasses.replace(grid, sigma_loc=grid.sigma_loc - band)
+        bucket_vega.append((_price(s0, band_up) - _price(s0, band_dn)) / (2 * vol_bump))
+
     return AutocallableGreeks(
         price=price0,
         delta=delta,
@@ -240,4 +263,5 @@ def autocallable_greeks(
         volga=volga,
         delta_sm=delta_sm,
         gamma_sm=gamma_sm,
+        bucket_vega=tuple(bucket_vega),
     )

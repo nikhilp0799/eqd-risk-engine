@@ -201,3 +201,30 @@ def test_sticky_moneyness_greeks_equal_sticky_strike_under_flat_vol():
     g = autocallable_greeks(spec, 100.0, _flat_vol_grid(0.3), 0.03, 0.0, 4096, 4, seed=11)
     assert g.delta_sm == pytest.approx(g.delta, rel=1e-12)
     assert g.gamma_sm == pytest.approx(g.gamma, rel=1e-12)
+
+
+def test_band_vegas_add_up_to_the_parallel_vega():
+    """The band bumps add up to the parallel bump, and with common random numbers
+    the band vegas sum to the total vega; a band with no grid rows costs nothing
+    and is zero."""
+    spec = _spec(obs_times=np.array([0.02, 0.27, 0.52, 0.77, 1.02, 1.27, 1.52, 1.77]))
+    grid = _flat_vol_grid(0.45)
+    g = autocallable_greeks(
+        spec,
+        77.0,
+        grid,
+        0.03,
+        0.0,
+        4096,
+        4,
+        seed=5,
+        vol_bump=0.03,
+        vega_band_edges=(0.25, 1.0, 2.0),
+    )
+    assert len(g.bucket_vega) == 4
+    assert g.bucket_vega[3] == 0.0  # the grid ends before 2 years
+    assert sum(g.bucket_vega) == pytest.approx(g.vega, rel=0.05)
+    # Not "the near band carries little": vol in the first quarter moves every later
+    # observation too, so each band with grid rows has vega of its own.
+    assert all(v != 0.0 for v in g.bucket_vega[:3])
+    assert autocallable_greeks(spec, 77.0, grid, 0.03, 0.0, 4096, 4, seed=5).bucket_vega == ()

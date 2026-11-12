@@ -143,6 +143,21 @@ def test_build_messages_ends_a_clean_day_with_empty_flags():
     assert "flagged_positions and proposed_changes must be empty" in user
 
 
+def test_upcoming_events_sit_between_the_history_and_the_closing_line():
+    """Prompt v4: the book's events after the history, before the closing line,
+    and nothing at all on a day without any (those prompts stay as they were)."""
+    from eqdrisk.agent.benchmark import data_turn
+
+    event = "P008 autocall observation 2026-11-15: fixing on the 2026-11-16 close"
+    result = _pnl_result()
+    plain = _build_messages(result, "no history")[1]["content"]
+    with_event = _build_messages(result, "no history", [event])[1]["content"]
+    assert "UPCOMING EVENTS" not in plain
+    assert with_event.index("RECENT HISTORY") < with_event.index(event)
+    assert with_event.index(event) < with_event.index("clean day")
+    assert data_turn(with_event) == data_turn(plain)  # the benchmark cuts it, then rebuilds it
+
+
 def test_build_messages_has_no_closing_line_on_an_inconclusive_only_day():
     result = _pnl_result()
     result.inconclusive = ["P1 residual band too wide to tell"]

@@ -64,7 +64,9 @@ from eqdrisk.io.schemas import (
 from eqdrisk.marketdata.calendar import last_n_trading_days
 from eqdrisk.portfolio import lifecycle
 from eqdrisk.portfolio.mark import (
+    VEGA_BAND_EDGES,
     MarketState,
+    MCSettings,
     PortfolioMarkResult,
     PositionMark,
     build_grids_for_state,
@@ -75,6 +77,10 @@ from eqdrisk.portfolio.schema import Portfolio
 from eqdrisk.vol.local_vol import local_variance_at
 
 STEP_NAMES: tuple[str, ...] = ("time", "rates_divs", "spot", "vol")
+
+# The daily mark's own settings (same paths and seeds, so common random numbers
+# hold across the five states) plus band vegas for the autocallable.
+EXPLAIN_VOL_STATE_SETTINGS = MCSettings(vega_bands=VEGA_BAND_EDGES)
 
 # README 12.3's own suggested number ("e.g. 5bp of NAV") — applied to both the
 # total residual and, per position, the same convention (no evidence anywhere in
@@ -112,6 +118,60 @@ def _vol_move(
             return None
         moves.append(a_cur - a_prev)
     return float(np.mean(moves)) if moves else None
+
+
+def _forward_atm_iv(surface: pd.DataFrame, t_lo: float, t_hi: float) -> float | None:
+    """ATM forward vol over [t_lo, t_hi) from ATM total variance; the implied vol
+    at `t_hi` when the forward variance is not positive (calendar arbitrage)."""
+    a_hi = _atm_iv(surface, t_hi)
+    if a_hi is None:
+        return None
+    if t_lo <= 0.0:
+        return a_hi
+    a_lo = _atm_iv(surface, t_lo)
+    if a_lo is None:
+        return None
+    fwd_var = (a_hi**2 * t_hi - a_lo**2 * t_lo) / (t_hi - t_lo)
+    return float(fwd_var**0.5) if fwd_var > 0.0 else a_hi
+
+
+def _band_vol_moves(
+    m: PositionMark, surface_prev: pd.DataFrame, surface_cur: pd.DataFrame
+) -> list[float] | None:
+    """The day's ATM forward vol move over each VEGA_BAND_EDGES band, where both
+    surfaces have data and the position is alive; a band entirely past that takes
+    the ATM move at its end, as `_vol_move` does (its vega is then near zero)."""
+    t_end = min(m.T, float(surface_prev["T"].max()), float(surface_cur["T"].max()))
+    edges = (0.0, *VEGA_BAND_EDGES, np.inf)
+    moves = []
+    for lo, hi in zip(edges[:-1], edges[1:], strict=True):
+        t_hi = min(hi, t_end)
+        t_lo = min(lo, t_hi)
+        if t_hi - t_lo < 1e-6:
+            a_prev, a_cur = _atm_iv(surface_prev, t_end), _atm_iv(surface_cur, t_end)
+        else:
+            a_prev = _forward_atm_iv(surface_prev, t_lo, t_hi)
+            a_cur = _forward_atm_iv(surface_cur, t_lo, t_hi)
+        if a_prev is None or a_cur is None:
+            return None
+        moves.append(a_cur - a_prev)
+    return moves
+
+
+def _banded_vol_explained(
+    m: PositionMark, surface_prev: pd.DataFrame, surface_cur: pd.DataFrame
+) -> float | None:
+    """Each band's vega times its band's move, plus volga at the vega-weighted
+    move (planning/p008_vol_weighting_plan.md). None without band vegas."""
+    if not m.bucket_vega:
+        return None
+    moves = _band_vol_moves(m, surface_prev, surface_cur)
+    if moves is None:
+        return None
+    first = sum(v * d for v, d in zip(m.bucket_vega, moves, strict=True))
+    total = sum(m.bucket_vega)
+    d_mean = first / total if total else float(np.mean(moves))
+    return first + 0.5 * m.volga * d_mean**2
 
 
 # Change in the surface's longest calibrated maturity (years) treated as a
@@ -181,6 +241,9 @@ def _explained_for_step(
         u = m_prev.underlying
         if u not in state_prev.surface or u not in state_cur.surface:
             return 0.0
+        banded = _banded_vol_explained(m_prev, state_prev.surface[u], state_cur.surface[u])
+        if banded is not None:
+            return banded
         d_sigma = _vol_move(m_prev, state_prev.surface[u], state_cur.surface[u])
         if d_sigma is None:
             return 0.0
@@ -353,7 +416,7 @@ def _batch_residuals(
     if not m_prev.batches or not m_cur.batches:
         return None
     out = []
-    for b_prev, b_cur in zip(m_prev.batches, m_cur.batches, strict=True):
+    for i, (b_prev, b_cur) in enumerate(zip(m_prev.batches, m_cur.batches, strict=True)):
         sub_prev = dataclasses.replace(
             m_prev,
             price=b_prev["price"],
@@ -365,6 +428,8 @@ def _batch_residuals(
             vanna=b_prev["vanna"],
             volga=b_prev["volga"],
             batches=None,
+            bucket_vega=m_prev.bucket_vega_batches[i] if m_prev.bucket_vega_batches else None,
+            bucket_vega_batches=None,
         )
         explained = _explained_for_step(step, sub_prev, days_elapsed, state_prev, state_cur)
         out.append((b_cur["price"] - b_prev["price"]) - explained)
@@ -420,7 +485,12 @@ def run_pnl_explain(
 
     asofs = [day0, day1, day1, day1, day1]
     states = [state_0, state_1, state_2, state_3, state_4]
-    marks = [_marks_by_id(mark_with_state(cfg, asofs[i], portfolio, states[i])) for i in range(5)]
+    # The vol step's Greeks are state 3's; only there are band vegas priced.
+    settings = [None, None, None, EXPLAIN_VOL_STATE_SETTINGS, None]
+    marks = [
+        _marks_by_id(mark_with_state(cfg, asofs[i], portfolio, states[i], mc_settings=settings[i]))
+        for i in range(5)
+    ]
 
     # Every step must cover the SAME positions, or the step totals (and the
     # NAV-relative residual) mix different books. A position that fails to

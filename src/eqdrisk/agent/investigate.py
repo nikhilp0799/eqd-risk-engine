@@ -67,6 +67,8 @@ from eqdrisk.io.schemas import (
     AI_PROPOSED_CHANGE_SCHEMA,
     validate,
 )
+from eqdrisk.portfolio import lifecycle
+from eqdrisk.portfolio.schema import Portfolio
 from eqdrisk.pricing.pnl_explain import PnLExplainResult
 
 HISTORY_LOOKBACK_DAYS = 5
@@ -214,7 +216,8 @@ def system_prompt() -> str:
 # The prompt the daily run sends; benchmark rows record which one they ran under.
 # v1 until 2026-11-10: no closing line on a clean day. v2 (benchmark only): the
 # clean-day line without its last sentence; summaries then left out the total.
-PROMPT_VERSION = "v3"
+# v4 from 2026-11-12: an UPCOMING EVENTS section (events_section).
+PROMPT_VERSION = "v4"
 
 _CLEAN_DAY_LINE = (
     "\nNo position breached the residual threshold today, so this is a clean day: "
@@ -237,7 +240,22 @@ def closing_line(alert: bool, clean: bool, worst_position: str | None) -> str:
     return _CLEAN_DAY_LINE if clean else ""
 
 
-def _build_messages(result: PnLExplainResult, history: str) -> list[dict[str, Any]]:
+def events_section(events: list[str]) -> str:
+    """The book's upcoming events (`lifecycle.event_lines`), after the history.
+    On 2026-11-11 the agent explained a P008 residual four days before the
+    note's first observation, with NVDA 2.9% above its coupon barrier, and was
+    told none of it. Nothing when there are no events, so other days' prompts
+    are unchanged. Starts with a blank line: `benchmark.data_turn` cuts there."""
+    if not events:
+        return ""
+    return "\nUPCOMING EVENTS (within a week, at the latest close):\n" + "".join(
+        f"  {e}\n" for e in events
+    )
+
+
+def _build_messages(
+    result: PnLExplainResult, history: str, events: list[str] | None = None
+) -> list[dict[str, Any]]:
     user = f"""TODAY'S P&L EXPLAIN ({result.day0} -> {result.day1}, NAV={result.nav:,.2f}):
 {result.render()}
 
@@ -247,7 +265,7 @@ RECENT HISTORY (last {HISTORY_LOOKBACK_DAYS} real day-pairs):
     residuals = result.by_position_residual
     worst = max(residuals, key=lambda p: abs(residuals[p])) if residuals else None
     clean = not result.breaches and not result.inconclusive
-    user += closing_line(bool(result.breaches), clean, worst)
+    user += events_section(events or []) + closing_line(bool(result.breaches), clean, worst)
     return [{"role": "system", "content": system_prompt()}, {"role": "user", "content": user}]
 
 
@@ -289,7 +307,16 @@ def _run_agentic_loop(
             name, arguments, cfg, portfolio_path, result.day1, project_root
         )
 
-    return tool_loop(_build_messages(result, history), execute, _default_chat)
+    events = upcoming_events(cfg, portfolio_path, result.day1)
+    return tool_loop(_build_messages(result, history, events), execute, _default_chat)
+
+
+def upcoming_events(cfg: BaseConfig, portfolio_path: str, day1: dt.date) -> list[str]:
+    """The book's upcoming events on `day1`, as the run log shows them; none
+    when the portfolio file is not there."""
+    if not Path(portfolio_path).exists():
+        return []
+    return lifecycle.event_lines(cfg, Portfolio.from_yaml(portfolio_path), day1)
 
 
 def tool_loop(

@@ -273,8 +273,15 @@ def test_a_stored_day_is_run_with_todays_closing_line(tmp_path):
         cfg, dt.date(2026, 9, 1), dt.date(2026, 9, 2), "SYSTEM\n\n" + v1_clean_turn
     )
 
-    clean, alert = load_items(cfg)
+    clean, alert = load_items(cfg, str(tmp_path / "no_portfolio.yaml"))
     assert alert.user_turn() == alert_turn
     assert alert.user_turn().count("Before answering") == 1
     assert clean.user_turn() == _user_turn(_explain())
     assert clean.user_turn().endswith(closing_line(alert=False, clean=True, worst_position=None))
+
+    # Events are rebuilt for each day from the stored closes, between data and closing line.
+    alert.events = ["P008 autocall observation 2026-11-15"]
+    assert (
+        alert.user_turn()
+        == _build_messages(_explain(breaches=["total"]), "  no history", alert.events)[1]["content"]
+    )
