@@ -413,7 +413,7 @@ still passed the filters at 17:00 (3,206 against 3,240 in the 16:30 snapshot) an
 | Option chains (history) | HistoricalData.net / OptionsDX archives | $0–$99 | **Buy 2017→present.** Covers Feb-2018, Mar-2020, Aug-2024 |
 | Option chains (live snap) | `yfinance`, ThetaData free tier | $0 | Current chain only — cannot backfill |
 | Underlying OHLC | `yfinance`, Stooq | $0 | Need ≥ 3y for VaR window |
-| Rates | FRED: `SOFR`, `DGS1MO`…`DGS10` | $0 | via `fredapi` |
+| Rates | Treasury daily par yield CSV; FRED: `SOFR`, `DGS1MO`…`DGS10` | $0 | Treasury the same evening, FRED (the same values) a day or two later; SOFR from FRED |
 | Dividends | `yfinance` + implied from parity | $0 | Use *both*, compare |
 | Vol indices | CBOE / FRED: `VIXCLS`, `VVIX`, `SKEW` | $0 | Independent calibration benchmark |
 | Corp actions | `yfinance` splits | $0 | Prevents broken strike series |
@@ -1264,6 +1264,12 @@ with the autocallable's first observation days away, the plain average of its AT
 4-day point cancel the long end (2026-11-11: explained +414 against -24,312) or swamp it (11-12,
 after a 13% NVDA gap down: -59,964 against -8,411). By band, the vol-step residual RMS fell from
 $18.4K to $6.5K over 35 pairs, about even on the 23 quiet ones (Section 4 of the model doc). The
+rates step had two gaps until 2026-11-13: FRED posts Treasury yields a day or two late, so the
+daily run usually priced both days on the same old curve (rates P&L exactly zero, and a late move
+such as the 2-year's +17bp on 11-10 was in no daily pair), and the Monte Carlo exotics had no rho.
+The curve now comes from the Treasury's own same-evening CSV (the same values FRED copies later),
+and the exotics have a rho with the forward held, as the vanillas; the rates-step residual RMS over
+34 pairs fell from $2,090 to $2. The
 previous worst day (2026-10-09, 38bp) was a short AAPL call a week from expiry valued at 426% vol:
 AAPL weeklies are quoted only near the money, and the fitted SVI wing shot upward past the last
 quote. Fitted wings that put their kink outside the quotes or break Lee's moment bound now

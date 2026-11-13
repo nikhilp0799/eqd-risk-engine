@@ -1,4 +1,4 @@
-"""Free-tier provider adapters (yfinance, FRED via pandas_datareader).
+"""Free-tier provider adapters (yfinance, FRED via pandas_datareader, Treasury CSV).
 
 No historical option-chain backfill is available from these sources — only
 the live chain at fetch time. See `docs/model_documentation.md` limitations
@@ -123,7 +123,41 @@ def fetch_underlying_ohlc(tickers: list[str], start: dt.date, end: dt.date) -> p
     ]
 
 
+# Treasury's own daily par yield CSV, the series FRED's DGS* republish a day or
+# two later: equal to the basis point on all 490 points compared (2026-08-03 to
+# 11-10), and posted the same evening (11-13's by 16:11 ET), so the daily run no
+# longer marks on a 1-2 day old curve (planning/same_day_rates_plan.md).
+TREASURY_CSV_URL = (
+    "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
+    "daily-treasury-rates.csv/{year}/all?type=daily_treasury_yield_curve"
+    "&field_tdr_date_value={year}&page&_format=csv"
+)
+TREASURY_TENORS = {
+    "1M": "1 Mo",
+    "3M": "3 Mo",
+    "6M": "6 Mo",
+    "1Y": "1 Yr",
+    "2Y": "2 Yr",
+    "5Y": "5 Yr",
+    "10Y": "10 Yr",
+}
+SOFR_CARRIED = "FRED SOFR carried"
+
+
 def fetch_rates(start: dt.date, end: dt.date) -> pd.DataFrame:
+    """SOFR + Treasury par yields, long-format (asof_date, tenor, rate, source):
+    FRED, with Treasury's same-day CSV on top (`combine_rates`). Treasury failing
+    leaves FRED alone, as before; FRED failing fails the feed, since SOFR comes
+    only from FRED and a curve written without it would replace a stored one."""
+    fred = fetch_fred_rates(start, end)
+    try:
+        treasury = fetch_treasury_rates(start, end)
+    except Exception:
+        return fred
+    return combine_rates(fred, treasury)
+
+
+def fetch_fred_rates(start: dt.date, end: dt.date) -> pd.DataFrame:
     """SOFR + Treasury CMT rates from FRED, long-format (asof_date, tenor, rate)."""
     df = web.DataReader(list(FRED_RATE_SERIES.values()), "fred", start=start, end=end)
     df = df.rename(columns={v: k for k, v in FRED_RATE_SERIES.items()})
@@ -132,6 +166,41 @@ def fetch_rates(start: dt.date, end: dt.date) -> pd.DataFrame:
     long["asof_date"] = pd.to_datetime(long["asof_date"]).dt.date
     long["source"] = "FRED"
     return long.reset_index(drop=True)
+
+
+def fetch_treasury_rates(start: dt.date, end: dt.date) -> pd.DataFrame:
+    """Treasury par yields over [start, end], same long format and tenors as
+    `fetch_fred_rates` (no SOFR: that is the NY Fed's). One CSV per year."""
+    frames = [
+        pd.read_csv(TREASURY_CSV_URL.format(year=year)) for year in range(start.year, end.year + 1)
+    ]
+    df = pd.concat(frames, ignore_index=True)
+    df["asof_date"] = pd.to_datetime(df["Date"], format="%m/%d/%Y").dt.date
+    df = df[(df["asof_date"] >= start) & (df["asof_date"] <= end)]
+    df = df.rename(columns={v: k for k, v in TREASURY_TENORS.items()})
+    long = df.melt(id_vars="asof_date", value_vars=list(TREASURY_TENORS), var_name="tenor")
+    long = long.rename(columns={"value": "rate"}).dropna(subset=["rate"])
+    long["source"] = "Treasury"
+    return long.reset_index(drop=True)
+
+
+def combine_rates(fred: pd.DataFrame, treasury: pd.DataFrame) -> pd.DataFrame:
+    """Treasury for every date and tenor it has, FRED for the rest. SOFR is
+    published the next morning, so a Treasury date past FRED's last SOFR gets
+    that last SOFR, marked `SOFR_CARRIED`; FRED's own value replaces it on a
+    later run, when the trailing window is re-fetched."""
+    cols = ["asof_date", "tenor", "rate", "source"]
+    rows = pd.concat([treasury[cols], fred[cols]], ignore_index=True)
+    rows = rows.drop_duplicates(subset=["asof_date", "tenor"], keep="first")
+    sofr = fred[fred["tenor"] == "SOFR"].sort_values("asof_date")
+    if not sofr.empty:
+        last = sofr.iloc[-1]
+        later = sorted(d for d in treasury["asof_date"].unique() if d > last["asof_date"])
+        carried = pd.DataFrame(
+            {"asof_date": later, "tenor": "SOFR", "rate": last["rate"], "source": SOFR_CARRIED}
+        )
+        rows = pd.concat([rows, carried], ignore_index=True)
+    return rows.sort_values(["asof_date", "tenor"]).reset_index(drop=True)
 
 
 # VIX: SPX 30d. VXAPL: Apple's own 30d implied vol. VXN: Nasdaq-100 30d, the

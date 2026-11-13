@@ -29,7 +29,7 @@ from eqdrisk.io.schemas import (
     VOL_INDEX_SCHEMA,
     validate,
 )
-from eqdrisk.marketdata.calendar import last_n_trading_days
+from eqdrisk.marketdata.calendar import BOND_CALENDAR, is_trading_day, last_n_trading_days
 from eqdrisk.marketdata.quality import DEFAULT_STALE_MINUTES, staleness_reference_ts
 
 NY_TZ = "America/New_York"
@@ -313,7 +313,30 @@ def catch_up_chains(
         if names := due():
             log(f"catch-up {_now():%H:%M}: fetching {' '.join(names)}")
             log(run_snapshot(cfg, asof, underlyings=names).qc.render())
+
+    # Each fetch above re-fetches rates too; once the chains are in, a curve still
+    # missing (Treasury posts after 15:30 ET) is retried alone until the index cutoff.
+    rates_deadline = pd.Timestamp.combine(asof, cu.index_cutoff).tz_localize(NY_TZ)
+    while rates_missing(cfg, asof):
+        wake = min(
+            _now() + pd.Timedelta(minutes=cu.index_interval_minutes),
+            rates_deadline - pd.Timedelta(seconds=POLL_SECONDS),
+        )
+        # A fetch can return at once without the curve: stop once no wait is left,
+        # or this would refetch in a loop with the clock standing still.
+        if wake <= _now():
+            break
+        _wait_until(wake)
+        log(f"catch-up {_now():%H:%M}: fetching rates")
+        log(run_snapshot(cfg, asof, underlyings=[]).qc.render())
     return missing_chains(cfg, asof)
+
+
+def rates_missing(cfg: BaseConfig, asof: dt.date) -> bool:
+    """A bond-market day with no stored curve for `asof` (planning/same_day_rates_plan.md)."""
+    if not is_trading_day(asof, BOND_CALENDAR):
+        return False
+    return store.latest_available_date(Path(cfg.paths.curated) / "curves", asof) != asof
 
 
 def run_snapshot(

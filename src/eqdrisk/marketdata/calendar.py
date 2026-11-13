@@ -11,6 +11,10 @@ from functools import lru_cache
 
 import pandas_market_calendars as mcal
 
+# US bond market (SIFMA): Treasury posts no curve on its holidays, some of which
+# the NYSE trades through (Columbus Day, Veterans Day).
+BOND_CALENDAR = "SIFMAUS"
+
 DAYS_PER_YEAR = {
     "ACT/365F": 365.0,
     "ACT/360": 360.0,

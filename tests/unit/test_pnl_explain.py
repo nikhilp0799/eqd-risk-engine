@@ -640,6 +640,27 @@ def test_time_step_now_uses_exotic_theta():
     assert _explained_for_step("time", eq, 3, None, None) == 0.0
 
 
+def test_rates_step_uses_exotic_rho():
+    """Before 2026-11-13 only vanillas had a rho: on the 11-09 -> 11-11 rerun the
+    rates step was actual -7,566 against +5 explained."""
+    from types import SimpleNamespace
+
+    from eqdrisk.marketdata.curve import Curve
+    from eqdrisk.portfolio.mark import PositionMark
+    from eqdrisk.pricing.pnl_explain import _explained_for_step
+
+    def flat(rate: float) -> SimpleNamespace:
+        T = np.array([0.5, 2.0])
+        return SimpleNamespace(curve=Curve(pillar_T=T, pillar_log_df=-rate * T))
+
+    for kind in ("autocall", "barrier", "vanilla"):
+        m = PositionMark(
+            position_id="P", type=kind, underlying="X", expiry=DAY1, T=1.75, price=1.0, rho=-9e6
+        )
+        explained = _explained_for_step("rates_divs", m, 1, flat(0.0456), flat(0.0473))
+        assert explained == pytest.approx(-9e6 * 0.0017)
+
+
 def test_daily_marking_uses_the_better_conditioned_bumps_but_the_stress_grid_does_not():
     from eqdrisk.portfolio.mark import MCSettings
     from eqdrisk.stress.hypothetical_grid import GRID_MC_SETTINGS

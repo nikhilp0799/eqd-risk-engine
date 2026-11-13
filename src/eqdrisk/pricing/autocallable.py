@@ -174,6 +174,9 @@ class AutocallableGreeks:
     # Vega per time band (`vega_band_edges`): the local-vol grid bumped on that
     # band's rows only. Empty when no bands were asked for.
     bucket_vega: tuple[float, ...] = ()
+    # Rate sensitivity with the forward held (r and q moved together), the
+    # convention of `blackscholes.rho` and of the P&L explain's rates step.
+    rho: float = 0.0
 
 
 def autocallable_greeks(
@@ -188,6 +191,7 @@ def autocallable_greeks(
     spot_bump_frac: float = 0.01,
     vol_bump: float = 0.01,
     vega_band_edges: tuple[float, ...] = (),
+    rate_bump: float = 1e-4,
 ) -> AutocallableGreeks:
     """Bump-and-reval, all under the SAME seed (common random numbers) — the
     only way path-dependent bump-and-reval Greeks aren't pure noise.
@@ -205,11 +209,18 @@ def autocallable_greeks(
     [0, 0.25), [0.25, 1), ...: the same central difference with only that
     band's grid rows bumped, two reprices a band, none for a band with no rows.
     The bumps add up to the parallel one, so the bands sum to `vega` up to
-    interpolation (planning/p008_vol_weighting_plan.md)."""
+    interpolation (planning/p008_vol_weighting_plan.md).
+
+    Rho moves r and q by `rate_bump` together: the drift r - q, and so every
+    path, is unchanged and only the discounting moves, two reprices. Before
+    2026-11-13 the note had no rho, and a curve move was all residual in the
+    explain's rates step (planning/same_day_rates_plan.md)."""
     h = s0 * spot_bump_frac
 
-    def _price(s0_: float, grid_: LocalVolGrid) -> float:
-        return price_autocallable(spec, s0_, grid_, r, q, n_paths, n_steps_per_period, seed)[0]
+    def _price(s0_: float, grid_: LocalVolGrid, dr: float = 0.0) -> float:
+        return price_autocallable(
+            spec, s0_, grid_, r + dr, q + dr, n_paths, n_steps_per_period, seed
+        )[0]
 
     def _bumped_grid(dvol: float) -> LocalVolGrid:
         return LocalVolGrid(
@@ -241,6 +252,7 @@ def autocallable_greeks(
     vanna = (price_pp - price_pm - price_mp + price_mm) / (4 * h * vol_bump)
     delta_sm = (price_up_sm - price_dn_sm) / (2 * h)
     gamma_sm = (price_up_sm - 2 * price0 + price_dn_sm) / h**2
+    rho = (_price(s0, grid, rate_bump) - _price(s0, grid, -rate_bump)) / (2 * rate_bump)
 
     bucket_vega = []
     edges = (0.0, *vega_band_edges, np.inf) if vega_band_edges else ()
@@ -264,4 +276,5 @@ def autocallable_greeks(
         delta_sm=delta_sm,
         gamma_sm=gamma_sm,
         bucket_vega=tuple(bucket_vega),
+        rho=rho,
     )

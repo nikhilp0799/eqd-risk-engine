@@ -30,12 +30,13 @@ variable to apply against in this decomposition and is not used — any real
 carry P&L shows up inside the spot bucket instead.
 
 **Positions with an incomplete Greek set contribute their own honest gap, not a
-fabricated explanation:** MC-priced positions (barrier, autocall) only have
-delta/gamma/vega (Step 7's own documented scope limit — no theta/rho/vanna/
-volga). Where a step's Greek doesn't exist for a position type, `explained` is
-0 for that position in that step (not "explained = actual", which would
-silently hide the gap) — so their time/rates-divs residual is, honestly, their
-entire actual P&L in those buckets. This is precisely the README's own 12.4
+fabricated explanation:** MC-priced positions (barrier, autocall) started with
+delta/gamma/vega only (Step 7's scope limit); vanna/volga, theta and rho were
+added as the explain found each gap, rho last (2026-11-13: until then every
+curve move was all residual in the rates step). Where a step's Greek doesn't
+exist for a position type, `explained` is 0 for that position in that step
+(not "explained = actual", which would silently hide the gap), so the residual
+is that step's entire actual P&L. This is precisely the README's own 12.4
 point made concrete: "if your residual spikes, your Greeks are incomplete."
 Variance swap positions are excluded from the Greek-based calculation entirely
 — Step 7 marks them at exactly 0 by construction (a fresh swap at today's own
@@ -214,7 +215,8 @@ def _explained_for_step(
         return m_prev.theta * days_elapsed if explains_time else 0.0
 
     if step == "rates_divs":
-        if m_prev.type != "vanilla":
+        # MC exotics have a rho since 2026-11-13 (planning/same_day_rates_plan.md).
+        if m_prev.type not in ("vanilla", "barrier", "autocall"):
             return 0.0
         r_prev = state_prev.curve.zero_rate(m_prev.T)
         r_cur = state_cur.curve.zero_rate(m_prev.T)
@@ -427,6 +429,7 @@ def _batch_residuals(
             vega=b_prev["vega"],
             vanna=b_prev["vanna"],
             volga=b_prev["volga"],
+            rho=b_prev.get("rho", m_prev.rho),
             batches=None,
             bucket_vega=m_prev.bucket_vega_batches[i] if m_prev.bucket_vega_batches else None,
             bucket_vega_batches=None,

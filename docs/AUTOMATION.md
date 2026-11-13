@@ -63,6 +63,17 @@ a Mac that sleeps through a cutoff skips that name rather than fetching it late.
 missing at the end is logged as `*** CHAINS MISSING ***`. On a past date every cutoff has passed,
 so `catchup` fetches nothing.
 
+**Rates are the same evening's (since 2026-11-13).** The curve's Treasury yields come from the
+Treasury's own daily par yield CSV, which had 2026-11-13's curve by 16:11 ET; FRED, the only source
+before, posts the same numbers a day or two later (equal on all 490 points compared), so every
+run's curve was 1-2 days old and the P&L explain's rates step was usually exactly zero. SOFR still
+comes from FRED, published the next morning, so today's curve carries yesterday's SOFR (source
+`FRED SOFR carried`) until a later run re-fetches it. The curves stage logs the curve it used,
+`discount curve: <date> rates (<sources>)`. If today's curve is not there on a bond-market day, the
+line reads `*** RATES STALE ... ***` and `catchup` re-fetches rates every 10 minutes until 17:00. On
+a bond-market holiday the NYSE trades through (Columbus Day, Veterans Day) no curve is due, and the
+line says `bond market closed`.
+
 ## What's set up
 
 - **`scripts/daily_ingest.sh`** — runs the full daily pipeline for "today," skipping outright (not
