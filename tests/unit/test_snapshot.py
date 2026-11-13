@@ -16,6 +16,7 @@ from eqdrisk.io.snapshot import (
     _with_retries,
     catch_up_chains,
     missing_chains,
+    rates_missing,
     run_snapshot,
 )
 
@@ -245,7 +246,14 @@ def _outage(monkeypatch, make_chain_df, clock, down_until: dict[str, str]):
         return make_chain_df(dt.date(2026, 9, 15), underlying, 4)
 
     monkeypatch.setattr(snapshot_module.sources, "fetch_option_chain", fetch_option_chain)
+    monkeypatch.setattr(snapshot_module.sources, "fetch_rates", lambda *a: _curve("2026-09-15"))
     return fetches
+
+
+def _curve(day: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        {"asof_date": [dt.date.fromisoformat(day)], "tenor": ["1Y"], "rate": [4.0], "source": ["x"]}
+    )
 
 
 def test_catch_up_fetches_a_chain_once_the_outage_ends(tmp_path, monkeypatch, make_chain_df, clock):
@@ -299,6 +307,51 @@ def test_catch_up_on_a_past_date_fetches_nothing(tmp_path, monkeypatch, make_cha
         "AAPL",
     ]
     assert fetches == []
+
+
+def _rates_posted_at(monkeypatch, clock, posted: str):
+    """Fake rates feed: the 2026-09-15 curve appears from an ET time ("" = never)."""
+
+    def fetch_rates(*a):
+        if posted and f"{clock[0]:%H:%M}" >= posted:
+            return _curve("2026-09-15")
+        return _curve("2026-09-14")
+
+    monkeypatch.setattr(snapshot_module.sources, "fetch_rates", fetch_rates)
+
+
+def test_catch_up_retries_rates_until_treasury_posts_the_curve(
+    tmp_path, monkeypatch, make_chain_df, clock
+):
+    _outage(monkeypatch, make_chain_df, clock, {})
+    _rates_posted_at(monkeypatch, clock, "16:50")
+    run_snapshot(_cfg(tmp_path), dt.date(2026, 9, 15))
+    assert rates_missing(_cfg(tmp_path), dt.date(2026, 9, 15))
+
+    logged: list[str] = []
+    assert catch_up_chains(_cfg(tmp_path), dt.date(2026, 9, 15), log=logged.append) == []
+    assert _attempts(logged) == [("16:45", "rates"), ("16:55", "rates")]
+    assert not rates_missing(_cfg(tmp_path), dt.date(2026, 9, 15))
+
+
+def test_catch_up_gives_up_on_rates_at_the_index_cutoff(
+    tmp_path, monkeypatch, make_chain_df, clock
+):
+    """A fetch that returns at once without the curve once looped forever with
+    the clock standing still, 30 s before the cutoff."""
+    _outage(monkeypatch, make_chain_df, clock, {})
+    _rates_posted_at(monkeypatch, clock, "")
+    run_snapshot(_cfg(tmp_path), dt.date(2026, 9, 15))
+
+    logged: list[str] = []
+    catch_up_chains(_cfg(tmp_path), dt.date(2026, 9, 15), log=logged.append)
+    assert _attempts(logged) == [("16:45", "rates"), ("16:55", "rates"), ("16:59", "rates")]
+
+
+def test_no_curve_is_due_on_a_bond_market_holiday(tmp_path):
+    # Veterans Day 2026: the NYSE trades, the bond market and Treasury's feed do not.
+    assert not rates_missing(_cfg(tmp_path), dt.date(2026, 11, 11))
+    assert rates_missing(_cfg(tmp_path), dt.date(2026, 11, 12))
 
 
 def test_force_replaces_an_existing_snapshot(tmp_path, monkeypatch, make_chain_df, no_sleep):

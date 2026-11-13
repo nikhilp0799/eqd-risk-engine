@@ -228,3 +228,17 @@ def test_band_vegas_add_up_to_the_parallel_vega():
     # observation too, so each band with grid rows has vega of its own.
     assert all(v != 0.0 for v in g.bucket_vega[:3])
     assert autocallable_greeks(spec, 77.0, grid, 0.03, 0.0, 4096, 4, seed=5).bucket_vega == ()
+
+
+def test_rho_is_the_discounting_of_the_cash_flows_with_the_forward_held():
+    """Coupon and put barriers at 0, autocall out of reach: every coupon and the
+    notional are paid on every path, so with the forward held the price is
+    sum(c_i x exp(-r t_i)) and rho = -sum(t_i x c_i x exp(-r t_i)) exactly."""
+    spec = _spec(autocall_barrier=1e9, coupon_barrier=0.0, put_barrier=0.0)
+    r = 0.04
+    cash = np.full(len(OBS_TIMES), NOTIONAL * spec.coupon_rate)
+    cash[-1] += NOTIONAL
+    g = autocallable_greeks(spec, 100.0, _flat_vol_grid(0.3), r, 0.01, 1024, 4, seed=3)
+    assert g.price == pytest.approx(float(np.sum(cash * np.exp(-r * OBS_TIMES))), rel=1e-12)
+    expected = -float(np.sum(OBS_TIMES * cash * np.exp(-r * OBS_TIMES)))
+    assert g.rho == pytest.approx(expected, rel=1e-6)

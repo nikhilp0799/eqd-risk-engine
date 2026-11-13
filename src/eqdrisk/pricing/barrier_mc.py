@@ -162,6 +162,8 @@ class BarrierGreeks:
     # P&L explain's own market states follow (planning/revaluation_ladder_plan.md).
     delta_sm: float = 0.0
     gamma_sm: float = 0.0
+    # Forward held, as `blackscholes.rho`: -T x price (see below).
+    rho: float = 0.0
 
 
 def down_and_in_put_greeks(
@@ -183,7 +185,11 @@ def down_and_in_put_greeks(
     a path-dependent (here, barrier-dependent) payoff makes independently
     reseeded bump-and-reval Greeks pure noise. Vanna/volga close the same
     Step 13 incident gap for barrier positions, which share the identical
-    architectural limitation (see `autocallable_greeks`'s docstring)."""
+    architectural limitation (see `autocallable_greeks`'s docstring).
+
+    Rho is exact, no reprice: the one payment at T is discounted by exp(-rT),
+    and with the forward held r - q, and so every path, does not move, so
+    d(price)/dr = -T x price (planning/same_day_rates_plan.md)."""
     discount_factor = np.exp(-r * T)
     h = s0 * spot_bump_frac
 
@@ -232,4 +238,5 @@ def down_and_in_put_greeks(
         volga=volga,
         delta_sm=delta_sm,
         gamma_sm=gamma_sm,
+        rho=-T * price0,
     )

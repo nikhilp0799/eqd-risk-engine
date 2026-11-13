@@ -14,6 +14,7 @@ from eqdrisk.marketdata.forward import (
     fit_forward,
     implied_dividend_yield,
     is_reliable_forward,
+    rates_curve_line,
     reliable_forwards,
     run_forward_construction,
 )
@@ -391,3 +392,18 @@ def test_forward_curve_carry_uses_a_span_not_two_nearly_coincident_pillars():
     expected = (np.log(104.0) - np.log(102.0)) / 0.5
     assert curve.long_end_carry == pytest.approx(expected, rel=1e-12)
     assert build_forward_curve(df.iloc[:1]).long_end_carry == 0.0
+
+
+def test_the_curve_line_flags_a_late_curve_but_not_a_bond_holiday():
+    d = dt.date
+    assert rates_curve_line(d(2026, 11, 13), d(2026, 11, 13), ["Treasury"]) == (
+        "discount curve: 2026-11-13 rates (Treasury)"
+    )
+    # Before 2026-11-13 every run looked like this, unflagged: FRED posts a day or two late.
+    assert rates_curve_line(d(2026, 11, 12), d(2026, 11, 10), ["FRED"]) == (
+        "*** RATES STALE: discount curve: 2026-11-10 rates (FRED), "
+        "2026-11-12's not published yet ***"
+    )
+    assert rates_curve_line(d(2026, 11, 11), d(2026, 11, 10), ["Treasury"]).endswith(
+        "bond market closed 2026-11-11"
+    )

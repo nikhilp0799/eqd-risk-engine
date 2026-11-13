@@ -157,3 +157,19 @@ def test_bridge_correction_bias_shrinks_with_more_steps_even_without_correction(
         gaps.append(closed_form - price)
 
     assert gaps[0] > gaps[1] > gaps[2] > 0
+
+
+def test_rho_is_minus_t_times_price_the_same_as_repricing_with_the_forward_held():
+    spot, strike, barrier, T, sigma, r, q = 100.0, 100.0, 80.0, 1.0, 0.25, 0.03, 0.01
+    grid = _flat_vol_grid(sigma)
+    g = down_and_in_put_greeks(
+        spot, strike, barrier, T, grid, r, q, n_paths=8192, n_steps=16, seed=7
+    )
+    assert g.rho == -T * g.price
+
+    def price(dr: float) -> float:
+        sim = simulate_down_and_in_put(spot, barrier, T, grid, r + dr, q + dr, 8192, 16, 7)
+        return sim.price_and_stderr(strike, float(np.exp(-(r + dr) * T)))[0]
+
+    # r and q moved together leave every path where it was: only the discounting moves.
+    assert (price(1e-4) - price(-1e-4)) / 2e-4 == pytest.approx(g.rho, rel=1e-6)

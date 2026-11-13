@@ -374,6 +374,25 @@ consistent with October, when implied-vol tent buckets were measured on 24 quiet
 1-month local-vol pillar cutoff, and did not help (25.8bp against 23.0bp), so they were not built
 then. A parallel vol ladder did not help either. Cost: one more state's worth of band repricing,
 P008's vol-step mark 5.9s to 8.4s. P007 keeps the single move (one maturity, residual about 0.1bp).
+
+**The rates step uses each evening's own curve and the exotics' rho since 2026-11-13.** Two gaps,
+found when a rebuild of the stored explain changed the rates step on 7 recent pairs. First, the
+curve: FRED posts each day's Treasury yields a day or two late, so at 16:30 both days of a pair
+usually took the same older curve and the daily rates step was exactly zero (5 of the 7 daily runs
+from 10-29 to 11-11), while a later rerun saw the real curves and gave different numbers; a move
+published late (2-year +17bp on 11-10) fell in no daily pair. The Treasury's own CSV, which FRED
+copies (equal on all 490 points compared), has the curve the same evening, and is now the source
+(Section 5, `docs/AUTOMATION.md`). Second, when the curve did move, the step was nearly all
+residual (11-09 to 11-11: actual -7,566, explained -5), because only the vanillas had a rho. Both
+MC exotics use one flat rate for drift and discounting with the dividend yield backed out of the
+fixed forward, so in this step, where only the discount curve moves, every simulated path stays
+where it was and only the discounting changes. Rho with the forward held, the vanillas'
+convention, is then exact for the barrier (-T x price, one payment at T) and a two-reprice
+central difference for the autocallable (r and q moved together). On the 34 stored pairs whose
+curve moved, the rates-step residual RMS fell from $2,090 to $2 (none worse), at no measurable
+cost (88s a pair against 92s). The book total moved less, $7.2K to $6.9K RMS, because rates were
+a small part of it: what remains in November is P008's spot and vol steps through the NVDA
+sell-off, with the note near its coupon barrier.
 The largest remaining day (2026-09-28, 25bp) is
 almost all P008; it was 9bp before the wing guard only because P004's mispricing offset it. Residuals carry a
 Monte Carlo standard error, so a day is flagged only when the gap exceeds the 5bp threshold by more
@@ -497,8 +516,9 @@ operate as a production risk system.
 ## 5. Data
 
 **Sources (all free-tier, no paid historical archive):** `yfinance` for underlying prices and
-option chains, FRED (via `pandas-datareader`/`fredapi`) for SOFR/Treasury rate points and the VIX
-index, `pandas-market-calendars` (NYSE calendar) for trading-day logic. No vendor-provided implied
+option chains, the US Treasury's daily par yield CSV for the Treasury rate points (the same evening;
+since 2026-11-13), FRED (via `pandas-datareader`) for SOFR, for those points as a fallback, and for
+the VIX index, `pandas-market-calendars` (NYSE calendar) for trading-day logic. No vendor-provided implied
 vols or Greeks are used — every implied vol in this system is inverted in-house from raw
 bid/ask/last-trade quotes (Section 3.3 inputs).
 
@@ -614,7 +634,7 @@ partial rather than assumed.
 | P&L explain telescoping | Total actual P&L across all 4 steps matches true full-reval P&L to $10^{-9}$ relative |
 | P&L explain on equity/varswap positions | Exactly zero residual in every step (linear payoff for equity; marked to 0 by construction for varswap) — an exact, not approximate, design validation |
 | P&L explain, real multi-day | 4 real consecutive day-pairs (2026-08-31 through 2026-09-04): residuals of +$151.7k, -$252.4k, +$349.0k, -$170.7k — genuinely oscillating in sign, not a cherry-picked single "good" day |
-| Full test suite | 1,988 unit/property/integration tests passing (2026-11-12); ruff and mypy clean throughout |
+| Full test suite | 1,998 unit/property/integration tests passing (2026-11-13); ruff and mypy clean throughout |
 
 Several real defects were caught during development by writing a test for a claim rather than
 trusting the algebra or a single manual check — a pattern this document treats as evidence of
@@ -631,7 +651,7 @@ than loosened to hide the platform difference.
 
 | Risk | Materiality | Mitigant / current state |
 |---|---|---|
-| P&L-explain residual | **Medium** — 8.6bp of NAV mean absolute residual over 28 real day pairs (median 6.8bp, worst 25bp), still above the 5bp threshold on average; almost all of what remains is P008 | Eight input and model causes found and fixed (Section 4), plus the SPX long-end forwards, the SVI wing guard and (2026-11-12) the autocallable's vol step by time band (vol-step RMS $18.4K to $6.5K over 35 pairs); skew sensitivity measured and rejected |
+| P&L-explain residual | **Medium** — 12.8bp of NAV mean absolute residual over 36 real day pairs (median 8.8bp, worst 58.6bp on 2026-11-12), above the 5bp threshold on average; the November NVDA sell-off days are the large ones, and almost all of it is P008 (3.0bp without it) | Eight input and model causes found and fixed (Section 4), plus the SPX long-end forwards, the SVI wing guard, (2026-11-12) the autocallable's vol step by time band (vol-step RMS $18.4K to $6.5K over 35 pairs) and (2026-11-13) same-evening rates with exotic rho (rates-step RMS $2,090 to $2); skew sensitivity measured and rejected |
 | Vol-shock stress approximation error | **Medium**, grows with shock size (~7-40% measured) | Documented and bounded; not eliminated; matters most for the largest stress-ladder shocks |
 | Parallel vol bump in 11.2 (and 11.1's naive variant) | **Low**: overstates long-dated vol moves (SPX 1y +23 pts naive vs ~2 conditional at -20%), and with it the variance swap's gains | 11.1 runs through the 8.3 mapping since 2026-11-03, naive kept for comparison; 11.2 is a defined what-if |
 | Residual monitoring alerts are logged, not paged | **Low** — daily alerts are visible in the log and dashboard but nobody is notified | Automated 5bp check with a noise band since 2026-09-10 / 2026-10; paging not built |

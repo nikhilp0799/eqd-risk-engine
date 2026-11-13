@@ -32,7 +32,7 @@ from eqdrisk.io.schemas import (
     validate,
 )
 from eqdrisk.marketdata import quality
-from eqdrisk.marketdata.calendar import year_fraction
+from eqdrisk.marketdata.calendar import BOND_CALENDAR, is_trading_day, year_fraction
 from eqdrisk.marketdata.curve import TENOR_YEARS, bootstrap_curve
 from eqdrisk.marketdata.quality import (
     classify_quotes,
@@ -285,9 +285,12 @@ class ForwardConstructionResult:
     asof: dt.date
     fits: list[ForwardFitResult] = field(default_factory=list)
     flagged: list[str] = field(default_factory=list)
+    curve_line: str = ""
 
     def render(self) -> str:
         lines = [f"Forward/curve construction — {self.asof}"]
+        if self.curve_line:
+            lines.append(f"  {self.curve_line}")
         by_underlying: dict[str, int] = {}
         for f in self.fits:
             by_underlying[f.underlying] = by_underlying.get(f.underlying, 0) + 1
@@ -297,6 +300,18 @@ class ForwardConstructionResult:
             lines.append("  FLAGGED:")
             lines.extend(f"    {msg}" for msg in self.flagged)
         return "\n".join(lines)
+
+
+def rates_curve_line(asof: dt.date, curves_date: dt.date, sources: list[str]) -> str:
+    """Which day's rates the run's curve is, and whether that is late. FRED
+    alone left every curve 1-2 days old, unseen, until 2026-11-13
+    (planning/same_day_rates_plan.md); a bond-market holiday has no curve due."""
+    line = f"discount curve: {curves_date} rates ({', '.join(sources)})"
+    if curves_date >= asof:
+        return line
+    if is_trading_day(asof, BOND_CALENDAR):
+        return f"*** RATES STALE: {line}, {asof}'s not published yet ***"
+    return f"{line}; bond market closed {asof}"
 
 
 def run_forward_construction(cfg: BaseConfig, asof: dt.date) -> ForwardConstructionResult:
@@ -314,6 +329,7 @@ def run_forward_construction(cfg: BaseConfig, asof: dt.date) -> ForwardConstruct
         views={"curves": str(curves_root)},
     ).to_pandas()
     curve = bootstrap_curve(rates)
+    curve_line = rates_curve_line(asof, curves_date, sorted(rates["source"].unique()))
 
     curve_pillar_rows = rates[rates["tenor"].isin(TENOR_YEARS)].copy()
     curve_pillar_rows["asof_date"] = asof
@@ -328,7 +344,7 @@ def run_forward_construction(cfg: BaseConfig, asof: dt.date) -> ForwardConstruct
     )
     store.write_partitioned(curve_table, curated_root / "discount_curves", ["asof_date"])
 
-    result = ForwardConstructionResult(asof=asof, fits=[])
+    result = ForwardConstructionResult(asof=asof, fits=[], curve_line=curve_line)
     forward_rows = []
 
     for underlying in universe:

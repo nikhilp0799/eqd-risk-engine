@@ -16,10 +16,10 @@ pillars internally for any (S, t) query.
 
 **Deliberate, documented scope limits for this step (not a business decision,
 an engineering one — flagged same as every prior step's honest simplifications):**
-- Greeks for the two Monte Carlo-priced structures (barrier, autocall) are
-  limited to delta/gamma/vega — theta/rho/vanna/volga would each need another
-  bump-and-reval MC pass, and the README's own Step 6 risk-characteristics
-  discussion for both instruments centres on exactly delta/gamma/vega anyway.
+- Greeks for the two Monte Carlo-priced structures (barrier, autocall) started
+  as delta/gamma/vega only, each further Greek another bump-and-reval MC pass.
+  Added since as the P&L explain found each one missing: vanna/volga (Step 13),
+  theta (2026-10-07), rho (2026-11-13, forward held: planning/same_day_rates_plan.md).
 - The variance swap position (P006) has no trade-inception strike in its own
   config (only a `vega_notional`) — marked as if trading AT today's own fair
   strike (price = 0 by construction, a fresh swap has no value at its own fair
@@ -174,6 +174,7 @@ GREEK_FIELDS = (
     "theta",
     "delta_sm",
     "gamma_sm",
+    "rho",
 )
 
 
@@ -850,6 +851,7 @@ def _mark_barrier(
         vanna=mean["vanna"],
         volga=mean["volga"],
         theta=mean["theta"],
+        rho=mean["rho"],
         k=float(np.log(p.strike / spot)),
         stderr=stderr,
         batches=batches,
@@ -952,6 +954,7 @@ def _mark_autocall(
         vanna=mean["vanna"],
         volga=mean["volga"],
         theta=mean["theta"],
+        rho=mean["rho"],
         k=None,
         stderr=stderr,
         batches=batches,
