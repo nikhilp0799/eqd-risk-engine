@@ -726,7 +726,10 @@ def test_spot_step_uses_sticky_moneyness_delta_when_available():
     from eqdrisk.portfolio.mark import PositionMark
     from eqdrisk.pricing.pnl_explain import _explained_for_step
 
-    states = SimpleNamespace(spot={"X": 100.0}), SimpleNamespace(spot={"X": 102.0})
+    states = (
+        SimpleNamespace(spot={"X": 100.0}, forward_curve={}),
+        SimpleNamespace(spot={"X": 102.0}, forward_curve={}),
+    )
     base = dict(position_id="V", type="vanilla", underlying="X", expiry=DAY1, T=0.5, price=10.0)
     ss_only = PositionMark(**base, delta=0.5, gamma=0.02)
     both = PositionMark(**base, delta=0.5, gamma=0.02, delta_sm=0.4, gamma_sm=0.01)
@@ -734,6 +737,71 @@ def test_spot_step_uses_sticky_moneyness_delta_when_available():
         0.5 * 2 + 0.5 * 0.02 * 4
     )
     assert _explained_for_step("spot", both, 1, *states) == pytest.approx(0.4 * 2 + 0.5 * 0.01 * 4)
+
+
+def test_vanilla_spot_step_reads_the_forward_move_the_barrier_the_close():
+    """SPX options trade to 16:15, the cash index closes at 16:00: on 2026-11-13
+    the forward/close ratio fell 28.8bp, and P002 carried it as residual."""
+    from types import SimpleNamespace
+
+    from eqdrisk.marketdata.forward import ForwardCurve
+    from eqdrisk.portfolio.mark import PositionMark
+    from eqdrisk.pricing.pnl_explain import _explained_for_step
+
+    def state(spot: float, fwd: float) -> SimpleNamespace:
+        curve = ForwardCurve(pillar_T=np.array([0.1, 1.0]), pillar_log_forward=np.log([fwd, fwd]))
+        return SimpleNamespace(spot={"X": spot}, forward_curve={"X": curve})
+
+    prev, cur = state(100.0, 100.4), state(102.0, 102.1)
+    x = 100.0 * (102.1 / 100.4 - 1)
+    base = dict(position_id="P", underlying="X", expiry=DAY1, T=0.5, price=10.0)
+    vanilla = PositionMark(**base, type="vanilla", delta=0.9, gamma=0.01)
+    barrier = PositionMark(**base, type="barrier", delta=0.9, gamma=0.01)
+    assert _explained_for_step("spot", vanilla, 1, prev, cur) == pytest.approx(
+        0.9 * x + 0.5 * 0.01 * x**2
+    )
+    assert _explained_for_step("spot", barrier, 1, prev, cur) == pytest.approx(
+        0.9 * 2 + 0.5 * 0.01 * 4
+    )
+
+
+def test_forward_basis_change_is_explained_and_printed(tmp_path):
+    """Day 1's forwards sit 30bp further over the close than day 0's: a deep
+    in-the-money call's spot step is explained through the forward, and the
+    basis line shows both days and what the forward added."""
+    _write_both_days(tmp_path, vol_bump_day1=0.0)
+    _write_forwards(tmp_path, DAY1, SPOT_DAY1 * 1.003, RATE_DAY1)
+    portfolio_path = _write_portfolio_yaml(
+        tmp_path,
+        [
+            {
+                "id": "V1",
+                "type": "vanilla",
+                "underlying": UNDERLYING,
+                "cp": "C",
+                "strike": 80.0,
+                "expiry": PILLAR_EXPIRIES[0].isoformat(),
+                "qty": 100,
+            }
+        ],
+    )
+    result = run_pnl_explain(_cfg(tmp_path), DAY0, DAY1, portfolio_path)
+
+    assert not result.skipped
+    spot_step = next(s for s in result.steps if s.step == "spot")
+    t0 = PILLAR_TS_DAY0[0]
+    bp0 = (np.exp((RATE_DAY0 / 100 - 0.01) * t0) - 1) * 1e4
+    bp1 = (1.003 * np.exp((RATE_DAY1 / 100 - 0.01) * t0) - 1) * 1e4
+    assert len(result.basis_lines) == 1
+    line = result.basis_lines[0]
+    assert line.startswith(
+        f"basis {UNDERLYING}: front forward vs close {bp0:+.1f}bp -> {bp1:+.1f}bp"
+    )
+    added = float(line.rsplit(": ", 1)[1].replace(",", ""))
+    # ~100 x delta ~1 x 102 x ~30bp of basis, against a residual near zero
+    assert added > 25.0
+    assert abs(spot_step.residual) < 0.02 * added
+    assert line in result.render()
 
 
 def test_band_vegas_see_the_long_end_move_an_equal_average_cancels(monkeypatch):

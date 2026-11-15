@@ -1269,7 +1269,11 @@ daily run usually priced both days on the same old curve (rates P&L exactly zero
 such as the 2-year's +17bp on 11-10 was in no daily pair), and the Monte Carlo exotics had no rho.
 The curve now comes from the Treasury's own same-evening CSV (the same values FRED copies later),
 and the exotics have a rho with the forward held, as the vanillas; the rates-step residual RMS over
-34 pairs fell from $2,090 to $2. The
+34 pairs fell from $2,090 to $2. The vanillas' spot step reads the forward's move, not the 16:00
+close's, since 2026-11-14: SPX options trade to 16:15, so the option-implied spot runs -45 to +24bp
+from the cash close, and the deep in-the-money P002 carried that basis as residual (correlation
+0.997); its residual RMS fell from $1,323 to $105 over 36 pairs, and the basis is printed in the
+run log instead. The
 previous worst day (2026-10-09, 38bp) was a short AAPL call a week from expiry valued at 426% vol:
 AAPL weeklies are quoted only near the money, and the fitted SVI wing shot upward past the last
 quote. Fitted wings that put their kink outside the quotes or break Lee's moment bound now

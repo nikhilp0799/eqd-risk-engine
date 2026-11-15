@@ -393,6 +393,22 @@ curve moved, the rates-step residual RMS fell from $2,090 to $2 (none worse), at
 cost (88s a pair against 92s). The book total moved less, $7.2K to $6.9K RMS, because rates were
 a small part of it: what remains in November is P008's spot and vol steps through the NVDA
 sell-off, with the note near its coupon barrier.
+
+**The vanillas' spot step reads the forward, not the close, since 2026-11-14.** The 11-13 run
+alerted on P002 (long SPX Dec-26 6000 calls, deep in the money) at -6.6bp, all in the spot step.
+The vanillas are priced off the fitted forward, but the spot step measured the move with the 16:00
+cash close, and SPX options trade to 16:15: the option-implied spot (the forward at the front
+expiry) ran between -45bp and +24bp from the close day to day, while the forward curve itself was
+smooth (Dec over front decaying 57bp to 27bp over the month, as carry should). P002's residual
+tracked that basis with correlation 0.997 over 36 pairs. The spot step now moves each vanilla by its
+forward's relative move at its own maturity, in spot units, with the same sticky-moneyness delta and
+gamma (a bump of spot and forward together). Over the 36 stored pairs P002's residual RMS fell from
+$1,323 to $105, the AAPL vanillas' too (P004 $140 to $15, P011 $162 to $58), the spot-step RMS from
+$6.9K to $6.4K, and 2026-11-13 from -10.4bp to -2.2bp; the exotics and every actual P&L are
+unchanged to the cent. The MC barrier stays on the close (its barrier is a fixed level on closes),
+and NVDA's basis (within about 10bp) does not explain P008 (correlation under 0.2 at 0.25, 1 and
+1.75 years). The basis is still printed for each underlying held in vanillas
+(`docs/AUTOMATION.md`), so a large basis day is seen rather than hidden.
 The largest remaining day (2026-09-28, 25bp) is
 almost all P008; it was 9bp before the wing guard only because P004's mispricing offset it. Residuals carry a
 Monte Carlo standard error, so a day is flagged only when the gap exceeds the 5bp threshold by more
@@ -634,7 +650,7 @@ partial rather than assumed.
 | P&L explain telescoping | Total actual P&L across all 4 steps matches true full-reval P&L to $10^{-9}$ relative |
 | P&L explain on equity/varswap positions | Exactly zero residual in every step (linear payoff for equity; marked to 0 by construction for varswap) — an exact, not approximate, design validation |
 | P&L explain, real multi-day | 4 real consecutive day-pairs (2026-08-31 through 2026-09-04): residuals of +$151.7k, -$252.4k, +$349.0k, -$170.7k — genuinely oscillating in sign, not a cherry-picked single "good" day |
-| Full test suite | 1,998 unit/property/integration tests passing (2026-11-13); ruff and mypy clean throughout |
+| Full test suite | 2,000 unit/property/integration tests passing (2026-11-14); ruff and mypy clean throughout |
 
 Several real defects were caught during development by writing a test for a claim rather than
 trusting the algebra or a single manual check — a pattern this document treats as evidence of
@@ -651,7 +667,7 @@ than loosened to hide the platform difference.
 
 | Risk | Materiality | Mitigant / current state |
 |---|---|---|
-| P&L-explain residual | **Medium** — 12.8bp of NAV mean absolute residual over 36 real day pairs (median 8.8bp, worst 58.6bp on 2026-11-12), above the 5bp threshold on average; the November NVDA sell-off days are the large ones, and almost all of it is P008 (3.0bp without it) | Eight input and model causes found and fixed (Section 4), plus the SPX long-end forwards, the SVI wing guard, (2026-11-12) the autocallable's vol step by time band (vol-step RMS $18.4K to $6.5K over 35 pairs) and (2026-11-13) same-evening rates with exotic rho (rates-step RMS $2,090 to $2); skew sensitivity measured and rejected |
+| P&L-explain residual | **Medium** — 12.1bp of NAV mean absolute residual over 36 real day pairs (median 8.1bp, worst 57.4bp on 2026-11-12), above the 5bp threshold on average; the November NVDA sell-off days are the large ones, and almost all of it is P008 (0.9bp without it, summed absolute) | Eight input and model causes found and fixed (Section 4), plus the SPX long-end forwards, the SVI wing guard, (2026-11-12) the autocallable's vol step by time band (vol-step RMS $18.4K to $6.5K over 35 pairs) and (2026-11-13) same-evening rates with exotic rho (rates-step RMS $2,090 to $2), and (2026-11-14) the vanillas' spot step through the forward (P002 RMS $1,323 to $105); skew sensitivity measured and rejected |
 | Vol-shock stress approximation error | **Medium**, grows with shock size (~7-40% measured) | Documented and bounded; not eliminated; matters most for the largest stress-ladder shocks |
 | Parallel vol bump in 11.2 (and 11.1's naive variant) | **Low**: overstates long-dated vol moves (SPX 1y +23 pts naive vs ~2 conditional at -20%), and with it the variance swap's gains | 11.1 runs through the 8.3 mapping since 2026-11-03, naive kept for comparison; 11.2 is a defined what-if |
 | Residual monitoring alerts are logged, not paged | **Low** — daily alerts are visible in the log and dashboard but nobody is notified | Automated 5bp check with a noise band since 2026-09-10 / 2026-10; paging not built |

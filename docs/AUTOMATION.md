@@ -74,6 +74,14 @@ line reads `*** RATES STALE ... ***` and `catchup` re-fetches rates every 10 min
 a bond-market holiday the NYSE trades through (Columbus Day, Veterans Day) no curve is due, and the
 line says `bond market closed`.
 
+**The P&L explain prints the forward basis (since 2026-11-14).** For each underlying held in
+vanillas, `explainpnl` logs `basis <underlying>: front forward vs close <day0>bp -> <day1>bp; ...`,
+the option-implied spot (the forward at the front expiry) against the 16:00 close on both days, and
+what reading the vanillas' spot step through the forward added. SPX options trade to 16:15, after the
+cash close, so on SPX it swings between -45bp and +24bp. The vanillas are priced off the forward, so
+their spot step is explained through it and the basis no longer shows as residual; this line is
+where a large basis day is seen.
+
 ## What's set up
 
 - **`scripts/daily_ingest.sh`** — runs the full daily pipeline for "today," skipping outright (not

@@ -29,6 +29,13 @@ with spot in the next step. Consequence: `dividend_rho` never has a driving
 variable to apply against in this decomposition and is not used — any real
 carry P&L shows up inside the spot bucket instead.
 
+**The vanillas' spot move is the forward's, not the close's** (2026-11-14,
+planning/spx_forward_basis_plan.md): a vanilla is priced off the forward, and
+SPX options trade to 16:15 while the cash index closes at 16:00, so the
+option-implied spot runs -45bp to +24bp from the close day to day. Measured on
+the close, P002 (deep in-the-money SPX call) carried that basis as residual,
+correlation 0.997 over 36 day pairs. The basis is printed per underlying instead.
+
 **Positions with an incomplete Greek set contribute their own honest gap, not a
 fabricated explanation:** MC-priced positions (barrier, autocall) started with
 delta/gamma/vega only (Step 7's scope limit); vanna/volga, theta and rho were
@@ -198,6 +205,35 @@ def _marks_by_id(result: PortfolioMarkResult) -> dict[str, PositionMark]:
     return {m.position_id: m for m in result.marks}
 
 
+def _forward_spot_move(m: PositionMark, state_prev: MarketState, state_cur: MarketState) -> float:
+    """The spot move a vanilla's price sees: its forward's relative move at its
+    own maturity, in spot units, so the sticky-moneyness delta (a bump of spot
+    and forward together) applies unchanged. The close's move without a forward."""
+    u = m.underlying
+    d_close = state_cur.spot[u] - state_prev.spot[u]
+    if u not in state_prev.forward_curve or u not in state_cur.forward_curve:
+        return d_close
+    f_prev = state_prev.forward_curve[u].forward(m.T)
+    f_cur = state_cur.forward_curve[u].forward(m.T)
+    return state_prev.spot[u] * (f_cur / f_prev - 1.0)
+
+
+def _spot_taylor(m: PositionMark, d_spot: float) -> float:
+    """Sticky-moneyness delta/gamma where available: this explain's spot step
+    rebuilds the vol surface around the new spot from the same log-moneyness
+    smile, so the Greeks must move vol the same way. With sticky-strike Greeks
+    P008's spot-step residual averaged 19.3bp over 23 day pairs; with
+    sticky-moneyness Greeks, 7.1bp (planning/revaluation_ladder_plan.md)."""
+    delta = m.delta_sm if m.delta_sm is not None else m.delta
+    gamma = m.gamma_sm if m.gamma_sm is not None else m.gamma
+    return delta * d_spot + 0.5 * gamma * d_spot**2
+
+
+def _basis_bp(state: MarketState, u: str) -> float:
+    """The option-implied spot (the forward at the front pillar) against the close."""
+    return 10_000.0 * (state.forward_curve[u].forward(0.0) / state.spot[u] - 1.0)
+
+
 def _explained_for_step(
     step: str,
     m_prev: PositionMark,
@@ -226,16 +262,9 @@ def _explained_for_step(
         u = m_prev.underlying
         if u not in state_prev.spot or u not in state_cur.spot:
             return 0.0
-        d_spot = state_cur.spot[u] - state_prev.spot[u]
-        # Sticky-moneyness delta/gamma where available: this explain's spot step
-        # rebuilds the vol surface around the new spot from the same
-        # log-moneyness smile, so the Greeks must move vol the same way. With
-        # sticky-strike Greeks P008's spot-step residual averaged 19.3bp over 23
-        # day pairs; with sticky-moneyness Greeks, 7.1bp
-        # (planning/revaluation_ladder_plan.md).
-        delta = m_prev.delta_sm if m_prev.delta_sm is not None else m_prev.delta
-        gamma = m_prev.gamma_sm if m_prev.gamma_sm is not None else m_prev.gamma
-        return delta * d_spot + 0.5 * gamma * d_spot**2
+        if m_prev.type == "vanilla":
+            return _spot_taylor(m_prev, _forward_spot_move(m_prev, state_prev, state_cur))
+        return _spot_taylor(m_prev, state_cur.spot[u] - state_prev.spot[u])
 
     if step == "vol":
         if m_prev.vega == 0.0 and m_prev.volga == 0.0:
@@ -283,6 +312,9 @@ class PnLExplainResult:
     inconclusive: list[str] = field(default_factory=list)
     # Per-position caveats (e.g. surface coverage changed between the two days).
     notes: dict[str, str] = field(default_factory=dict)
+    # Per underlying held in vanillas: the option-implied spot against the close
+    # on both days, and what reading the spot step through the forward added.
+    basis_lines: list[str] = field(default_factory=list)
     skipped: dict[str, str] = field(default_factory=dict)
 
     def total_actual(self) -> float:
@@ -319,6 +351,8 @@ class PnLExplainResult:
             f"  ({self.total_residual_bp():+.1f} +- {self._bp(2 * self.total_residual_se):.1f}bp"
             f" of NAV, 2 SE)"
         )
+        for b in self.basis_lines:
+            lines.append(f"  {b}")
         if self.by_position_residual:
             lines.append("  residual by position:")
             for pid, r in sorted(self.by_position_residual.items(), key=lambda kv: -abs(kv[1])):
@@ -575,6 +609,7 @@ def run_pnl_explain(
             if note:
                 result.notes[pid] = note
 
+    result.basis_lines = _basis_lines(marks[2], marks[3], states, priced_all)
     result.by_position_residual_se = {
         pid: _standard_error(v) for pid, v in position_batches.items()
     }
@@ -586,6 +621,31 @@ def run_pnl_explain(
     result.breaches = _detect_breaches(result)
     _persist(result, Path(cfg.paths.curated))
     return result
+
+
+def _basis_lines(
+    marks_prev: dict[str, PositionMark],
+    marks_cur: dict[str, PositionMark],
+    states: list[MarketState],
+    priced: set[str],
+) -> list[str]:
+    """`states` are the five explain states; the spot step runs states[2] -> [3]."""
+    added: dict[str, float] = {}
+    for pid in priced:
+        m = marks_prev[pid]
+        if m.type != "vanilla" or lifecycle.SETTLED in (m.status, marks_cur[pid].status):
+            continue
+        u = m.underlying
+        via_close = _spot_taylor(m, states[3].spot[u] - states[2].spot[u])
+        via_forward = _spot_taylor(m, _forward_spot_move(m, states[2], states[3]))
+        added[u] = added.get(u, 0.0) + via_forward - via_close
+    return [
+        f"basis {u}: front forward vs close {_basis_bp(states[0], u):+.1f}bp -> "
+        f"{_basis_bp(states[4], u):+.1f}bp; vanillas' spot step through the forward "
+        f"instead of the close: {added[u]:+,.2f}"
+        for u in sorted(added)
+        if all(u in states[i].forward_curve for i in (0, 4))
+    ]
 
 
 def _classify(dollars: float, se: float, nav: float, label: str) -> tuple[str | None, str | None]:
