@@ -1273,7 +1273,12 @@ and the exotics have a rho with the forward held, as the vanillas; the rates-ste
 close's, since 2026-11-14: SPX options trade to 16:15, so the option-implied spot runs -45 to +24bp
 from the cash close, and the deep in-the-money P002 carried that basis as residual (correlation
 0.997); its residual RMS fell from $1,323 to $105 over 36 pairs, and the basis is printed in the
-run log instead. The
+run log instead. On 2026-11-06 the single names' forwards were fitted against a one-point curve
+(FRED's morning SOFR stored before its afternoon Treasury yields), putting P008's mark $210K too
+high; a curve is now stored only with every tenor and that day was rebuilt (11-06 explain -35.9bp
+to 0.0bp). Holding the exotics' dividend yield to damp the noisy long-dated NVDA forward was
+measured and rejected: it halved P008's spot-step residual but not its total, because the
+long-dated vols are inverted with that same forward. The
 previous worst day (2026-10-09, 38bp) was a short AAPL call a week from expiry valued at 426% vol:
 AAPL weeklies are quoted only near the money, and the fitted SVI wing shot upward past the last
 quote. Fitted wings that put their kink outside the quotes or break Lee's moment bound now

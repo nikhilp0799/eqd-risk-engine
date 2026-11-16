@@ -47,8 +47,11 @@ def test_treasury_fills_the_days_fred_has_not_posted_and_sofr_is_carried():
     }
 
 
+FULL = {t: 4.5 for t in sources.TERM_TENORS}
+
+
 def test_a_treasury_failure_leaves_fred_alone(monkeypatch):
-    fred = _rows("2026-11-10", "FRED", SOFR=3.89, **{"2Y": 4.73})
+    fred = _rows("2026-11-10", "FRED", SOFR=3.89, **FULL)
     monkeypatch.setattr(sources, "fetch_fred_rates", lambda *a: fred)
 
     def down(*a):
@@ -85,3 +88,19 @@ def test_treasury_csv_parsed_to_the_fred_tenors_within_the_window(monkeypatch):
         "10Y": 5.15,
     }
     assert set(out["source"]) == {"Treasury"}
+
+
+def test_a_date_missing_a_term_tenor_is_not_stored(monkeypatch):
+    """2026-11-06's run: FRED had 11-05's SOFR (morning) but not yet its Treasury
+    points (afternoon); stored, that one-point curve was the latest one."""
+    fred = pd.concat(
+        [
+            _rows("2026-11-04", "FRED", SOFR=3.94, **FULL),
+            _rows("2026-11-05", "FRED", SOFR=3.92),
+        ]
+    )
+    monkeypatch.setattr(sources, "fetch_fred_rates", lambda *a: fred)
+    monkeypatch.setattr(sources, "fetch_treasury_rates", lambda *a: fred.iloc[:0])
+    out = sources.fetch_rates(D(2026, 11, 1), D(2026, 11, 6))
+    assert set(out["asof_date"]) == {D(2026, 11, 4)}
+    assert len(out) == 8
