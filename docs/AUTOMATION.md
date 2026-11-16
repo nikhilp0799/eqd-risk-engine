@@ -73,6 +73,11 @@ comes from FRED, published the next morning, so today's curve carries yesterday'
 line reads `*** RATES STALE ... ***` and `catchup` re-fetches rates every 10 minutes until 17:00. On
 a bond-market holiday the NYSE trades through (Columbus Day, Veterans Day) no curve is due, and the
 line says `bond market closed`.
+A curve date is stored only once it has every Treasury tenor (since 2026-11-15): FRED posts SOFR in
+the morning and its Treasury yields in the afternoon, and on 2026-11-06 the run stored 11-05 with SOFR
+alone, so that day's single-name forwards were fitted against one overnight rate (P008's mark came
+out $210K too high; the day was rebuilt). An incomplete date is now left out, and every reader takes
+the latest complete curve until a later run has it.
 
 **The P&L explain prints the forward basis (since 2026-11-14).** For each underlying held in
 vanillas, `explainpnl` logs `basis <underlying>: front forward vs close <day0>bp -> <day1>bp; ...`,

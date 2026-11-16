@@ -153,8 +153,24 @@ def fetch_rates(start: dt.date, end: dt.date) -> pd.DataFrame:
     try:
         treasury = fetch_treasury_rates(start, end)
     except Exception:
-        return fred
-    return combine_rates(fred, treasury)
+        return complete_curve_dates(fred)
+    return complete_curve_dates(combine_rates(fred, treasury))
+
+
+# Every tenor but SOFR: a curve date must have all of them to be stored.
+TERM_TENORS = tuple(t for t in FRED_RATE_SERIES if t != "SOFR")
+
+
+def complete_curve_dates(rates: pd.DataFrame) -> pd.DataFrame:
+    """Only the dates holding every term tenor. FRED posts SOFR in the morning and
+    the Treasury points in the afternoon, so a run in between saw a date with SOFR
+    alone; stored, it became the latest curve and the 2026-11-06 single-name
+    forwards were fitted against one overnight rate (discount factor ~1.0 out to
+    2 years). Left out, a date is written once a later run has it complete, and
+    readers take the latest complete curve meanwhile."""
+    tenors = rates.groupby("asof_date")["tenor"].agg(set)
+    complete = tenors[tenors.map(lambda t: set(TERM_TENORS) <= t)].index
+    return rates[rates["asof_date"].isin(complete)].reset_index(drop=True)
 
 
 def fetch_fred_rates(start: dt.date, end: dt.date) -> pd.DataFrame:
