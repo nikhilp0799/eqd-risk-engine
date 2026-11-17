@@ -1278,7 +1278,9 @@ run log instead. On 2026-11-06 the single names' forwards were fitted against a 
 high; a curve is now stored only with every tenor and that day was rebuilt (11-06 explain -35.9bp
 to 0.0bp). Holding the exotics' dividend yield to damp the noisy long-dated NVDA forward was
 measured and rejected: it halved P008's spot-step residual but not its total, because the
-long-dated vols are inverted with that same forward. The
+long-dated vols are inverted with that same forward. An autocall coupon fixing between the
+explain's two days is booked as fixing P&L in that position's time step (2026-11-17), as settlement
+already was; P008 missed its first coupon at the 2026-11-16 fixing. The
 previous worst day (2026-10-09, 38bp) was a short AAPL call a week from expiry valued at 426% vol:
 AAPL weeklies are quoted only near the money, and the fitted SVI wing shot upward past the last
 quote. Fitted wings that put their kink outside the quotes or break Lee's moment bound now

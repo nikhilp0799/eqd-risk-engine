@@ -429,6 +429,13 @@ fell only 2% ($6.0K to $5.9K), the rates step got worse ($2 to $391) and days ov
 forward, and a noisy q and the surface built on it partly cancel in P008's price; holding q alone
 moves the noise into the vol step. A fix has to stabilise the forwards the vols are inverted with,
 not the exotics' q.
+
+**A coupon fixing between the explain's two days is booked as fixing P&L (since 2026-11-17).**
+Every state after day0 is marked with day1's lifecycle status, so an autocall coupon paid or missed
+in between landed in the time step, where theta cannot predict it. That position's time step is now
+booked as explained, with a note, as settlement already was; its other steps are explained as usual,
+and its theta for that day is lost. P008 missed its first coupon at the 2026-11-16 fixing (NVDA
+156.14 against the 168.87 barrier; coupon memory now 1, so the February observation would pay two).
 The largest remaining day (2026-09-28, 25bp) is
 almost all P008; it was 9bp before the wing guard only because P004's mispricing offset it. Residuals carry a
 Monte Carlo standard error, so a day is flagged only when the gap exceeds the 5bp threshold by more
@@ -670,7 +677,7 @@ partial rather than assumed.
 | P&L explain telescoping | Total actual P&L across all 4 steps matches true full-reval P&L to $10^{-9}$ relative |
 | P&L explain on equity/varswap positions | Exactly zero residual in every step (linear payoff for equity; marked to 0 by construction for varswap) — an exact, not approximate, design validation |
 | P&L explain, real multi-day | 4 real consecutive day-pairs (2026-08-31 through 2026-09-04): residuals of +$151.7k, -$252.4k, +$349.0k, -$170.7k — genuinely oscillating in sign, not a cherry-picked single "good" day |
-| Full test suite | 2,001 unit/property/integration tests passing (2026-11-15); ruff and mypy clean throughout |
+| Full test suite | 2,002 unit/property/integration tests passing (2026-11-17); ruff and mypy clean throughout |
 
 Several real defects were caught during development by writing a test for a claim rather than
 trusting the algebra or a single manual check — a pattern this document treats as evidence of
