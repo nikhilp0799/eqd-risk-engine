@@ -849,3 +849,62 @@ def test_explain_prices_band_vegas_only_for_the_vol_step_state():
     # The same paths and seeds as the daily mark, so common random numbers hold.
     daily = pe.MCSettings()
     assert dataclasses.replace(pe.EXPLAIN_VOL_STATE_SETTINGS, vega_bands=()) == daily
+
+
+def test_a_coupon_fixing_between_the_days_is_booked_in_the_time_step(tmp_path, monkeypatch):
+    """2026-11-16: P008's coupon fixing fell between the explain's two days. Every
+    state after day0 carries day1's lifecycle status, so the outcome landed in the
+    time step, where theta cannot predict it."""
+    import eqdrisk.pricing.pnl_explain as pe
+    from eqdrisk.portfolio.mark import MCSettings, mark_with_state
+
+    _write_both_days(tmp_path, vol_bump_day1=0.0)
+    notional, coupon = 1_000_000, 0.02
+    book = _write_portfolio_yaml(
+        tmp_path,
+        [
+            {
+                "id": "A1",
+                "type": "autocall",
+                "underlying": UNDERLYING,
+                "notional": notional,
+                "autocall_barrier": 1.0,
+                "coupon_barrier": 0.75,
+                "put_barrier": 0.6,
+                "coupon": coupon,
+                "obs": "quarterly",
+                # Quarterly back from expiry: an observation on DAY1 itself.
+                "expiry": "2027-08-21",
+                "issue_date": "2026-05-21",
+                # Spot 102 on DAY1: above the 90 coupon barrier, below the 120 autocall.
+                "initial_level": 120.0,
+            }
+        ],
+    )
+    cheap = MCSettings(n_paths=512, autocall_n_steps_per_period=2, n_batches=2)
+
+    def cheap_mark(*args, mc_settings=None, **kwargs):
+        # run_pnl_explain passes its own settings (band vegas for the vol state)
+        bands = mc_settings.vega_bands if mc_settings else ()
+        return mark_with_state(
+            *args, mc_settings=dataclasses.replace(cheap, vega_bands=bands), **kwargs
+        )
+
+    monkeypatch.setattr(pe, "mark_with_state", cheap_mark)
+    cfg = _cfg(tmp_path)
+
+    booked = run_pnl_explain(cfg, DAY0, DAY1, book)
+    assert not booked.skipped
+    note = booked.notes["A1"]
+    assert note.startswith(f"coupon of {notional * coupon:,.0f} paid at a fixing after {DAY0}")
+    assert "booked as fixing in the time step" in note
+
+    monkeypatch.setattr(pe, "_fixing_events", lambda *a: {})
+    unbooked = run_pnl_explain(cfg, DAY0, DAY1, book)
+    time_actual = next(s for s in unbooked.steps if s.step == "time").actual_pnl
+    # Without the booking the coupon is time-step residual; with it, gone.
+    assert abs(unbooked.by_position_residual["A1"]) > 0.5 * notional * coupon
+    assert booked.by_position_residual["A1"] == pytest.approx(
+        unbooked.by_position_residual["A1"]
+        - (time_actual - next(s for s in unbooked.steps if s.step == "time").explained_pnl)
+    )

@@ -81,7 +81,7 @@ from eqdrisk.portfolio.mark import (
     load_market_state,
     mark_with_state,
 )
-from eqdrisk.portfolio.schema import Portfolio
+from eqdrisk.portfolio.schema import AutocallPosition, Portfolio
 from eqdrisk.vol.local_vol import local_variance_at
 
 STEP_NAMES: tuple[str, ...] = ("time", "rates_divs", "spot", "vol")
@@ -549,6 +549,7 @@ def run_pnl_explain(
     # gives its standard error. Closed-form positions contribute the same
     # residual to every sub-run.
     n_batches = max((len(m.batches) for m in marks[0].values() if m.batches), default=1)
+    fixings = _fixing_events(cfg, portfolio, day0, day1, priced_all)
     position_residuals: dict[str, float] = {}
     position_batches: dict[str, np.ndarray] = {}
 
@@ -562,12 +563,21 @@ def run_pnl_explain(
             m_prev, m_cur = marks_prev[pid], marks_cur[pid]
             actual = m_cur.price - m_prev.price
             settling = m_cur.status == lifecycle.SETTLED and m_prev.status != lifecycle.SETTLED
+            fixing = step == "time" and pid in fixings
             if settling:
                 # Expiry, autocall or maturity between the two days: the move to
                 # the settled value is settlement P&L, not something the Greeks
                 # should have predicted (planning/position_lifecycle_plan.md).
                 explained = actual
                 result.notes[pid] = f"settled: {m_cur.note}; {actual:+,.2f} booked as settlement"
+            elif fixing:
+                # A coupon fixing between the two days: every state after day0
+                # carries day1's lifecycle status, so the outcome lands in the time
+                # step, where theta cannot predict it (planning/fixing_event_explain_plan.md).
+                explained = actual
+                result.notes[pid] = (
+                    f"{fixings[pid]}; {actual:+,.2f} booked as fixing in the time step"
+                )
             else:
                 explained = _explained_for_step(
                     step, m_prev, days_elapsed, states[step_idx], states[step_idx + 1]
@@ -578,7 +588,7 @@ def run_pnl_explain(
 
             batches = (
                 np.zeros(n_batches)
-                if settling
+                if settling or fixing
                 else _batch_residuals(
                     step, m_prev, m_cur, days_elapsed, states[step_idx], states[step_idx + 1]
                 )
@@ -607,7 +617,7 @@ def run_pnl_explain(
         ):
             note = _coverage_note(m, states[3].surface[u], states[4].surface[u])
             if note:
-                result.notes[pid] = note
+                result.notes[pid] = "; ".join(n for n in (result.notes.get(pid), note) if n)
 
     result.basis_lines = _basis_lines(marks[2], marks[3], states, priced_all)
     result.by_position_residual_se = {
@@ -621,6 +631,31 @@ def run_pnl_explain(
     result.breaches = _detect_breaches(result)
     _persist(result, Path(cfg.paths.curated))
     return result
+
+
+def _fixing_events(
+    cfg: BaseConfig, portfolio: Portfolio, day0: dt.date, day1: dt.date, priced: set[str]
+) -> dict[str, str]:
+    """Autocalls whose coupon state changed between the two days without settling:
+    a coupon paid or missed at a fixing in between, described for the note."""
+    out = {}
+    for p in portfolio.positions:
+        if p.id not in priced or not isinstance(p, AutocallPosition):
+            continue
+        try:
+            s0 = lifecycle.position_status(cfg, day0, p)
+            s1 = lifecycle.position_status(cfg, day1, p)
+        except lifecycle.LifecycleError:
+            continue
+        if s1.status == lifecycle.SETTLED or (s0.coupons_paid, s0.memory) == (
+            s1.coupons_paid,
+            s1.memory,
+        ):
+            continue
+        paid = s1.coupons_paid - s0.coupons_paid
+        what = f"coupon of {paid:,.0f} paid" if paid > 0 else "coupon missed"
+        out[p.id] = f"{what} at a fixing after {day0} (coupon memory {s0.memory} -> {s1.memory})"
+    return out
 
 
 def _basis_lines(
