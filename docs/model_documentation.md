@@ -100,6 +100,18 @@ strikes with both legs clean for a fit takes its forward from that day's forward
 `implied_vols.forward_source = "curve"`). Beyond the last reliable expiry the forward curve
 continues at the carry measured over its last 0.25y, not flat.
 
+The American bias was measured on 2026-11-18, over 154 NVDA expiry-days from 0.5y. On 98% of them,
+the forward each strike implies, $(C-P)/DF + K$, falls as the strike rises. The median slope is
+-175bp per 100% of moneyness: -136bp at 0.5-1y, -188bp at 1-1.5y and -361bp at 1.5-2.5y. Above
+spot the put is in the money, and its early-exercise premium is what this slope shows. The fitted
+forward is a spread-weighted mean over whichever strikes pass that day, so it moves with the strike
+mix. Against the at-the-money intercept of a line through the strikes it sits +6.6bp ± 9.7bp
+higher. The same expiry's fitted log forward-over-spot moves 16.7bp a day RMS on consecutive days.
+That is 9.8bp at 0.5-1y and 32.0bp at 1.5-2.5y, against about 9bp from real rate moves. The
+at-the-money intercept brings 16.7bp down to 12.8bp, so the strike mix accounts for part of the
+noise, not most of it. This noise reaches the long-dated single-name vols and the NVDA
+autocallable's mark (Section 4).
+
 For SPX the forward fit counts a quote if its contract traded at any point in that day's session;
 the vol stage, and the single names' fits, keep the 30-minute last-trade rule. Long-dated index
 options rarely trade in the last half hour, and the fit needs the call and the put at the same
