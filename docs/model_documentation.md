@@ -112,6 +112,18 @@ at-the-money intercept brings 16.7bp down to 12.8bp, so the strike mix accounts 
 noise, not most of it. This noise reaches the long-dated single-name vols and the NVDA
 autocallable's mark (Section 4).
 
+A marked carry was then tried. Every single-name expiry from 0.5y took one held q: the median of
+the last 10 days' at-the-money fits, applied before IV inversion, so that the surface and the
+pricing shared one forward. It was measured on a rebuild of all 37 explain pairs, against a pass
+rule set in advance, and rejected (2026-11-18). P008's mark barely moved (median 0.06%) and the
+book's spot-step residual fell 32%. But P008's total residual rose 9% ($6,000 to $6,529 RMS),
+days over 5bp went from 20 to 25, and the vol step did not shrink: holding q moved the forward
+noise into the long-dated vols. The held q also lagged a real move, NVDA's implied q rising from
+about 10bp to 66bp over November. Two more NVDA days fell back to SSVI from tiny calendar
+crossings between two long expiries 0.1y apart. The forward and the vol surface move together,
+and P008's price changes little. The weak part is how the explain splits that change between
+its spot and vol steps, not the market inputs.
+
 For SPX the forward fit counts a quote if its contract traded at any point in that day's session;
 the vol stage, and the single names' fits, keep the 30-minute last-trade rule. Long-dated index
 options rarely trade in the last half hour, and the fit needs the call and the put at the same
