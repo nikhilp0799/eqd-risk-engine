@@ -167,6 +167,17 @@ approach was incompatible with a clipped inner linear solve (see project decisio
 2026-08-21) — the two were interacting to silently ignore the constraint in some cases before the
 mismatch was found and fixed.
 
+**Measured later (2026-11-20): the fallback fires far more often than intended.** The calendar check
+compares slices on their quoted strike ranges widened by a 0.05 log-moneyness margin, at a 1e-8
+total-variance tolerance, and one crossing anywhere refits the whole surface. Over the stored
+history, SPX fell back to SSVI on every one of its 49 days, NVDA on 28 of 55 and AAPL on 19 of 55. For 98% of
+NVDA's crossings the worst point sat in the margin, beyond the last quote. Most crossings were
+between short expiries about 5 days apart. On quoted strikes only, NVDA crossed on 8 days and AAPL
+on 7, by a median 0.7 and 1.3 vol points. The cost is fit quality: SSVI's slice RMSE was a median
+1.6 vol points on SPX and 1.5 on NVDA, against 0.3 for NVDA's SVI days. On NVDA the switch also
+moves the NVDA autocallable's explain: its residual was about $7,900 RMS on the 17 of 37 day pairs where the
+model switched between the two days, against about $3,600 on the 20 where it did not.
+
 ### 3.3 Pricing models per product, with rationale
 
 | Product | Model | Rationale |
