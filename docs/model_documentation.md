@@ -161,7 +161,9 @@ across all expiries with the sufficient no-arbitrage condition $\eta(1+|\rho|) \
 a hard constraint) — arbitrage-free *by construction* rather than checked after the fact. This is
 not a hypothetical fallback path: it fired for real on SPX on 2026-09-04 (all 14 expiries,
 confirmed via direct query of the persisted `vol_surface` table), while AAPL and NVDA's SVI fits on
-the same day needed no fallback. **A less obvious tuning issue was also caught and fixed by
+the same day needed no fallback. Rechecked on 2026-11-21 against the stored implied vols as rebuilt
+since then (40 SPX expiries that day): the slices do not cross anywhere they are quoted, so the
+crossing behind that fallback lay in the margin beyond the last quotes (see below). **A less obvious tuning issue was also caught and fixed by
 testing, not assumed correct:** the constrained SLSQP solver used for one intermediate refit
 approach was incompatible with a clipped inner linear solve (see project decision log,
 2026-08-21) — the two were interacting to silently ignore the constraint in some cases before the
@@ -174,9 +176,22 @@ history, SPX fell back to SSVI on every one of its 49 days, NVDA on 28 of 55 and
 NVDA's crossings the worst point sat in the margin, beyond the last quote. Most crossings were
 between short expiries about 5 days apart. On quoted strikes only, NVDA crossed on 8 days and AAPL
 on 7, by a median 0.7 and 1.3 vol points. The cost is fit quality: SSVI's slice RMSE was a median
-1.6 vol points on SPX and 1.5 on NVDA, against 0.3 for NVDA's SVI days. On NVDA the switch also
-moves the NVDA autocallable's explain: its residual was about $7,900 RMS on the 17 of 37 day pairs where the
-model switched between the two days, against about $3,600 on the 20 where it did not.
+1.6 vol points on SPX and 1.5 on NVDA, against 0.3 for NVDA's SVI days. The NVDA autocallable's
+explain residual was also larger when the model switched: about $7,900 RMS on the 17 of 37 day pairs
+where it switched between the two days, against about $3,600 on the 20 where it did not.
+
+A fix was then tested and rejected (2026-11-21). It checked crossings only on quoted strikes, and
+refit the thinner slice of a crossing pair under a no-crossing constraint, with whole-surface SSVI kept
+as the last resort. Over the stored history the fits improved sharply. SSVI days fell from 49 to 11 on SPX, 28
+to 0 on NVDA and 19 to 1 on AAPL, and the median worst-slice RMSE fell from 4.18 to 0.62 vol points
+on SPX and from 6.59 to 1.01 on NVDA. The explain got worse, though, on a rebuild of all 37 pairs.
+The NVDA autocallable's residual rose from $6,000 to $6,616 RMS, book days over 5bp rose from 20
+to 24, and the SPX positions' combined residual rose from $160 to $462 RMS. The day pairs that had switched kept
+their large residuals now that both days were SVI ($9,352 to $10,073 RMS on SVI-to-SSVI pairs).
+So the switch marked days with messy long-dated quotes rather than causing the residual. Days that
+had been SSVI on both sides got worse ($3,107 to $4,799): a smooth two-parameter surface moves less
+from day to day than slices fitted one at a time, and the explain depends on day-to-day stability
+more than on the closest fit to each day's quotes.
 
 ### 3.3 Pricing models per product, with rationale
 
@@ -695,7 +710,7 @@ partial rather than assumed.
 | Black-76 price vs. QuantLib | Matches to $10^{-8}$; delta/gamma/vega/vanna/dividend_rho to $10^{-6}$ |
 | rho, volga conventions vs. QuantLib | Two Greeks confirmed (by hand derivation) to use a different, documented convention, not a bug |
 | Put-call parity, monotonicity in vol, IV round-trip | Property-based tests (`hypothesis`), not just fixed examples |
-| SVI/SSVI arbitrage checks | A genuine real SPX calendar-arbitrage violation (2026-09-04, all 14 expiries) correctly triggered the SSVI fallback |
+| SVI/SSVI arbitrage checks | The SSVI fallback fires on real data (SPX, 2026-09-04, all 14 expiries). Rechecked 2026-11-21: that day's crossing lay beyond the last quotes, not on quoted strikes (Section 3.2) |
 | Local-vol MC reprice of calibrated vanillas | Within a fraction of a standard error; grid-resolution convergence quantified, not assumed |
 | Barrier discretization bias | Naive discrete monitoring: >25 SE biased low at a coarse 16-step grid; Brownian-bridge correction: ~0.1 SE at the *same* step count |
 | Barrier in+out = vanilla parity | Model-independent identity, validated across strike/barrier configurations |
