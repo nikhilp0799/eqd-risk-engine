@@ -33,13 +33,15 @@ OUT_DIR = PROJECT_ROOT / "showcase" / "src" / "data"
 
 DEEP_HEDGE_DATE = dt.date(2026, 9, 22)
 # Latest stored day (SPX keeps its long end daily since the 2026-10-27 forward fix).
-VOL_SURFACE_DATE = dt.date(2026, 10, 29)
+VOL_SURFACE_DATE = dt.date(2026, 11, 17)
 VOL_SURFACE_UNDERLYING = "SPX"
 # Vol surface PCA run over the whole stored history (`eqdrisk volpca`).
 VOL_PCA_DATE = dt.date(2026, 10, 30)
 VOL_PCA_UNDERLYINGS = ("SPX", "AAPL", "NVDA")
 # Latest full VaR run (`eqdrisk var`); the time series covers every stored day.
-VAR_DATE = dt.date(2026, 10, 29)
+VAR_DATE = dt.date(2026, 11, 17)
+# Conditional and reverse stress are run by hand, last on 2026-10-29.
+STRESS_DATE = dt.date(2026, 10, 29)
 VAR_WINDOW = 500
 VAR_HISTOGRAM_BINS = 30
 VAR_HISTOGRAM_TOP_QUANTILE = 0.99
@@ -527,14 +529,14 @@ def export_var() -> dict[str, Any]:
 
 
 def export_stress() -> dict[str, Any]:
-    """Conditional and reverse stress (Steps 11.3/11.4) on the VaR date's book."""
+    """Conditional and reverse stress (Steps 11.3/11.4) on the stress date's book."""
 
     def on_date(table: str) -> pd.DataFrame:
         df = _read(table)
         df["asof_date"] = pd.to_datetime(df["asof_date"]).dt.date
-        out = df[df["asof_date"] == VAR_DATE]
+        out = df[df["asof_date"] == STRESS_DATE]
         if out.empty:
-            raise ValueError(f"no {table} rows for {VAR_DATE}")
+            raise ValueError(f"no {table} rows for {STRESS_DATE}")
         return out
 
     cond = on_date("conditional_stress")
@@ -579,7 +581,7 @@ def export_stress() -> dict[str, Any]:
             }
         )
     payload = {
-        "asof_date": VAR_DATE.isoformat(),
+        "asof_date": STRESS_DATE.isoformat(),
         "conditional": conditional,
         "moves_at_minus_20": key_moves,
         "crash_betas": {
