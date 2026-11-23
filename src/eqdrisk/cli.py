@@ -223,6 +223,25 @@ def portfolio(
 
 
 @app.command()
+def quotenoise(
+    date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
+    portfolio_path: str = typer.Option(
+        "configs/portfolio.yaml", "--portfolio", help="Path to portfolio config"
+    ),
+    config: str = typer.Option("configs/base.yaml", help="Path to base config"),
+    draws: int = typer.Option(30, help="Surface refits per underlying"),
+) -> None:
+    """Measure each MC exotic's mark noise from bid-ask: refit the surface to quotes
+    moved inside their spreads, reprice on one fixed seed, store the SD. The P&L
+    explain adds it to the Monte Carlo SE (planning/p008_noise_band_plan.md)."""
+    from eqdrisk.portfolio.quote_noise import run_quote_noise
+
+    cfg = BaseConfig.from_yaml(config)
+    result = run_quote_noise(cfg, dt.date.fromisoformat(date), portfolio_path, n_draws=draws)
+    typer.echo(result.render())
+
+
+@app.command()
 def varswap(
     date: str = typer.Option(..., help="Snapshot date, YYYY-MM-DD"),
     config: str = typer.Option("configs/base.yaml", help="Path to base config"),

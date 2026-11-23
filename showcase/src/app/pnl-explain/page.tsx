@@ -155,9 +155,11 @@ export default function PnlExplainPage() {
         <p>
           <strong className="text-ink">Alert level and noise.</strong>{" "}
           {pnlExplain.residual_alert_threshold_bp}bp of NAV per day. Monte Carlo-priced positions
-          carry a standard error from 16 independently scrambled sub-runs; a day alerts only if the
-          residual exceeds the threshold by more than two standard errors, and is inconclusive when
-          the noise band alone is wider than the threshold.
+          carry a standard error from 16 independently scrambled sub-runs, plus quote noise: how
+          far their mark moves when the surface is refit to quotes moved inside their bid-ask
+          spreads. A day alerts only if the residual exceeds the threshold by more than two
+          standard deviations of that combined noise, and is inconclusive when the noise band alone
+          is wider than the threshold.
         </p>
         <p>
           <strong className="text-ink">What changed.</strong> Better-conditioned Greeks for the

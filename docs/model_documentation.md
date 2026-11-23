@@ -295,6 +295,33 @@ rejected: on P008 over 23 day pairs it gave 21.0bp mean spot-step residual with 
 and 7.3bp with a sticky-moneyness grid, against 7.1bp for sticky-moneyness Greeks, so the gain is
 the convention, not the ladder.
 
+**Noise band: Monte Carlo error plus quote noise (since 2026-11-22).** A residual is an alert only
+when it exceeds the 5bp threshold by more than 2 standard deviations of noise, and is inconclusive
+when that band alone is wider than the threshold. The noise has two independent parts, added in
+quadrature. The first is the Monte Carlo standard error from 16 scrambled sub-runs. The second is
+quote noise (`portfolio/quote_noise.py`, daily `quotenoise` step): an option quote pins the price
+only to within its bid-ask spread, so each day every OK implied vol is moved uniformly inside its
+half-spread in vol ((ask - bid) / 2 / vega), the name's whole surface is refit with the production
+calibration, the local-vol grid is rebuilt, and each Monte Carlo exotic is repriced on one fixed
+seed, so path noise cancels between draws. The SD over 30 such refits is that day's quote noise; the
+residual carries both days' marks, so the explain uses sqrt(day0^2 + day1^2). The band is measured
+from quotes only and never fitted to residuals. On the 37 stored pairs (rebuilt 2026-11-22 with
+residuals reproduced exactly):
+
+| | Monte Carlo SE only | plus quote noise |
+|---|---|---|
+| P008 noise RMS | $1,797 | $3,940 (quote noise alone $3,506) |
+| P008 RMS z-score | 6.26 | 2.03 |
+| P008 days more than 2 SD out | 51% | 35% (pure noise would give about 5%) |
+| book days alert / inconclusive / ok | 16 / 9 / 12 | 5 / 32 / 0 |
+
+Two conclusions. Bid-ask noise is about 43% of P008's residual variance, which is why three fixes to
+its inputs (Section 4) could not remove it; the rest is a real residual beyond noise. And the 5bp
+threshold ($2,119 on a $4.2M NAV) is tighter than P008 can be marked: its quote noise alone ranges
+$330-6,430 a day (half-spreads about 0.3 vol points in October, about 1.0 in November), so no day
+can now read as clean, and the five surviving alerts (largest 57bp on 2026-11-12) are the days to
+investigate. The SPX barrier (P007), now nearly worthless, carries $1-3 of quote noise.
+
 ### 3.6 VaR and Expected Shortfall (Steps 8.3 and 9, `risk/proxy.py`, `risk/var.py`)
 
 **Scenarios.** Historical simulation: each scenario is one past trading day (or overlapping 10-day
@@ -488,8 +515,9 @@ and its theta for that day is lost. P008 missed its first coupon at the 2026-11-
 156.14 against the 168.87 barrier; coupon memory now 1, so the February observation would pay two).
 The largest remaining day (2026-09-28, 25bp) is
 almost all P008; it was 9bp before the wing guard only because P004's mispricing offset it. Residuals carry a
-Monte Carlo standard error, so a day is flagged only when the gap exceeds the 5bp threshold by more
-than its noise.
+Monte Carlo standard error and, since 2026-11-22, the exotics' quote noise from bid-ask (Section
+3.5), so a day is flagged only when the gap exceeds the 5bp threshold by more than that noise; about
+43% of P008's residual variance turned out to be quote noise.
 
 **Several input-stability choices are judgment calls, tuned on this five-name universe.** The
 local-vol term-structure smoothing strength is fixed (`T_SMOOTHING_LAM = 0.01`), chosen by
@@ -727,7 +755,7 @@ partial rather than assumed.
 | P&L explain telescoping | Total actual P&L across all 4 steps matches true full-reval P&L to $10^{-9}$ relative |
 | P&L explain on equity/varswap positions | Exactly zero residual in every step (linear payoff for equity; marked to 0 by construction for varswap) — an exact, not approximate, design validation |
 | P&L explain, real multi-day | 4 real consecutive day-pairs (2026-08-31 through 2026-09-04): residuals of +$151.7k, -$252.4k, +$349.0k, -$170.7k — genuinely oscillating in sign, not a cherry-picked single "good" day |
-| Full test suite | 2,002 unit/property/integration tests passing (2026-11-17); ruff and mypy clean throughout |
+| Full test suite | 2,011 unit/property/integration tests passing (2026-11-22); ruff and mypy clean throughout |
 
 Several real defects were caught during development by writing a test for a claim rather than
 trusting the algebra or a single manual check — a pattern this document treats as evidence of
