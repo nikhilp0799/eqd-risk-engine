@@ -60,12 +60,12 @@ export default function PnlExplainPage() {
         <strong>{madeOrLost(pnl.actual)}</strong>{" "}
         against <strong>{signedUsdCompact(pnl.expected)}</strong> expected by the risk model. The gap of{" "}
         <strong>{usdCompact(Math.abs(pnl.unexplained))}</strong> is{" "}
-        {pct(Math.abs(pnl.unexplainedPctOfBook), 2)} of book value (simulation noise &plusmn;
+        {pct(Math.abs(pnl.unexplainedPctOfBook), 2)} of book value (noise band &plusmn;
         {pct(pnl.noiseBandPct, 2)}),{" "}
         {pnl.status === "alert"
           ? `beyond the ${pct(pnl.alertPctOfBook, 2)} alert level, so it is flagged and traced to the ${pnl.topPositionLabel}.`
           : pnl.status === "inconclusive"
-            ? "too close to the alert level to call once simulation noise is allowed for, so it is not flagged."
+            ? "too close to the alert level to call once simulation and market-quote noise are allowed for, so it is not flagged."
             : `inside the ${pct(pnl.alertPctOfBook, 2)} alert level.`}{" "}
         On the 16 days measured before and after the engine was improved, the average daily gap fell
         from {pct(pnl.meanGapBeforePct, 2)} to {pct(pnl.meanGapAfterPct, 2)} of book value.
@@ -116,7 +116,7 @@ export default function PnlExplainPage() {
 
       <Card
         title="Alert history"
-        subtitle={`Unexplained P&L as a share of book value, one bar per trading day. A day alerts only when the gap is wider than the ±${pct(pnl.alertPctOfBook, 2)} alert level even after allowing for simulation noise: ${pnl.daysBreached} of ${pnl.daysRecorded} days alert, ${pnl.daysInconclusive} are within noise and ${pnl.daysWithinThreshold} are clear. The largest gaps used to come from NVIDIA's weekly options moving the structured note's model; the note is now simulated from options at least a month out.`}
+        subtitle={`Unexplained P&L as a share of book value, one bar per trading day. A day alerts only when the gap is wider than the ±${pct(pnl.alertPctOfBook, 2)} alert level even after allowing for simulation and market-quote noise: ${pnl.daysBreached} of ${pnl.daysRecorded} days alert, ${pnl.daysInconclusive} are within noise and ${pnl.daysWithinThreshold} are clear. The largest gaps used to come from NVIDIA's weekly options moving the structured note's model; the note is now simulated from options at least a month out.`}
       >
         <AlertHistory data={history} highlightDate={pnlExplain.asof_date} />
         <p className="mt-3 text-xs text-muted">

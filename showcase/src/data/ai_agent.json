@@ -1,33 +1,33 @@
 {
-  "day0": "2026-10-29",
-  "asof_date": "2026-11-02",
-  "unexplained": 48224.686980333296,
-  "unexplained_bp": 119.8330456225681,
+  "day0": "2026-11-11",
+  "asof_date": "2026-11-12",
+  "unexplained": 19552.561035927425,
+  "unexplained_bp": 57.383951722615116,
   "top_position_id": "P008",
-  "top_position_share_pct": 89.85686193772854,
+  "top_position_share_pct": 99.63620206268833,
   "model": "qwen2.5:7b",
   "confidence": "high",
-  "summary": "Today's P&L explain indicates a large residual of +107.7 basis points of NAV for position P008, which is significantly higher than the historical average. The residual is driven by sensitivity differences between the model and the actual position, as evidenced by the price delta and gamma changes under the hypothetical spot and vol shock.",
-  "root_cause_hypothesis": "Position P008 shows a large residual of +107.7bp of NAV, which could be due to model misspecification or input data issues, given the significant price delta and gamma changes under the hypothetical shock scenario.",
+  "summary": "Today, the P&L explain showed a large residual of +153.3bp of NAV, primarily driven by position P008, which had a residual of +151.9bp of NAV. The what-if reprice result for position P008 under a 10% spot decline and 25% vol increase revealed a hypothetical price delta of -502,421 and a hypothetical vega of -1565029.967. These results suggest a significant model misspecification or data issue affecting this position.",
+  "root_cause_hypothesis": "Position P008's large residual indicates a potential model misspecification or data issue, likely due to an unexpected response to the recent spot and volatility changes. The what-if reprice results for this position do not align with the model's expectations, which may indicate an issue with the underlying market dynamics or model parameters.",
   "factcheck": {
     "status": "verified",
-    "n_numbers": 3,
+    "n_numbers": 6,
     "unsupported": [],
     "mislabelled": [],
-    "retried": false
+    "retried": true
   },
   "flagged_positions": [
     {
       "position_id": "P008",
-      "reason": "Large residual of +107.7bp of NAV"
+      "reason": "large residual and mismatched sensitivity to spot and vol shocks"
     }
   ],
   "proposed_changes": [
     {
-      "parameter": "model calibration",
-      "current_value": "current",
-      "suggested_value": "re-calibrate",
-      "rationale": "Given the large residual, re-calibrating the model may help improve the accuracy of the price and volatility sensitivities, reducing the residual."
+      "parameter": "gamma and vega calibration",
+      "current_value": "unknown from given data",
+      "suggested_value": "re-calibrate gamma and vega to match observed market behavior",
+      "rationale": "To address the discrepancy between model and actual sensitivities, re-calibrating the gamma and vega parameters will ensure the model better reflects the current market conditions and reduces the residual. Further investigation into data quality and model assumptions is also recommended."
     }
   ],
   "trace": [
@@ -35,7 +35,7 @@
       "round": 1,
       "tool_name": "what_if_reprice",
       "arguments": "{\"position_id\": \"P008\", \"spot_shock_pct\": -0.1, \"vol_shock_pct\": 0.25}",
-      "result_summary": "{\"position_id\": \"P008\", \"spot_shock_pct\": -0.1, \"vol_shock_pct\": 0.25, \"base_price\": 4550709.0304322, \"shocked_price\": 4076238.5449869814, \"price_delta\": -474470.4854452186, \"shocked_delta\": 16143.88347030818, \"shocked_gamma\": 287.96144138667984, \"shocked_vega\": -2037510.0955300033}"
+      "result_summary": "{\"position_id\": \"P008\", \"spot_shock_pct\": -0.1, \"vol_shock_pct\": 0.25, \"base_price\": 3945536.36109293, \"shocked_price\": 3443115.207576247, \"price_delta\": -502421.15351668326, \"shocked_delta\": 19347.095428149143, \"shocked_gamma\": -1685.5616702887885, \"shocked_vega\": -1565029.9673519796}"
     }
   ],
   "position_underlyings": {
