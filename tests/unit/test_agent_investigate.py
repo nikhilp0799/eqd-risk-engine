@@ -107,6 +107,7 @@ def test_historical_trend_summarizes_real_persisted_residuals(tmp_path):
                 "residual_se": 0.0,
                 "total_residual_se": 0.0,
                 "nav": 1_000_000.0,
+                "total_quote_noise": None,
             }
         )
     table = validate(pd.DataFrame(rows), PNL_EXPLAIN_SCHEMA, PNL_EXPLAIN_REQUIRED_NOT_NULL)

@@ -68,6 +68,7 @@ def test_run_completes_and_writes_every_stages_artifact(tmp_path, mocked_sources
         "varswap",
         "riskfactors",
         "portfolio",
+        "quotenoise",
         "explainpnl",
         "ai_investigate",
     ):

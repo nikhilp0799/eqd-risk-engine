@@ -652,11 +652,14 @@ def _valid_residual_series(steps_all: pd.DataFrame, by_pos_all: pd.DataFrame) ->
     days that have both, e.g. 2026-09-10 and 2026-09-17).
     """
     marks = _read("portfolio_marks").groupby("asof_date")["price"].sum()
+    if "total_quote_noise" not in steps_all.columns:  # rows written before 2026-11-22
+        steps_all = steps_all.assign(total_quote_noise=np.nan)
     daily = steps_all.groupby(["day0", "asof_date"], as_index=False).agg(
         residual=("residual", "sum"),
         nav=("nav", "max"),
         gross=("actual_pnl", lambda s: s.abs().sum()),
         se=("total_residual_se", "max"),
+        quote_noise=("total_quote_noise", "max"),
     )
     series = []
     for row in daily.sort_values("asof_date").itertuples():
@@ -668,7 +671,10 @@ def _valid_residual_series(steps_all: pd.DataFrame, by_pos_all: pd.DataFrame) ->
         ]
         top = pos.loc[pos["residual"].abs().idxmax()] if not pos.empty else None
         residual_bp = 10_000.0 * row.residual / nav
-        band_bp = 2 * 10_000.0 * row.se / nav if pd.notna(row.se) else 0.0
+        # The explain's own rule: MC SE and quote noise in quadrature, 2 SD.
+        se = row.se if pd.notna(row.se) else 0.0
+        quote_noise = row.quote_noise if pd.notna(row.quote_noise) else 0.0
+        band_bp = 2 * 10_000.0 * float(np.hypot(se, quote_noise)) / nav
         if abs(residual_bp) - band_bp > RESIDUAL_ALERT_THRESHOLD_BP:
             status = "alert"
         elif band_bp > RESIDUAL_ALERT_THRESHOLD_BP:

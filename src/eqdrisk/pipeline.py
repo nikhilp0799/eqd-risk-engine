@@ -1,6 +1,6 @@
 """Full daily pipeline orchestration (README Step 16 integration/reproducibility bar):
 `eqdrisk run --date X` used to be a stub even though every individual stage it needs
-(`ingest`/`curves`/`iv`/`calibrate`/`price`/`varswap`/`riskfactors`/`portfolio`/`explainpnl`)
+(`ingest`/`curves`/`iv`/`calibrate`/`price`/`varswap`/`riskfactors`/`portfolio`/`quotenoise`/`explainpnl`)
 already existed and runs daily via `scripts/daily_ingest.sh`. This module gives that
 sequence a real, in-process, testable implementation so `make reproduce DATE=X` and the
 README's own "eqdrisk run --date X completes and writes all artifacts" integration-test
@@ -115,6 +115,7 @@ def run_daily_pipeline(
     from eqdrisk.io.snapshot import run_snapshot
     from eqdrisk.marketdata.forward import run_forward_construction
     from eqdrisk.portfolio.mark import mark_portfolio
+    from eqdrisk.portfolio.quote_noise import run_quote_noise
     from eqdrisk.pricing.engine import run_pricing
     from eqdrisk.pricing.pnl_explain import PnLExplainResult, run_pnl_explain
     from eqdrisk.pricing.varswap_engine import run_varswap
@@ -145,6 +146,7 @@ def run_daily_pipeline(
     _stage("varswap", lambda: run_varswap(cfg, asof))
     _stage("riskfactors", lambda: run_risk_factor_grid(cfg, asof))
     _stage("portfolio", lambda: mark_portfolio(cfg, asof, portfolio_path))
+    _stage("quotenoise", lambda: run_quote_noise(cfg, asof, portfolio_path))
 
     day0 = last_n_trading_days(asof, 2, cfg.calendar)[0]
     pnl_result: PnLExplainResult | None = None

@@ -250,6 +250,38 @@ def _numeric_durrleman_g(w_func, k: np.ndarray, h: float = 1e-4) -> np.ndarray:
     return (1 - k * wp / (2 * w)) ** 2 - (wp**2 / 4) * (1 / w + 0.25) + wpp / 2
 
 
+def slice_rows(slices: list[SliceCalibration], asof: dt.date) -> list[dict]:
+    """One `vol_surface` row per calibrated slice: the table's columns, and the
+    frame `load_market_state` reads back. Shared with the quote-noise refits
+    (portfolio/quote_noise.py), which price on surfaces never written to disk."""
+    return [
+        {
+            "asof_date": asof,
+            "underlying": s.underlying,
+            "expiry": s.expiry,
+            "T": s.T,
+            "model": s.model,
+            "a": s.params.get("a"),
+            "b": s.params.get("b"),
+            "rho": s.params.get("rho"),
+            "m": s.params.get("m"),
+            "sigma": s.params.get("sigma"),
+            "eta": s.params.get("eta"),
+            "theta": s.params.get("theta"),
+            "n_points": s.n_points,
+            "rmse_vol_points": s.rmse_vol_points,
+            "max_abs_error_vol_points": s.max_abs_error_vol_points,
+            "max_abs_error_k": s.max_abs_error_k,
+            "butterfly_violations": s.butterfly_violations,
+            "calendar_violated": s.calendar_violated,
+            "n_carried": s.n_carried,
+            "k_min": s.k_min,
+            "k_max": s.k_max,
+        }
+        for s in slices
+    ]
+
+
 def run_surface_calibration(
     cfg: BaseConfig, asof: dt.date, underlyings: list[str] | None = None
 ) -> SurfaceCalibrationResult:
@@ -282,32 +314,7 @@ def run_surface_calibration(
         if sabr_comparison:
             result.sabr_comparison[underlying] = sabr_comparison
 
-        for s in slices:
-            out_rows.append(
-                {
-                    "asof_date": asof,
-                    "underlying": s.underlying,
-                    "expiry": s.expiry,
-                    "T": s.T,
-                    "model": s.model,
-                    "a": s.params.get("a"),
-                    "b": s.params.get("b"),
-                    "rho": s.params.get("rho"),
-                    "m": s.params.get("m"),
-                    "sigma": s.params.get("sigma"),
-                    "eta": s.params.get("eta"),
-                    "theta": s.params.get("theta"),
-                    "n_points": s.n_points,
-                    "rmse_vol_points": s.rmse_vol_points,
-                    "max_abs_error_vol_points": s.max_abs_error_vol_points,
-                    "max_abs_error_k": s.max_abs_error_k,
-                    "butterfly_violations": s.butterfly_violations,
-                    "calendar_violated": s.calendar_violated,
-                    "n_carried": s.n_carried,
-                    "k_min": s.k_min,
-                    "k_max": s.k_max,
-                }
-            )
+        out_rows.extend(slice_rows(slices, asof))
 
     if out_rows:
         table = validate(pd.DataFrame(out_rows), VOL_SURFACE_SCHEMA, VOL_SURFACE_REQUIRED_NOT_NULL)

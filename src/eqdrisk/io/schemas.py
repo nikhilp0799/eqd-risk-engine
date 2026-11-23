@@ -459,6 +459,10 @@ PNL_EXPLAIN_SCHEMA = pa.schema(
         # seeds, so the total's SE can't be rebuilt from them.
         ("total_residual_se", pa.float64()),
         ("nav", pa.float64()),  # day1's total book value — lets readers compute bp of NAV
+        # Quote noise of the total residual (portfolio/quote_noise.py): the MC
+        # exotics' day0 and day1 mark noise from bid-ask, combined. Null before
+        # 2026-11-22 or when a day was not measured.
+        ("total_quote_noise", pa.float64()),
     ]
 )
 PNL_EXPLAIN_REQUIRED_NOT_NULL = [
@@ -479,12 +483,32 @@ PNL_EXPLAIN_BY_POSITION_SCHEMA = pa.schema(
         ("position_id", pa.string()),
         ("residual", pa.float64()),
         ("residual_se", pa.float64()),  # see PNL_EXPLAIN_SCHEMA
+        # sqrt(day0^2 + day1^2) of the position's `quote_noise_sd`; null when
+        # either day is unmeasured or the position is closed-form.
+        ("quote_noise", pa.float64()),
         # Caveat for this position's residual, e.g. the surface's long end changed
         # between the two days. Null when there is none.
         ("note", pa.string()),
     ]
 )
 PNL_EXPLAIN_BY_POSITION_REQUIRED_NOT_NULL = ["asof_date", "day0", "position_id", "residual"]
+
+
+QUOTE_NOISE_SCHEMA = pa.schema(
+    [
+        ("asof_date", pa.date32()),
+        ("position_id", pa.string()),
+        ("underlying", pa.string()),
+        # SD of the position's mark over refits to quotes moved inside their
+        # bid-ask spread, on one fixed Monte Carlo seed (portfolio/quote_noise.py).
+        ("quote_noise_sd", pa.float64()),
+        ("n_draws", pa.int64()),
+        ("half_spread_vol_points", pa.float64()),  # median over the name's OK quotes
+        # Share of draws whose surface model (SVI / SSVI) differs from the stored one.
+        ("model_flip_share", pa.float64()),
+    ]
+)
+QUOTE_NOISE_REQUIRED_NOT_NULL = ["asof_date", "position_id", "underlying", "quote_noise_sd"]
 
 
 HISTORICAL_REPLAY_SCHEMA = pa.schema(

@@ -82,6 +82,11 @@ sys.exit(0 if is_trading_day(datetime.date.today()) else 1)
     echo "--- portfolio ---"
     "$EQDRISK" portfolio --date "$TODAY" || echo "PORTFOLIO FAILED"
 
+    # Before the explain, which reads it: each MC exotic's mark noise from bid-ask
+    # (30 surface refits per name, about 2 minutes each).
+    echo "--- quotenoise ---"
+    "$EQDRISK" quotenoise --date "$TODAY" || echo "QUOTENOISE FAILED"
+
     # day0 = the latest earlier trading day with complete market data of its own,
     # not simply the previous trading day: a day whose option-chain ingest failed
     # is explained across rather than skipped twice (planning/decisions.md, 2026-10-04).

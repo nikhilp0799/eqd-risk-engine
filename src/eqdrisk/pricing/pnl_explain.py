@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -81,6 +82,7 @@ from eqdrisk.portfolio.mark import (
     load_market_state,
     mark_with_state,
 )
+from eqdrisk.portfolio.quote_noise import load_quote_noise
 from eqdrisk.portfolio.schema import AutocallPosition, Portfolio
 from eqdrisk.vol.local_vol import local_variance_at
 
@@ -305,10 +307,14 @@ class PnLExplainResult:
     by_position_residual: dict[str, float] = field(default_factory=dict)
     by_position_residual_se: dict[str, float] = field(default_factory=dict)
     total_residual_se: float = 0.0
+    # Quote noise (portfolio/quote_noise.py): sqrt(day0^2 + day1^2) of each MC
+    # exotic's stored mark SD from bid-ask, only when both days were measured.
+    by_position_quote_noise: dict[str, float] = field(default_factory=dict)
+    total_quote_noise: float = 0.0
     nav: float = 0.0
     breaches: list[str] = field(default_factory=list)
-    # Residuals whose Monte Carlo noise band (2 SE) is itself wider than the
-    # alert threshold: neither an alert nor a clean bill of health.
+    # Residuals whose noise band (2 x MC SE and quote noise combined) is itself
+    # wider than the alert threshold: neither an alert nor a clean bill of health.
     inconclusive: list[str] = field(default_factory=list)
     # Per-position caveats (e.g. surface coverage changed between the two days).
     notes: dict[str, str] = field(default_factory=dict)
@@ -349,7 +355,7 @@ class PnLExplainResult:
             f"explained={self.total_explained():+,.2f}  residual={self.total_residual():+,.2f}"
             f" +- {2 * self.total_residual_se:,.2f}"
             f"  ({self.total_residual_bp():+.1f} +- {self._bp(2 * self.total_residual_se):.1f}bp"
-            f" of NAV, 2 SE)"
+            f" of NAV, 2 SE)" + _quote_noise_text(self.total_quote_noise, self._bp)
         )
         for b in self.basis_lines:
             lines.append(f"  {b}")
@@ -361,6 +367,7 @@ class PnLExplainResult:
                 lines.append(
                     f"    {pid}: {r:+,.2f} +- {2 * se:,.2f}  "
                     f"({bp:+.1f} +- {self._bp(2 * se):.1f}bp of NAV)"
+                    + _quote_noise_text(self.by_position_quote_noise.get(pid, 0.0), self._bp)
                 )
         for b in self.breaches:
             lines.append(f"  ALERT: {b}")
@@ -373,6 +380,25 @@ class PnLExplainResult:
         for name, reason in self.skipped.items():
             lines.append(f"  SKIPPED {name}: {reason}")
         return "\n".join(lines)
+
+
+def _quote_noise_text(quote_noise: float, to_bp: Callable[[float], float]) -> str:
+    if quote_noise <= 0.0:
+        return ""
+    return f"; quote noise +- {2 * quote_noise:,.2f} ({to_bp(2 * quote_noise):.1f}bp, 2 SD)"
+
+
+def _combine_quote_noise(
+    marks: dict[str, PositionMark], day0_sd: dict[str, float], day1_sd: dict[str, float]
+) -> dict[str, float]:
+    """Per MC exotic, sqrt(day0^2 + day1^2) of its stored quote-noise SD. The two
+    days' quotes are independent draws of bid-ask noise, and the residual carries
+    both marks. A position missing either day gets none (not half a band)."""
+    return {
+        pid: float(np.hypot(day0_sd[pid], day1_sd[pid]))
+        for pid, m in marks.items()
+        if m.type in ("barrier", "autocall") and pid in day0_sd and pid in day1_sd
+    }
 
 
 def _mixed_state(
@@ -626,6 +652,15 @@ def run_pnl_explain(
     result.total_residual_se = _standard_error(
         np.sum(list(position_batches.values()), axis=0) if position_batches else np.zeros(1)
     )
+    curated_root = Path(cfg.paths.curated)
+    result.by_position_quote_noise = _combine_quote_noise(
+        {pid: marks[0][pid] for pid in priced_all},
+        load_quote_noise(curated_root, day0),
+        load_quote_noise(curated_root, day1),
+    )
+    result.total_quote_noise = float(
+        np.sqrt(sum(q**2 for q in result.by_position_quote_noise.values()))
+    )
     result.by_position_residual = position_residuals
     result.nav = sum(m.price for m in marks[-1].values())
     result.breaches = _detect_breaches(result)
@@ -683,25 +718,34 @@ def _basis_lines(
     ]
 
 
-def _classify(dollars: float, se: float, nav: float, label: str) -> tuple[str | None, str | None]:
+def _classify(
+    dollars: float, se: float, nav: float, label: str, quote_noise: float = 0.0
+) -> tuple[str | None, str | None]:
     """(alert, inconclusive) message for one residual, at most one non-None.
 
     Breach beyond noise (planning/pnl_explain_noise_plan.md, user decision
     2026-10-05): an alert only when the residual exceeds the threshold even
-    after allowing 2 standard errors of Monte Carlo noise. If the residual
-    clears that bar it is an alert however noisy it is. Otherwise, if 2 SE alone
-    is wider than the threshold, the residual cannot be told apart from noise
-    either way: inconclusive, not an alert and not a clean pass."""
+    after allowing 2 standard deviations of noise. If the residual clears that
+    bar it is an alert however noisy it is. Otherwise, if the 2-SD band alone is
+    wider than the threshold, the residual cannot be told apart from noise
+    either way: inconclusive, not an alert and not a clean pass.
+
+    Noise is the Monte Carlo SE and, for MC exotics, the quote noise of both
+    days' marks (planning/p008_noise_band_plan.md, 2026-11-22), independent and
+    added in quadrature."""
+    noise = float(np.hypot(se, quote_noise))
     threshold = RESIDUAL_ALERT_THRESHOLD_BP * nav / 10_000.0 if nav else 0.0
     bp = 10_000.0 * dollars / nav if nav else 0.0
-    band_bp = 10_000.0 * 2 * se / nav if nav else 0.0
-    shown = f"{label} residual {bp:+.1f}bp of NAV (+- {band_bp:.1f}bp, 2 SE)"
-    if abs(dollars) - 2 * se > threshold:
+    band_bp = 10_000.0 * 2 * noise / nav if nav else 0.0
+    what = "2 SD, MC and quote noise" if quote_noise > 0.0 else "2 SE"
+    shown = f"{label} residual {bp:+.1f}bp of NAV (+- {band_bp:.1f}bp, {what})"
+    if abs(dollars) - 2 * noise > threshold:
         return f"{shown} exceeds the {RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp threshold", None
-    if 2 * se > threshold:
-        return None, (
-            f"{shown}: Monte Carlo noise is wider than the "
-            f"{RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp threshold"
+    if 2 * noise > threshold:
+        source = "Monte Carlo and quote noise are" if quote_noise > 0.0 else "Monte Carlo noise is"
+        return (
+            None,
+            f"{shown}: {source} wider than the {RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp threshold",
         )
     return None, None
 
@@ -712,12 +756,19 @@ def _detect_breaches(result: PnLExplainResult) -> list[str]:
     convention, beyond Monte Carlo noise (see `_classify`). Returns the alert
     messages and sets `result.inconclusive` for noise-dominated residuals."""
     breaches, inconclusive = [], []
-    checks = [("total", result.total_residual(), result.total_residual_se)] + [
-        (f"position {pid}", r, result.by_position_residual_se.get(pid, 0.0))
+    checks = [
+        ("total", result.total_residual(), result.total_residual_se, result.total_quote_noise)
+    ] + [
+        (
+            f"position {pid}",
+            r,
+            result.by_position_residual_se.get(pid, 0.0),
+            result.by_position_quote_noise.get(pid, 0.0),
+        )
         for pid, r in sorted(result.by_position_residual.items())
     ]
-    for label, dollars, se in checks:
-        alert, unclear = _classify(dollars, se, result.nav, label)
+    for label, dollars, se, quote_noise in checks:
+        alert, unclear = _classify(dollars, se, result.nav, label, quote_noise)
         if alert:
             breaches.append(alert)
         if unclear:
@@ -740,6 +791,9 @@ def _persist(result: PnLExplainResult, curated_root: Path) -> None:
             "residual_se": s.residual_se,
             "total_residual_se": result.total_residual_se,
             "nav": result.nav,
+            "total_quote_noise": (
+                result.total_quote_noise if result.by_position_quote_noise else None
+            ),
         }
         for s in result.steps
     ]
@@ -754,6 +808,7 @@ def _persist(result: PnLExplainResult, curated_root: Path) -> None:
                 "position_id": pid,
                 "residual": r,
                 "residual_se": result.by_position_residual_se.get(pid, 0.0),
+                "quote_noise": result.by_position_quote_noise.get(pid),
                 "note": result.notes.get(pid),
             }
             for pid, r in result.by_position_residual.items()
