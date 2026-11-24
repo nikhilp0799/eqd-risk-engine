@@ -1,5 +1,6 @@
-"""The daily snapshot from a GitHub Actions runner, as a test
-(planning/sleep_safe_snapshot_plan.md, `.github/workflows/cloud_snapshot.yml`).
+"""The daily snapshot from a GitHub Actions runner, scheduled on weekdays at 16:32 ET as a
+backup for days the Mac sleeps (planning/sleep_safe_snapshot_plan.md,
+`.github/workflows/cloud_snapshot.yml`).
 
 On 2026-11-10 the SPX day was lost because the Mac was asleep at the close. A
 cloud runner does not sleep; whether Yahoo answers one is the open question,
@@ -8,7 +9,7 @@ data/) and prints, per name, what a usable chain needs: quotes, quotes with a
 bid, and quotes traded inside the staleness window. Exits 0 either way, so the
 workflow still uploads what it got.
 
-    python scripts/cloud_snapshot.py --out cloud_snapshot
+    python scripts/cloud_snapshot.py --out cloud_snapshot [--scheduled]
 """
 
 from __future__ import annotations
@@ -29,6 +30,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default="cloud_snapshot")
     parser.add_argument("--config", default="configs/base.yaml")
+    parser.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="a scheduled run: skip NYSE holidays instead of fetching anyway",
+    )
     args = parser.parse_args()
 
     out = Path(args.out)
@@ -39,6 +45,9 @@ def main() -> None:
     now = pd.Timestamp.now(tz=NY_TZ)
     asof = now.date()
     print(f"cloud snapshot at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    if not is_trading_day(asof) and args.scheduled:
+        print(f"{asof} is not a trading day: nothing to snapshot")
+        return
     if not is_trading_day(asof):
         print(f"{asof} is not a trading day: chains fetched anyway, as a reachability test")
 

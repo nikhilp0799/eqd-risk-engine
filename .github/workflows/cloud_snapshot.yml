@@ -1,11 +1,17 @@
-# A test of the daily snapshot from GitHub's servers (planning/sleep_safe_snapshot_plan.md):
-# does Yahoo answer a cloud runner with usable option chains at the close? Run by hand
-# (Actions tab, "Cloud snapshot", Run workflow), ideally between 16:30 and 16:45 ET on a
-# trading day. No schedule until a manual run shows it works.
+# The daily snapshot from GitHub's servers (planning/sleep_safe_snapshot_plan.md): a backup of
+# the option chains for days the Mac sleeps through the 16:30 run. Scheduled on weekdays at
+# 16:32 ET; the first scheduled runs also answer the open question, whether Yahoo gives a cloud
+# runner usable chains at the close. Can still be run by hand (Actions tab, "Cloud snapshot",
+# Run workflow), which always fetches.
 name: Cloud snapshot
 
 on:
   workflow_dispatch:
+  # Cron is UTC and ignores daylight saving: 20:32 UTC is 16:32 EDT and 21:32 UTC is 16:32 EST.
+  # Both fire every weekday; the gate step lets only the one near the close continue.
+  schedule:
+    - cron: "32 20 * * 1-5"
+    - cron: "32 21 * * 1-5"
 
 concurrency:
   group: cloud-snapshot
@@ -16,22 +22,44 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      # Scheduled runs can start late. Between 16:20 and 17:20 ET the SPX chain is still
+      # usable (measured 2026-11-06: fine at 17:00, gone by 17:30); outside it the run stops
+      # here, before the install, so the other cron costs seconds.
+      - name: Gate on the ET clock
+        id: gate
+        run: |
+          now=$(TZ=America/New_York date +%H%M)
+          echo "asof=$(TZ=America/New_York date +%F)" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" != "schedule" ] || { [ "$now" -ge 1620 ] && [ "$now" -le 1720 ]; }; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "skipped: ${now:0:2}:${now:2:2} ET is outside 16:20-17:20 (the other cron covers the close)"
+          fi
+      - if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v4
+      - if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
       # CPU torch: the default Linux wheel brings about 2.5 GB of CUDA, minutes of a window
       # that closes at 17:00 for SPX. The snapshot does not use torch at all.
       - name: Install
+        if: steps.gate.outputs.run == 'true'
         run: pip install --extra-index-url https://download.pytorch.org/whl/cpu -e .
+      # Scheduled runs skip NYSE holidays; manual runs fetch anyway, as a reachability test.
       - name: Snapshot
-        run: python scripts/cloud_snapshot.py --out cloud_snapshot
-      # Kept 3 days, long enough for the local run to fetch; nothing is committed.
-      - uses: actions/upload-artifact@v4
-        if: always()
+        if: steps.gate.outputs.run == 'true'
+        run: >-
+          python scripts/cloud_snapshot.py --out cloud_snapshot
+          ${{ github.event_name == 'schedule' && '--scheduled' || '' }}
+      # Kept 3 days, long enough for the local run to fetch; nothing is committed. Named by the
+      # ET date so the local run can find the day's snapshot.
+      - if: always() && steps.gate.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
         with:
-          name: cloud-snapshot-${{ github.run_id }}
+          name: cloud-snapshot-${{ steps.gate.outputs.asof }}
           path: cloud_snapshot/
           retention-days: 3
           if-no-files-found: warn
