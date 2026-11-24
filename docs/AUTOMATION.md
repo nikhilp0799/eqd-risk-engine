@@ -126,7 +126,12 @@ hold a closed laptop on battery either. Keep the lid open, or the Mac on power, 
 17:00 on trading days. The run log now says when this happens: `*** ASLEEP: the Mac slept 2h31m
 of the 2h43m since the run started ... ***`, from the gap between the wall clock and the monotonic
 clock, which stops during sleep (`src/eqdrisk/io/runclock.py`). A snapshot from GitHub's servers,
-which do not sleep, is being tested (`.github/workflows/cloud_snapshot.yml`, run by hand for now).
+which do not sleep, runs on weekdays at 16:32 ET (`.github/workflows/cloud_snapshot.yml`,
+scheduled since 2026-11-24 after SPX was lost five days running): two UTC crons cover daylight and
+standard time, a first step lets only the one between 16:20 and 17:20 ET continue, NYSE holidays
+are skipped, and the chains are kept 3 days as the run artifact `cloud-snapshot-YYYY-MM-DD`. Its
+first runs also test whether Yahoo answers GitHub's servers; the daily run does not use the
+artifact yet. `gh run list --workflow cloud_snapshot.yml` shows the runs.
 
 ## Checking on it
 
