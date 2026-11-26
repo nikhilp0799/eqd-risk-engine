@@ -36,6 +36,15 @@ option-implied spot runs -45bp to +24bp from the close day to day. Measured on
 the close, P002 (deep in-the-money SPX call) carried that basis as residual,
 correlation 0.997 over 36 day pairs. The basis is printed per underlying instead.
 
+**MC exotics' carry and smile shape are explained by revaluation** (2026-11-25,
+planning/p008_alert_days_plan.md): two more states split the spot step into pure
+spot (the forward curve moved with spot alone) plus the change in the forward's
+carry, and the vol step into the ATM level by maturity plus the smile's shape.
+The Greeks answer for pure spot and level; carry and shape, which no Greek
+covers, are full-revaluation P&L, counted as explained and stored apart
+(`reval_pnl`, `carry_pnl`, `shape_pnl`) so no report mistakes them for Greek
+predictions. On P008's five alert days nearly all the residual was these two.
+
 **Positions with an incomplete Greek set contribute their own honest gap, not a
 fabricated explanation:** MC-priced positions (barrier, autocall) started with
 delta/gamma/vega only (Step 7's scope limit); vanna/volga, theta and rho were
@@ -71,6 +80,7 @@ from eqdrisk.io.schemas import (
     validate,
 )
 from eqdrisk.marketdata.calendar import last_n_trading_days
+from eqdrisk.marketdata.forward import ForwardCurve
 from eqdrisk.portfolio import lifecycle
 from eqdrisk.portfolio.mark import (
     VEGA_BAND_EDGES,
@@ -96,6 +106,18 @@ EXPLAIN_VOL_STATE_SETTINGS = MCSettings(vega_bands=VEGA_BAND_EDGES)
 # total residual and, per position, the same convention (no evidence anywhere in
 # this project that a different per-position number was intended).
 RESIDUAL_ALERT_THRESHOLD_BP = 5.0
+
+# Carry and smile-shape revaluation lines for MC exotics (2026-11-25,
+# planning/p008_alert_days_plan.md). Two more states split the spot step into
+# pure spot + the change in the forward's carry, and the vol step into the ATM
+# level by maturity + the smile's shape. No Greek covers carry or shape, so
+# each is explained by full revaluation and stored as `reval_pnl`; the Greeks
+# answer for pure spot and level. On P008's five alert days the residual was
+# almost all carry and shape (RMS $11,903 -> $1,138 without them), and the two
+# offset on other days, so they are covered together. Price-only, on the daily
+# mark's paths and seeds, so common random numbers hold with the other states.
+REVAL_STATE_SETTINGS = MCSettings(greeks=False, exotic_theta=False)
+MC_EXOTIC_TYPES = ("barrier", "autocall")
 
 
 def _atm_iv(surface: pd.DataFrame, T: float) -> float | None:
@@ -203,6 +225,57 @@ def _coverage_note(
     )
 
 
+def _carry_held_forward(fc: ForwardCurve, spot_prev: float, spot_cur: float) -> ForwardCurve:
+    """`fc` moved with spot alone: every forward scaled by spot_cur / spot_prev,
+    so the carry (the forward against spot) is the previous day's."""
+    return ForwardCurve(
+        pillar_T=fc.pillar_T,
+        pillar_log_forward=fc.pillar_log_forward + np.log(spot_cur / spot_prev),
+        long_end_carry=fc.long_end_carry,
+    )
+
+
+def _ssvi_as_raw_svi(row: pd.Series) -> pd.Series:
+    """An SSVI slice as the identical raw-SVI slice (Gatheral and Jacquier 2014),
+    so its level can move by its `a` alone. SSVI slices are never wing-guarded,
+    so the quoted range is dropped and the guard stays off."""
+    row = row.copy()
+    if row["model"] != "SSVI":
+        return row
+    theta, rho, eta = float(row["theta"]), float(row["rho"]), float(row["eta"])
+    phi = eta / np.sqrt(theta)
+    row["model"] = "SVI"
+    row["a"] = theta / 2 * (1 - rho**2)
+    row["b"] = theta * phi / 2
+    row["m"] = -rho / phi
+    row["sigma"] = np.sqrt(1 - rho**2) / phi
+    row["k_min"] = np.nan
+    row["k_max"] = np.nan
+    return row
+
+
+def _relevelled_surface(
+    surface_prev: pd.DataFrame, surface_cur: pd.DataFrame
+) -> pd.DataFrame | None:
+    """`surface_prev`'s smiles, each shifted in total variance by the change in
+    the T-smoothed ATM total variance at its maturity: the current day's ATM
+    level by maturity (what the band vegas measure) with the previous day's
+    shape. None when either surface has too few pillars to read ATM."""
+    rows = []
+    for _, row in surface_prev.iterrows():
+        T = float(row["T"])
+        lv_prev, lv_cur = (
+            local_variance_at(surface_prev, 0.0, T),
+            local_variance_at(surface_cur, 0.0, T),
+        )
+        if lv_prev is None or lv_cur is None:
+            return None
+        raw = _ssvi_as_raw_svi(row)
+        raw["a"] = float(raw["a"]) + (lv_cur.w - lv_prev.w)
+        rows.append(raw)
+    return pd.DataFrame(rows).reset_index(drop=True)
+
+
 def _marks_by_id(result: PortfolioMarkResult) -> dict[str, PositionMark]:
     return {m.position_id: m for m in result.marks}
 
@@ -293,6 +366,9 @@ class StepResult:
     # Monte Carlo standard error of `residual` from the RQMC sub-runs of the
     # MC-priced positions; 0.0 when every position is closed-form.
     residual_se: float = 0.0
+    # The part of `explained_pnl` measured by revaluation, not Greeks: the MC
+    # exotics' carry (spot step) and smile shape (vol step).
+    reval_pnl: float = 0.0
 
     @property
     def residual(self) -> float:
@@ -311,6 +387,10 @@ class PnLExplainResult:
     # exotic's stored mark SD from bid-ask, only when both days were measured.
     by_position_quote_noise: dict[str, float] = field(default_factory=dict)
     total_quote_noise: float = 0.0
+    # MC exotics' revaluation lines: the carry change inside the spot step and
+    # the smile-shape change inside the vol step, both counted as explained.
+    by_position_carry: dict[str, float] = field(default_factory=dict)
+    by_position_shape: dict[str, float] = field(default_factory=dict)
     nav: float = 0.0
     breaches: list[str] = field(default_factory=list)
     # Residuals whose noise band (2 x MC SE and quote noise combined) is itself
@@ -349,6 +429,7 @@ class PnLExplainResult:
             lines.append(
                 f"  {s.step:>10}: actual={s.actual_pnl:+,.2f}  explained={s.explained_pnl:+,.2f}"
                 f"  residual={s.residual:+,.2f} +- {2 * s.residual_se:,.2f} (2 SE)"
+                + (f"  [revaluation {s.reval_pnl:+,.2f}]" if s.reval_pnl else "")
             )
         lines.append(
             f"  {'TOTAL':>10}: actual={self.total_actual():+,.2f}  "
@@ -368,6 +449,7 @@ class PnLExplainResult:
                     f"    {pid}: {r:+,.2f} +- {2 * se:,.2f}  "
                     f"({bp:+.1f} +- {self._bp(2 * se):.1f}bp of NAV)"
                     + _quote_noise_text(self.by_position_quote_noise.get(pid, 0.0), self._bp)
+                    + _reval_text(self.by_position_carry.get(pid), self.by_position_shape.get(pid))
                 )
         for b in self.breaches:
             lines.append(f"  ALERT: {b}")
@@ -380,6 +462,17 @@ class PnLExplainResult:
         for name, reason in self.skipped.items():
             lines.append(f"  SKIPPED {name}: {reason}")
         return "\n".join(lines)
+
+
+def _reval_text(carry: float | None, shape: float | None) -> str:
+    if carry is None and shape is None:
+        return ""
+    parts = [
+        f"{name} {v:+,.2f}"
+        for name, v in (("carry", carry), ("smile shape", shape))
+        if v is not None
+    ]
+    return "; explained by revaluation: " + ", ".join(parts)
 
 
 def _quote_noise_text(quote_noise: float, to_bp: Callable[[float], float]) -> str:
@@ -420,6 +513,50 @@ def _mixed_state(
         forward_curve=forward_from.forward_curve,
         grids=grids,
     )
+
+
+def _revaluation_states(
+    cfg: BaseConfig,
+    day1: dt.date,
+    portfolio: Portfolio,
+    state_day0: MarketState,
+    state_day1: MarketState,
+    state_3: MarketState,
+) -> dict[str, tuple[MarketState, set[str]]]:
+    """The mid states of the spot and vol steps, each with the underlyings it
+    actually splits (an underlying it cannot split keeps the plain step).
+
+    spot: day1 curve and spot, day0 surface, day0 forward curve moved with spot
+    alone; the spot step's Greeks answer for state 2 -> this, carry for the rest.
+    vol: state 3 with each underlying's day0 surface re-levelled to day1's ATM
+    term structure; the band vegas answer for state 3 -> this, shape for the rest.
+    """
+    spot_fwd = dict(state_day0.forward_curve)
+    spot_split = set()
+    for u, fc in state_day0.forward_curve.items():
+        if u in state_day0.spot and u in state_day1.spot:
+            spot_fwd[u] = _carry_held_forward(fc, state_day0.spot[u], state_day1.spot[u])
+            spot_split.add(u)
+    level_surface = dict(state_3.surface)
+    vol_split = set()
+    for u, surf_prev in state_3.surface.items():
+        if u not in state_day1.surface:
+            continue
+        relevelled = _relevelled_surface(surf_prev, state_day1.surface[u])
+        if relevelled is not None:
+            level_surface[u] = relevelled
+            vol_split.add(u)
+
+    def build(spot, surface, forward) -> MarketState:
+        grids = build_grids_for_state(cfg, day1, portfolio, spot, surface, forward)
+        return MarketState(
+            curve=state_day1.curve, spot=spot, surface=surface, forward_curve=forward, grids=grids
+        )
+
+    return {
+        "spot": (build(state_day1.spot, state_day0.surface, spot_fwd), spot_split),
+        "vol": (build(state_3.spot, level_surface, state_3.forward_curve), vol_split),
+    }
 
 
 def missing_market_data(cfg: BaseConfig, asof: dt.date, portfolio: Portfolio) -> list[str]:
@@ -555,6 +692,16 @@ def run_pnl_explain(
         for i in range(5)
     ]
 
+    # Revaluation lines (REVAL_STATE_SETTINGS): the spot step's carry and the vol
+    # step's smile shape, for the underlyings where the split could be built.
+    mid = _revaluation_states(cfg, day1, portfolio, state_day0, state_day1, states[3])
+    mid_marks = {
+        step: _marks_by_id(
+            mark_with_state(cfg, day1, portfolio, st, mc_settings=REVAL_STATE_SETTINGS)
+        )
+        for step, (st, _) in mid.items()
+    }
+
     # Every step must cover the SAME positions, or the step totals (and the
     # NAV-relative residual) mix different books. A position that fails to
     # price in any of the five states is left out of every step and reported.
@@ -583,7 +730,9 @@ def run_pnl_explain(
         marks_prev, marks_cur = marks[step_idx], marks[step_idx + 1]
         actual_total = 0.0
         explained_total = 0.0
+        reval_total = 0.0
         step_batches = np.zeros(n_batches)
+        state_mid, split_underlyings = mid.get(step, (None, set()))
 
         for pid in priced_all:
             m_prev, m_cur = marks_prev[pid], marks_cur[pid]
@@ -604,7 +753,26 @@ def run_pnl_explain(
                 result.notes[pid] = (
                     f"{fixings[pid]}; {actual:+,.2f} booked as fixing in the time step"
                 )
-            else:
+            split = (
+                state_mid is not None
+                and m_prev.type in MC_EXOTIC_TYPES
+                and m_prev.underlying in split_underlyings
+                and pid in mid_marks[step]
+            )
+            if not (settling or fixing) and split:
+                # Greeks for the move up to the mid state (pure spot, or the ATM
+                # level), revaluation for the rest (carry, or smile shape).
+                m_mid = mid_marks[step][pid]
+                assert state_mid is not None
+                reval = m_cur.price - m_mid.price
+                explained = (
+                    _explained_for_step(step, m_prev, days_elapsed, states[step_idx], state_mid)
+                    + reval
+                )
+                reval_total += reval
+                lines = result.by_position_carry if step == "spot" else result.by_position_shape
+                lines[pid] = reval
+            elif not (settling or fixing):
                 explained = _explained_for_step(
                     step, m_prev, days_elapsed, states[step_idx], states[step_idx + 1]
                 )
@@ -612,13 +780,19 @@ def run_pnl_explain(
             explained_total += explained
             position_residuals[pid] = position_residuals.get(pid, 0.0) + (actual - explained)
 
-            batches = (
-                np.zeros(n_batches)
-                if settling or fixing
-                else _batch_residuals(
+            if settling or fixing:
+                batches: np.ndarray | None = np.zeros(n_batches)
+            elif split:
+                # The revaluation part is exact per sub-run too, so each sub-run's
+                # residual is its Greeks' miss on the move to the mid state.
+                assert state_mid is not None
+                batches = _batch_residuals(
+                    step, m_prev, mid_marks[step][pid], days_elapsed, states[step_idx], state_mid
+                )
+            else:
+                batches = _batch_residuals(
                     step, m_prev, m_cur, days_elapsed, states[step_idx], states[step_idx + 1]
                 )
-            )
             per_batch = batches if batches is not None else np.full(n_batches, actual - explained)
             step_batches += per_batch
             position_batches[pid] = position_batches.get(pid, np.zeros(n_batches)) + per_batch
@@ -629,6 +803,7 @@ def run_pnl_explain(
                 actual_pnl=actual_total,
                 explained_pnl=explained_total,
                 residual_se=_standard_error(step_batches),
+                reval_pnl=reval_total,
             )
         )
 
@@ -794,6 +969,7 @@ def _persist(result: PnLExplainResult, curated_root: Path) -> None:
             "total_quote_noise": (
                 result.total_quote_noise if result.by_position_quote_noise else None
             ),
+            "reval_pnl": s.reval_pnl,
         }
         for s in result.steps
     ]
@@ -809,6 +985,8 @@ def _persist(result: PnLExplainResult, curated_root: Path) -> None:
                 "residual": r,
                 "residual_se": result.by_position_residual_se.get(pid, 0.0),
                 "quote_noise": result.by_position_quote_noise.get(pid),
+                "carry_pnl": result.by_position_carry.get(pid),
+                "shape_pnl": result.by_position_shape.get(pid),
                 "note": result.notes.get(pid),
             }
             for pid, r in result.by_position_residual.items()

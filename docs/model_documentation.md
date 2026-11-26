@@ -322,6 +322,32 @@ $330-6,430 a day (half-spreads about 0.3 vol points in October, about 1.0 in Nov
 can now read as clean, and the five surviving alerts (largest 57bp on 2026-11-12) are the days to
 investigate. The SPX barrier (P007), now nearly worthless, carries $1-3 of quote noise.
 
+**What the five alert days are (2026-11-25).** Each alert day, and five non-alert control days with
+similar NVDA moves, was rebuilt for P008 on the production seeds (stored residual reproduced
+exactly) with two extra full repricings that split each step into parts:
+- **Spot step:** pure spot (day0's forward curve shifted to day1's spot) plus the carry change
+  (day1's forward curve against that shifted curve).
+- **Vol step:** the level (day0's smile shifted in total variance to day1's ATM term structure)
+  plus the shape (skew and curvature).
+
+The Greeks that exist work. The level part is explained by the band vegas to within about $2K on
+every day, and pure spot by the sticky-moneyness delta and gamma, except on the -12% day (-$14.3K).
+The residual sits in the two moves no Greek covers, NVDA's implied carry and its smile shape:
+
+| | alert days (5) | control days (5) |
+|---|---|---|
+| RMS residual | $11,903 | $6,839 |
+| RMS carry part | $4,703 | $7,215 |
+| RMS shape part | $9,943 | $8,730 |
+| RMS residual without carry and shape | $1,138 | $7,573 (one -12% day: -$15.5K) |
+
+The two parts are just as large on the control days, and they tend to offset (correlation -0.38).
+**The alert days are not a different mechanism; they are the days the carry and shape moves did not
+cancel.** It follows that explaining only one of the two would move the residual to other days, not
+remove it: without carry, the 10-14 control day would go from -$2.1K to -$10.9K. Refitting day1 with
+day0's model family (three alert days switched between SVI and SSVI) changed the residual in both
+directions, so the model switch is not the cause.
+
 ### 3.6 VaR and Expected Shortfall (Steps 8.3 and 9, `risk/proxy.py`, `risk/var.py`)
 
 **Scenarios.** Historical simulation: each scenario is one past trading day (or overlapping 10-day
@@ -755,7 +781,7 @@ partial rather than assumed.
 | P&L explain telescoping | Total actual P&L across all 4 steps matches true full-reval P&L to $10^{-9}$ relative |
 | P&L explain on equity/varswap positions | Exactly zero residual in every step (linear payoff for equity; marked to 0 by construction for varswap) — an exact, not approximate, design validation |
 | P&L explain, real multi-day | 4 real consecutive day-pairs (2026-08-31 through 2026-09-04): residuals of +$151.7k, -$252.4k, +$349.0k, -$170.7k — genuinely oscillating in sign, not a cherry-picked single "good" day |
-| Full test suite | 2,011 unit/property/integration tests passing (2026-11-22); ruff and mypy clean throughout |
+| Full test suite | 2,017 unit/property/integration tests passing (2026-11-25); ruff and mypy clean throughout |
 
 Several real defects were caught during development by writing a test for a claim rather than
 trusting the algebra or a single manual check — a pattern this document treats as evidence of

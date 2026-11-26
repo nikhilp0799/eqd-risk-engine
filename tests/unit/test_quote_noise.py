@@ -150,12 +150,14 @@ def _state_and_book(tmp_path):
 
 def test_zero_spread_gives_exactly_zero_noise(tmp_path, monkeypatch):
     """Every draw refits the same quotes and prices on the same seed: the SD is
-    exactly zero, so Monte Carlo noise cannot leak into the quote-noise band."""
+    zero to rounding, so Monte Carlo noise cannot leak into the quote-noise band.
+    Not exactly zero: on Linux CI one run gave 2e-15 (2026-11-24), last-bit
+    differences between refits of identical quotes, against marks in the dollars."""
     monkeypatch.setattr(qn, "QUOTE_NOISE_MC", CHEAP_MC)
     cfg, book, state = _state_and_book(tmp_path)
     rows = qn.measure_underlying(cfg, DAY0, book, state, _quotes(DAY0, 0.0), n_draws=3)
     assert [r.position_id for r in rows] == ["B1"]
-    assert rows[0].sd == 0.0 and rows[0].model_flip_share == 0.0
+    assert rows[0].sd < 1e-9 and rows[0].model_flip_share == 0.0
 
 
 def test_a_real_spread_gives_positive_noise_that_grows_with_it(tmp_path, monkeypatch):

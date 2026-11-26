@@ -1,5 +1,5 @@
 import datetime as dt
-import io
+from types import SimpleNamespace
 
 import pandas as pd
 
@@ -67,16 +67,16 @@ def test_treasury_csv_parsed_to_the_fred_tenors_within_the_window(monkeypatch):
         "11/13/2026,4.10,4.18,4.32,4.42,4.65,4.88,4.98,5.15,5.47\n"
         "10/30/2026,4.00,4.05,4.20,4.25,4.35,4.55,4.65,4.85,5.20\n"
     )
-    urls = []
-    real_read_csv = pd.read_csv
+    calls = []
 
-    def read_csv(url):
-        urls.append(url)
-        return real_read_csv(io.StringIO(csv))
+    def get(url, timeout):
+        calls.append((url, timeout))
+        return SimpleNamespace(text=csv, raise_for_status=lambda: None)
 
-    monkeypatch.setattr(sources.pd, "read_csv", read_csv)
+    monkeypatch.setattr(sources.requests, "get", get)
     out = sources.fetch_treasury_rates(D(2026, 11, 1), D(2026, 11, 13))
-    assert len(urls) == 1 and "2026" in urls[0]
+    assert len(calls) == 1 and "2026" in calls[0][0]
+    assert calls[0][1] == sources.TREASURY_TIMEOUT_S  # never an unbounded read (2026-11-25)
     assert set(out["asof_date"]) == {D(2026, 11, 13)}
     assert dict(zip(out["tenor"], out["rate"], strict=True)) == {
         "1M": 4.10,

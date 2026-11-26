@@ -463,6 +463,10 @@ PNL_EXPLAIN_SCHEMA = pa.schema(
         # exotics' day0 and day1 mark noise from bid-ask, combined. Null before
         # 2026-11-22 or when a day was not measured.
         ("total_quote_noise", pa.float64()),
+        # The part of `explained_pnl` measured by full revaluation, not Greeks:
+        # the MC exotics' carry (spot step) and smile shape (vol step). Null
+        # before 2026-11-25 (planning/p008_alert_days_plan.md).
+        ("reval_pnl", pa.float64()),
     ]
 )
 PNL_EXPLAIN_REQUIRED_NOT_NULL = [
@@ -486,6 +490,11 @@ PNL_EXPLAIN_BY_POSITION_SCHEMA = pa.schema(
         # sqrt(day0^2 + day1^2) of the position's `quote_noise_sd`; null when
         # either day is unmeasured or the position is closed-form.
         ("quote_noise", pa.float64()),
+        # MC exotics' revaluation lines, counted as explained: the change in the
+        # forward's carry (spot step) and in the smile's shape (vol step). Null
+        # for closed-form positions and before 2026-11-25.
+        ("carry_pnl", pa.float64()),
+        ("shape_pnl", pa.float64()),
         # Caveat for this position's residual, e.g. the surface's long end changed
         # between the two days. Null when there is none.
         ("note", pa.string()),

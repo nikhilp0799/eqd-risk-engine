@@ -9,9 +9,11 @@ backtesting and historical stress replays cannot be built past scaffolding.
 from __future__ import annotations
 
 import datetime as dt
+import io
 
 import pandas as pd
 import pandas_datareader.data as web
+import requests
 import yfinance as yf
 
 NY_TZ = "America/New_York"
@@ -142,6 +144,11 @@ TREASURY_TENORS = {
     "10Y": "10 Yr",
 }
 SOFR_CARRIED = "FRED SOFR carried"
+# (connect, read) seconds. `pd.read_csv(url)` has no timeout: on 2026-11-25 the Mac
+# slept mid-download and the run sat in one SSL read for hours after waking, so
+# the day's later steps never ran. The read timeout is per socket read, so a
+# stalled connection raises and `fetch_rates` falls back to FRED.
+TREASURY_TIMEOUT_S = (10.0, 30.0)
 
 
 def fetch_rates(start: dt.date, end: dt.date) -> pd.DataFrame:
@@ -187,9 +194,11 @@ def fetch_fred_rates(start: dt.date, end: dt.date) -> pd.DataFrame:
 def fetch_treasury_rates(start: dt.date, end: dt.date) -> pd.DataFrame:
     """Treasury par yields over [start, end], same long format and tenors as
     `fetch_fred_rates` (no SOFR: that is the NY Fed's). One CSV per year."""
-    frames = [
-        pd.read_csv(TREASURY_CSV_URL.format(year=year)) for year in range(start.year, end.year + 1)
-    ]
+    frames = []
+    for year in range(start.year, end.year + 1):
+        resp = requests.get(TREASURY_CSV_URL.format(year=year), timeout=TREASURY_TIMEOUT_S)
+        resp.raise_for_status()
+        frames.append(pd.read_csv(io.StringIO(resp.text)))
     df = pd.concat(frames, ignore_index=True)
     df["asof_date"] = pd.to_datetime(df["Date"], format="%m/%d/%Y").dt.date
     df = df[(df["asof_date"] >= start) & (df["asof_date"] <= end)]
