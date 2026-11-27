@@ -53,9 +53,9 @@ VAR_HISTOGRAM_TOP_QUANTILE = 0.99
 # incident.
 IMPROVEMENT = {
     "mean_abs_bp_before": 104.9,
-    "mean_abs_bp_after": 9.5,
+    "mean_abs_bp_after": 3.3,
     "worst_bp_before": 299.4,
-    "worst_bp_after": 24.9,
+    "worst_bp_after": 11.8,
     "findings": [
         {
             "title": "Noisy risk numbers",
@@ -111,6 +111,13 @@ IMPROVEMENT = {
             "curve could shoot upward past the last quote, once valuing a deep in-the-money "
             "call at over 400% volatility. Past the last quote the curve now continues in a "
             "straight line, which cut that position's total gap by 95%.",
+        },
+        {
+            "title": "Two moves no sensitivity covers",
+            "body": "On the structured note's worst days, nearly all of the gap came from two "
+            "moves: the change in the carry priced into NVIDIA's forward and the change in the "
+            "shape of its volatility smile. No sensitivity measures either, so both are now valued "
+            "directly by repricing the note, which roughly halved its daily gap.",
         },
     ],
 }
@@ -631,6 +638,9 @@ def export_pnl_explain() -> dict[str, Any]:
                 "actual_pnl": float(row["actual_pnl"]),
                 "explained_pnl": float(row["explained_pnl"]),
                 "residual": float(row["residual"]),
+                # Part of explained_pnl measured by revaluation (MC exotics'
+                # carry and smile shape), not Greeks; 0 before 2026-11-25.
+                "reval_pnl": float(row["reval_pnl"]) if pd.notna(row.get("reval_pnl")) else 0.0,
             }
             for step, row in day_steps.iterrows()
         ],
@@ -654,14 +664,11 @@ def _valid_residual_series(steps_all: pd.DataFrame, by_pos_all: pd.DataFrame) ->
     days that have both, e.g. 2026-09-10 and 2026-09-17).
     """
     marks = _read("portfolio_marks").groupby("asof_date")["price"].sum()
-    if "total_quote_noise" not in steps_all.columns:  # rows written before 2026-11-22
-        steps_all = steps_all.assign(total_quote_noise=np.nan)
     daily = steps_all.groupby(["day0", "asof_date"], as_index=False).agg(
         residual=("residual", "sum"),
         nav=("nav", "max"),
         gross=("actual_pnl", lambda s: s.abs().sum()),
         se=("total_residual_se", "max"),
-        quote_noise=("total_quote_noise", "max"),
     )
     series = []
     for row in daily.sort_values("asof_date").itertuples():
@@ -673,10 +680,10 @@ def _valid_residual_series(steps_all: pd.DataFrame, by_pos_all: pd.DataFrame) ->
         ]
         top = pos.loc[pos["residual"].abs().idxmax()] if not pos.empty else None
         residual_bp = 10_000.0 * row.residual / nav
-        # The explain's own rule: MC SE and quote noise in quadrature, 2 SD.
+        # The explain's own rule: 2 x the Monte Carlo SE (quote noise is shown
+        # in the explain but not in its band since 2026-11-26).
         se = row.se if pd.notna(row.se) else 0.0
-        quote_noise = row.quote_noise if pd.notna(row.quote_noise) else 0.0
-        band_bp = 2 * 10_000.0 * float(np.hypot(se, quote_noise)) / nav
+        band_bp = 2 * 10_000.0 * float(se) / nav
         if abs(residual_bp) - band_bp > RESIDUAL_ALERT_THRESHOLD_BP:
             status = "alert"
         elif band_bp > RESIDUAL_ALERT_THRESHOLD_BP:

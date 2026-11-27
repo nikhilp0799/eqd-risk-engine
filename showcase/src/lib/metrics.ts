@@ -65,6 +65,7 @@ export const STATUS_LABELS: Record<PnlExplainData["status"], string> = {
 export const pnl = {
   actual: sum(pnlExplain.waterfall.map((s) => s.actual_pnl)),
   expected: sum(pnlExplain.waterfall.map((s) => s.explained_pnl)),
+  revalued: sum(pnlExplain.waterfall.map((s) => s.reval_pnl)),
   unexplained: residualTotal,
   unexplainedPctOfBook: (100 * residualTotal) / pnlExplain.nav,
   alertPctOfBook: pnlExplain.residual_alert_threshold_bp / 100,
