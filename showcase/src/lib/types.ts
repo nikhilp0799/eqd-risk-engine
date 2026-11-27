@@ -69,6 +69,8 @@ export interface PnlWaterfallStep {
   actual_pnl: number;
   explained_pnl: number;
   residual: number;
+  /** Part of explained_pnl measured by revaluing the exotics (carry, smile shape), not by Greeks. */
+  reval_pnl: number;
 }
 
 export interface PnlByPosition {

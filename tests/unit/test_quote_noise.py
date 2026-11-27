@@ -1,5 +1,6 @@
-"""Quote noise of MC exotics' marks (portfolio/quote_noise.py) and its use in the
-P&L explain's alert rule (planning/p008_noise_band_plan.md)."""
+"""Quote noise of MC exotics' marks (portfolio/quote_noise.py), measured and shown
+in the P&L explain but, since 2026-11-26, not in its alert band
+(planning/p008_noise_band_plan.md, planning/p008_alert_days_plan.md)."""
 
 import datetime as dt
 import functools
@@ -31,7 +32,13 @@ from eqdrisk.io.schemas import (
 )
 from eqdrisk.portfolio.mark import MCSettings, PositionMark, load_market_state, mark_with_state
 from eqdrisk.portfolio.schema import Portfolio
-from eqdrisk.pricing.pnl_explain import _classify, _combine_quote_noise, run_pnl_explain
+from eqdrisk.pricing.pnl_explain import (
+    PnLExplainResult,
+    StepResult,
+    _combine_quote_noise,
+    _detect_breaches,
+    run_pnl_explain,
+)
 
 CHEAP_MC = MCSettings(
     n_paths=2_048, barrier_n_steps=16, greeks=False, exotic_theta=False, n_batches=1
@@ -193,13 +200,33 @@ def test_band_needs_both_days_and_only_mc_exotics_get_one():
     assert out == {"B": pytest.approx(5.0)}
 
 
-def test_quote_noise_widens_the_band_before_an_alert():
+def test_quote_noise_is_shown_but_kept_out_of_the_alert_band():
+    """Since the revaluation lines (2026-11-25) the band is MC error alone: a
+    residual the MC band clears is an alert, and one inside it is clean, however
+    large the printed quote noise (user decision 2026-11-26)."""
     nav = 1_000_000.0  # 5bp threshold = $500
-    assert _classify(600.0, 100.0, nav, "p") == (None, None)  # 600 - 200 < 500
-    alert, unclear = _classify(600.0, 100.0, nav, "p", quote_noise=300.0)  # 2 x 316 > 500
-    assert alert is None and "Monte Carlo and quote noise are wider" in unclear
-    alert, unclear = _classify(2_000.0, 100.0, nav, "p", quote_noise=300.0)
-    assert unclear is None and "MC and quote noise" in alert
+
+    def result(residual: float) -> PnLExplainResult:
+        return PnLExplainResult(
+            day0=DAY0,
+            day1=DAY1,
+            steps=[StepResult("vol", residual, 0.0, 100.0)],
+            by_position_residual={"B1": residual},
+            by_position_residual_se={"B1": 100.0},
+            by_position_quote_noise={"B1": 300.0},
+            total_residual_se=100.0,
+            total_quote_noise=300.0,
+            nav=nav,
+        )
+
+    clean = result(400.0)  # 400 + 200 under 500; 2 x hypot(100, 300) would be 632
+    assert _detect_breaches(clean) == [] and clean.inconclusive == []
+    alert = result(900.0)  # 900 - 200 > 500; with quote noise, 900 - 632 would not be
+    breaches = _detect_breaches(alert)
+    assert len(breaches) == 2 and all("2 SE)" in b for b in breaches)
+    assert alert.inconclusive == []
+    alert.breaches = breaches
+    assert "2 SD, not in the alert band" in alert.render()
 
 
 def test_explain_adds_both_days_quote_noise(tmp_path, monkeypatch):

@@ -95,6 +95,16 @@ not tuned-to-look-clean ones:
   or that break Lee's moment bound now continue in a straight line past the last quote, and every
   pricing use reads slices through that one rule. Out of sample it beat the raw wing (mean error
   4.0 vs 7.0 vol points on 2,887 slices); the call's summed residual fell from $37.6K to $2.0K.
+- The autocallable's five alert days were split by full repricing (2026-11-25): the Greeks it has
+  explain the vol level and pure spot, and nearly all the residual was two moves no Greek covers,
+  the change in the carry priced into NVDA's forward and the change in its smile's shape. On five
+  quiet control days those two were just as large but offset each other, so the alert days were the
+  days they did not cancel. Both are now explained by revaluation, stored apart from the Greeks:
+  the note's residual RMS fell from $6,000 to $3,282 over 37 day pairs, and the book's mean
+  absolute residual from 10.8bp to 5.1bp of NAV. Bid-ask quote noise had been added to the alert
+  band a few days earlier; with most of it now in the revaluation lines it made every day
+  inconclusive, so the band is back to Monte Carlo error alone and quote noise is reported beside
+  it.
 - Building the dashboard (Step 14) surfaced a real gap: two stress-testing modules (Step 11) and
   P&L explain's per-position breakdown had never persisted their results to disk, only rendered
   them in-memory via the CLI — which would have meant either violating the dashboard's own "no
@@ -1288,9 +1298,16 @@ continue in a straight line past the last quote (2026-10-29); that day fell to 4
 summed absolute residual from $37.6K to $2.0K, and the sum of each position's absolute residual
 from 13.7 to 10.5bp (4.9 to 1.8bp without the autocallable). The net book figure moved less
 (9.3 to 8.9bp on the same 27 pairs) because the call's errors had been offsetting the
-autocallable's on some days. The largest remaining day (2026-09-28, 25bp) is almost all the
-autocallable. The 60+ day acceptance bar (median residual < 2bp) is
-still pending real history and is not met for the Monte Carlo exotics.
+autocallable's on some days. Before the revaluation lines below, the largest day (2026-09-28,
+25bp) was almost all the autocallable. Since 2026-11-25 the Monte Carlo exotics' carry change (inside the spot step) and
+smile-shape change (inside the vol step) are explained by revaluation, from two more priced states,
+after a drill-down found nearly all of the autocallable's alert-day residual there; the alert band
+is Monte Carlo error alone again, with each day's bid-ask quote noise printed beside it. Over all 37
+stored pairs the mean absolute residual is now 5.1bp (median 3.4bp; the largest, -39bp on
+2026-11-05, sits inside its own 46bp noise band), the sum of each position's absolute residual
+6.1bp (1.0bp without the autocallable), and 1 day alerts, 15 are inconclusive and 21 are clear. The
+60+ day acceptance bar (median residual < 2bp) is still pending real history and is not met for
+the Monte Carlo exotics.
 
 **This is the module that makes the project read as risk rather than pricing.**
 

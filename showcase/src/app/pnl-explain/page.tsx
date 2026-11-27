@@ -58,14 +58,14 @@ export default function PnlExplainPage() {
       <Takeaway>
         From {fmtDate(pnlExplain.day0)} to {fmtDate(pnlExplain.asof_date)} the book{" "}
         <strong>{madeOrLost(pnl.actual)}</strong>{" "}
-        against <strong>{signedUsdCompact(pnl.expected)}</strong> expected by the risk model. The gap of{" "}
+        against <strong>{signedUsdCompact(pnl.expected)}</strong> explained by the risk model. The gap of{" "}
         <strong>{usdCompact(Math.abs(pnl.unexplained))}</strong> is{" "}
         {pct(Math.abs(pnl.unexplainedPctOfBook), 2)} of book value (noise band &plusmn;
         {pct(pnl.noiseBandPct, 2)}),{" "}
         {pnl.status === "alert"
           ? `beyond the ${pct(pnl.alertPctOfBook, 2)} alert level, so it is flagged and traced to the ${pnl.topPositionLabel}.`
           : pnl.status === "inconclusive"
-            ? "too close to the alert level to call once simulation and market-quote noise are allowed for, so it is not flagged."
+            ? "too close to the alert level to call once simulation noise is allowed for, so it is not flagged."
             : `inside the ${pct(pnl.alertPctOfBook, 2)} alert level.`}{" "}
         On the 16 days measured before and after the engine was improved, the average daily gap fell
         from {pct(pnl.meanGapBeforePct, 2)} to {pct(pnl.meanGapAfterPct, 2)} of book value.
@@ -73,7 +73,7 @@ export default function PnlExplainPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="Actual P&L" value={signedUsdCompact(pnl.actual)} />
-        <StatTile label="Expected by risk model" value={signedUsdCompact(pnl.expected)} />
+        <StatTile label="Explained by risk model" value={signedUsdCompact(pnl.expected)} />
         <StatTile
           label={`Unexplained: ${STATUS_LABELS[pnl.status].toLowerCase()}`}
           value={usdCompact(Math.abs(pnl.unexplained))}
@@ -88,15 +88,15 @@ export default function PnlExplainPage() {
       </div>
 
       <Card
-        title="Expected vs. actual, by driver"
-        subtitle={`From ${fmtDate(pnlExplain.day0)} to ${fmtDate(pnlExplain.asof_date)} the model expected ${signedUsdCompact(pnl.expected)} and the book ${madeOrLost(pnl.actual)}. The largest remaining difference is in ${DRIVER_LABELS[biggestGapDriver.step].toLowerCase()} (${signedUsdCompact(biggestGapDriver.residual)}).`}
+        title="Explained vs. actual, by driver"
+        subtitle={`From ${fmtDate(pnlExplain.day0)} to ${fmtDate(pnlExplain.asof_date)} the model explained ${signedUsdCompact(pnl.expected)} and the book ${madeOrLost(pnl.actual)}. The largest remaining difference is in ${DRIVER_LABELS[biggestGapDriver.step].toLowerCase()} (${signedUsdCompact(biggestGapDriver.residual)}).`}
       >
         <GroupedBars
           data={drivers}
           categoryKey="driver"
           shortCategoryKey="short"
           series={[
-            { key: "expected", label: "Expected by risk model", color: SERIES[0] },
+            { key: "expected", label: "Explained by risk model", color: SERIES[0] },
             { key: "actual", label: "Actual", color: SERIES[1] },
           ]}
           format="usdCompact"
@@ -116,7 +116,7 @@ export default function PnlExplainPage() {
 
       <Card
         title="Alert history"
-        subtitle={`Unexplained P&L as a share of book value, one bar per trading day. A day alerts only when the gap is wider than the ±${pct(pnl.alertPctOfBook, 2)} alert level even after allowing for simulation and market-quote noise: ${pnl.daysBreached} of ${pnl.daysRecorded} days alert, ${pnl.daysInconclusive} are within noise and ${pnl.daysWithinThreshold} are clear. The largest gaps used to come from NVIDIA's weekly options moving the structured note's model; the note is now simulated from options at least a month out.`}
+        subtitle={`Unexplained P&L as a share of book value, one bar per trading day. A day alerts only when the gap is wider than the ±${pct(pnl.alertPctOfBook, 2)} alert level even after allowing for simulation noise: ${pnl.daysBreached} of ${pnl.daysRecorded} days alert, ${pnl.daysInconclusive} are within noise and ${pnl.daysWithinThreshold} are clear. The largest gaps used to come from NVIDIA's weekly options moving the structured note's model; the note is now simulated from options at least a month out.`}
       >
         <AlertHistory data={history} highlightDate={pnlExplain.asof_date} />
         <p className="mt-3 text-xs text-muted">
@@ -150,16 +150,21 @@ export default function PnlExplainPage() {
           Taylor expansion applied sequentially: time (theta), rates and dividends (rho, dividend
           rho), spot (delta, gamma) and volatility (vega, measured where the position&apos;s
           exposure sits). Actual P&amp;L is full revaluation on each day&apos;s calibrated market.
-          The residual is actual minus explained.
+          For the two Monte Carlo-priced exotics, two moves no sensitivity covers are measured by
+          revaluing the position instead: the change in the forward&apos;s carry beyond the stock
+          move, and the change in the smile&apos;s shape beyond its at-the-money level. They count
+          as explained and are stored apart from the Greeks. The residual is actual minus
+          explained.
         </p>
         <p>
           <strong className="text-ink">Alert level and noise.</strong>{" "}
           {pnlExplain.residual_alert_threshold_bp}bp of NAV per day. Monte Carlo-priced positions
-          carry a standard error from 16 independently scrambled sub-runs, plus quote noise: how
-          far their mark moves when the surface is refit to quotes moved inside their bid-ask
-          spreads. A day alerts only if the residual exceeds the threshold by more than two
-          standard deviations of that combined noise, and is inconclusive when the noise band alone
-          is wider than the threshold.
+          carry a standard error from 16 independently scrambled sub-runs. A day alerts only if the
+          residual exceeds the threshold by more than two standard errors, and is inconclusive when
+          that band alone is wider than the threshold. Quote noise (how far a mark moves when the
+          surface is refit to quotes moved inside their bid-ask spreads) is still measured and
+          reported, but no longer widens the band: most of it now lands in the revaluation lines
+          rather than in the residual.
         </p>
         <p>
           <strong className="text-ink">What changed.</strong> Better-conditioned Greeks for the

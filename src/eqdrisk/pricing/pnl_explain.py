@@ -385,6 +385,7 @@ class PnLExplainResult:
     total_residual_se: float = 0.0
     # Quote noise (portfolio/quote_noise.py): sqrt(day0^2 + day1^2) of each MC
     # exotic's stored mark SD from bid-ask, only when both days were measured.
+    # Printed and stored, not in the alert band (see `_classify`).
     by_position_quote_noise: dict[str, float] = field(default_factory=dict)
     total_quote_noise: float = 0.0
     # MC exotics' revaluation lines: the carry change inside the spot step and
@@ -393,8 +394,8 @@ class PnLExplainResult:
     by_position_shape: dict[str, float] = field(default_factory=dict)
     nav: float = 0.0
     breaches: list[str] = field(default_factory=list)
-    # Residuals whose noise band (2 x MC SE and quote noise combined) is itself
-    # wider than the alert threshold: neither an alert nor a clean bill of health.
+    # Residuals whose noise band (2 x MC SE) is itself wider than the alert
+    # threshold: neither an alert nor a clean bill of health.
     inconclusive: list[str] = field(default_factory=list)
     # Per-position caveats (e.g. surface coverage changed between the two days).
     notes: dict[str, str] = field(default_factory=dict)
@@ -478,7 +479,10 @@ def _reval_text(carry: float | None, shape: float | None) -> str:
 def _quote_noise_text(quote_noise: float, to_bp: Callable[[float], float]) -> str:
     if quote_noise <= 0.0:
         return ""
-    return f"; quote noise +- {2 * quote_noise:,.2f} ({to_bp(2 * quote_noise):.1f}bp, 2 SD)"
+    return (
+        f"; quote noise +- {2 * quote_noise:,.2f} ({to_bp(2 * quote_noise):.1f}bp, 2 SD,"
+        " not in the alert band)"
+    )
 
 
 def _combine_quote_noise(
@@ -893,9 +897,7 @@ def _basis_lines(
     ]
 
 
-def _classify(
-    dollars: float, se: float, nav: float, label: str, quote_noise: float = 0.0
-) -> tuple[str | None, str | None]:
+def _classify(dollars: float, se: float, nav: float, label: str) -> tuple[str | None, str | None]:
     """(alert, inconclusive) message for one residual, at most one non-None.
 
     Breach beyond noise (planning/pnl_explain_noise_plan.md, user decision
@@ -905,22 +907,26 @@ def _classify(
     wider than the threshold, the residual cannot be told apart from noise
     either way: inconclusive, not an alert and not a clean pass.
 
-    Noise is the Monte Carlo SE and, for MC exotics, the quote noise of both
-    days' marks (planning/p008_noise_band_plan.md, 2026-11-22), independent and
-    added in quadrature."""
-    noise = float(np.hypot(se, quote_noise))
+    Noise is the Monte Carlo SE alone. From 2026-11-22 the band also held the
+    quote noise of both days' marks (planning/p008_noise_band_plan.md); once the
+    carry and smile-shape revaluation lines took most of that bid-ask noise into
+    the explained side (2026-11-25, planning/p008_alert_days_plan.md), keeping it
+    in the band made every day inconclusive (RMS z 0.90 against 1.97 on MC error
+    alone). The share of quote noise left in the residual is not measured, so
+    the band leaves it out (user decision 2026-11-26) and the measured quote
+    noise is printed next to the residual instead."""
+    noise = se
     threshold = RESIDUAL_ALERT_THRESHOLD_BP * nav / 10_000.0 if nav else 0.0
     bp = 10_000.0 * dollars / nav if nav else 0.0
     band_bp = 10_000.0 * 2 * noise / nav if nav else 0.0
-    what = "2 SD, MC and quote noise" if quote_noise > 0.0 else "2 SE"
-    shown = f"{label} residual {bp:+.1f}bp of NAV (+- {band_bp:.1f}bp, {what})"
+    shown = f"{label} residual {bp:+.1f}bp of NAV (+- {band_bp:.1f}bp, 2 SE)"
     if abs(dollars) - 2 * noise > threshold:
         return f"{shown} exceeds the {RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp threshold", None
     if 2 * noise > threshold:
-        source = "Monte Carlo and quote noise are" if quote_noise > 0.0 else "Monte Carlo noise is"
         return (
             None,
-            f"{shown}: {source} wider than the {RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp threshold",
+            f"{shown}: Monte Carlo noise is wider than the"
+            f" {RESIDUAL_ALERT_THRESHOLD_BP:.0f}bp threshold",
         )
     return None, None
 
@@ -931,19 +937,12 @@ def _detect_breaches(result: PnLExplainResult) -> list[str]:
     convention, beyond Monte Carlo noise (see `_classify`). Returns the alert
     messages and sets `result.inconclusive` for noise-dominated residuals."""
     breaches, inconclusive = [], []
-    checks = [
-        ("total", result.total_residual(), result.total_residual_se, result.total_quote_noise)
-    ] + [
-        (
-            f"position {pid}",
-            r,
-            result.by_position_residual_se.get(pid, 0.0),
-            result.by_position_quote_noise.get(pid, 0.0),
-        )
+    checks = [("total", result.total_residual(), result.total_residual_se)] + [
+        (f"position {pid}", r, result.by_position_residual_se.get(pid, 0.0))
         for pid, r in sorted(result.by_position_residual.items())
     ]
-    for label, dollars, se, quote_noise in checks:
-        alert, unclear = _classify(dollars, se, result.nav, label, quote_noise)
+    for label, dollars, se in checks:
+        alert, unclear = _classify(dollars, se, result.nav, label)
         if alert:
             breaches.append(alert)
         if unclear:

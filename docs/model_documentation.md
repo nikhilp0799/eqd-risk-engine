@@ -295,10 +295,10 @@ rejected: on P008 over 23 day pairs it gave 21.0bp mean spot-step residual with 
 and 7.3bp with a sticky-moneyness grid, against 7.1bp for sticky-moneyness Greeks, so the gain is
 the convention, not the ladder.
 
-**Noise band: Monte Carlo error plus quote noise (since 2026-11-22).** A residual is an alert only
-when it exceeds the 5bp threshold by more than 2 standard deviations of noise, and is inconclusive
-when that band alone is wider than the threshold. The noise has two independent parts, added in
-quadrature. The first is the Monte Carlo standard error from 16 scrambled sub-runs. The second is
+**Noise band: Monte Carlo error plus quote noise (2026-11-22 to 2026-11-25; Monte Carlo error alone
+again since, see below).** A residual is an alert only when it exceeds the 5bp threshold by more
+than 2 standard deviations of noise, and is inconclusive when that band alone is wider than the
+threshold. For these four days the noise had two independent parts, added in quadrature. The first is the Monte Carlo standard error from 16 scrambled sub-runs. The second is
 quote noise (`portfolio/quote_noise.py`, daily `quotenoise` step): an option quote pins the price
 only to within its bid-ask spread, so each day every OK implied vol is moved uniformly inside its
 half-spread in vol ((ask - bid) / 2 / vega), the name's whole surface is refit with the production
@@ -347,6 +347,40 @@ cancel.** It follows that explaining only one of the two would move the residual
 remove it: without carry, the 10-14 control day would go from -$2.1K to -$10.9K. Refitting day1 with
 day0's model family (three alert days switched between SVI and SSVI) changed the residual in both
 directions, so the model switch is not the cause.
+
+**Carry and smile shape are explained by revaluation (since 2026-11-25).** For the Monte Carlo
+exotics (barrier, autocall) the explain prices two more states. In the spot step, a mid state has
+day1's spot and curve, day0's surface, and day0's forward curve moved by ln(S1/S0), so the carry is
+held: the sticky-moneyness Greeks explain the move to it, and the rest of the spot step (the carry
+change) is the revaluation from that state to state 3. In the vol step, a mid state re-levels day0's
+surface: each pillar is shifted in total variance by the change in the T-smoothed ATM total
+variance, so the smile keeps day0's shape at day1's ATM level (an SSVI slice is first rewritten as
+the identical raw SVI slice). The band vegas explain the move to it, and the revaluation from it to
+day1 is the shape change. Both revaluations count as explained, and they are stored apart from the
+Greek predictions (`reval_pnl` per step, `carry_pnl` and `shape_pnl` per position) so no report
+mistakes them for Greeks. Rebuilt on all 37 pairs (stored history backed up first):
+
+| | before | with carry and shape lines |
+|---|---|---|
+| P008 RMS residual | $6,000 | $3,282 |
+| P008 mean absolute residual | $4,286 | $2,043 |
+| P008 RMS z-score, Monte Carlo SE only | 6.26 | 1.97 |
+| P008 RMS z-score, plus quote noise | 2.03 | 0.90 |
+| book mean absolute residual | 10.8bp | 5.1bp (median 3.4bp) |
+| book RMS residual | 15.7bp | 8.2bp |
+
+**The noise band is Monte Carlo error alone again (user decision 2026-11-26).** Refitting to quotes
+moved inside their spreads changes a surface's implied carry and smile shape, not only its level,
+so much of the bid-ask noise now lands in the revaluation lines, on the explained side. The sign is
+the band itself: kept in it, the quote noise put every day but one inside it (0 alert, 36
+inconclusive, 1 clear) with an RMS z of 0.90, a band wider than what is left. How much quote noise remains in the residual is not measured, so it is left out of the band
+rather than guessed at, and the measured quote noise is printed beside each residual
+(`not in the alert band`). With Monte Carlo error alone: 1 day alerts (2026-10-08, -10.3bp against
+a 5.2bp band), 15 are inconclusive and 21 are clear. The RMS z of 1.97 means the residual is still
+about twice its Monte Carlo error: a real, smaller gap remains, and part of it is likely the quote
+noise left out of the band. One consequence of the rule as it stands: a residual over 5bp with a
+narrow band that does not clear the threshold by 2 SE (2026-11-06, -8.4bp, band 4.1bp) reads as
+clear, not inconclusive.
 
 ### 3.6 VaR and Expected Shortfall (Steps 8.3 and 9, `risk/proxy.py`, `risk/var.py`)
 
@@ -458,8 +492,11 @@ to 11bp of NAV. Fitting SPX forwards from any trade in the session (Section 3.1)
 SPX options' artificial residuals: P003 and P007 fell from $758 and $334 to $87 and $39 a day on
 average. Guarding SVI wings past the last quote (Section 3.3) then removed the near-expiry AAPL
 call's: P004's summed absolute residual over 27 pairs fell from $37.6K to $2.0K. On the 16
-comparable pairs the residual is now 9.5bp; over all 28 stored pairs it is 8.6bp (median 6.8bp,
-worst 25bp), and the sum of each position's absolute residual is 10.4bp (1.9bp without P008).
+comparable pairs the residual was then 9.5bp; over all 28 stored pairs it was 8.6bp (median 6.8bp,
+worst 25bp), and the sum of each position's absolute residual 10.4bp (1.9bp without P008).
+Explaining the exotics' carry and smile shape by revaluation (Section 3.5, 2026-11-25) took the 16
+comparable pairs to 3.3bp and all 37 stored pairs to 5.1bp (median 3.4bp), with the sum of each
+position's absolute residual at 6.1bp (1.0bp without P008).
 
 **The autocallable's vol step is explained by time band since 2026-11-12.** Until then it was one
 vega times the plain average of the ATM vol moves at the note's eight observation dates. When the
@@ -539,11 +576,13 @@ in between landed in the time step, where theta cannot predict it. That position
 booked as explained, with a note, as settlement already was; its other steps are explained as usual,
 and its theta for that day is lost. P008 missed its first coupon at the 2026-11-16 fixing (NVDA
 156.14 against the 168.87 barrier; coupon memory now 1, so the February observation would pay two).
-The largest remaining day (2026-09-28, 25bp) is
+Before the 2026-11-25 revaluation lines the largest day (2026-09-28, 25bp) was
 almost all P008; it was 9bp before the wing guard only because P004's mispricing offset it. Residuals carry a
-Monte Carlo standard error and, since 2026-11-22, the exotics' quote noise from bid-ask (Section
-3.5), so a day is flagged only when the gap exceeds the 5bp threshold by more than that noise; about
-43% of P008's residual variance turned out to be quote noise.
+Monte Carlo standard error, so a day is flagged only when the gap exceeds the 5bp threshold by more
+than that noise. From 2026-11-22 to 2026-11-25 the band also held the exotics' quote noise from
+bid-ask (Section 3.5), about 43% of P008's residual variance at the time; since the carry and
+smile-shape revaluation lines took most of it to the explained side, the band is Monte Carlo error
+alone and the quote noise is reported beside it.
 
 **Several input-stability choices are judgment calls, tuned on this five-name universe.** The
 local-vol term-structure smoothing strength is fixed (`T_SMOOTHING_LAM = 0.01`), chosen by
